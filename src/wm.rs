@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use wayland_backend::client::ObjectId;
 use wayland_client::{Proxy, QueueHandle};
 
+use wayland_client::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
+
 use crate::actions::Action;
 use crate::bindings::{get_profile_bindings, parse_all_bindings, Binding};
 use crate::config::Config;
+use crate::decorations::{DecorationManager, TAB_BAR_HEIGHT};
 use crate::layout::{FrameId, Orientation, WindowRef};
 use crate::workspace::{OutputId, WorkspaceManager};
 
@@ -24,6 +27,8 @@ use crate::protocol::{
 pub struct AppData {
     pub river_wm: Option<RiverWindowManagerV1>,
     pub river_xkb: Option<RiverXkbBindingsV1>,
+    pub wl_compositor: Option<WlCompositor>,
+    pub wl_shm: Option<WlShm>,
     pub wm: WindowManager,
 }
 
@@ -32,6 +37,8 @@ impl Default for AppData {
         Self {
             river_wm: None,
             river_xkb: None,
+            wl_compositor: None,
+            wl_shm: None,
             wm: WindowManager::new(Config::load()),
         }
     }
@@ -57,6 +64,8 @@ pub struct WindowManager {
     pub normal_bindings: Vec<Binding>,
     /// Resize mode bindings.
     pub resize_bindings: Vec<Binding>,
+    /// Decoration manager for tab bars.
+    pub decorations: DecorationManager,
 }
 
 /// A window tracked by the WM.
@@ -153,6 +162,7 @@ impl WindowManager {
             mode: InputMode::Normal,
             normal_bindings,
             resize_bindings,
+            decorations: DecorationManager::new(),
         }
     }
 
@@ -175,8 +185,14 @@ impl WindowManager {
         proxy.manage_finish();
     }
 
-    pub fn handle_render_start(&mut self, proxy: &RiverWindowManagerV1) {
-        self.apply_layout_positions();
+    pub fn handle_render_start(
+        &mut self,
+        proxy: &RiverWindowManagerV1,
+        shm: Option<&WlShm>,
+        compositor: Option<&WlCompositor>,
+        qh: &QueueHandle<AppData>,
+    ) {
+        self.apply_layout_positions(shm, compositor, qh);
         self.handle_seat_ops();
         proxy.render_finish();
     }
@@ -679,10 +695,11 @@ impl WindowManager {
                     if let Some(active_win) = frame.active_window() {
                         let wid = active_win.window_id;
                         if let Some(win) = self.windows.iter().find(|w| w.id == wid) {
-                            // Propose dimensions (minus border)
+                            // Propose dimensions (minus border and tab bar)
                             let bw = border as i32 * 2;
+                            let tab_h = TAB_BAR_HEIGHT;
                             win.proxy
-                                .propose_dimensions(rect.width - bw, rect.height - bw);
+                                .propose_dimensions(rect.width - bw, rect.height - bw - tab_h);
                         }
                     }
                     // Hide non-active tabs
@@ -743,14 +760,34 @@ impl WindowManager {
         // Border colors are stored for use in apply_layout_positions.
     }
 
-    fn apply_layout_positions(&mut self) {
+    fn apply_layout_positions(
+        &mut self,
+        shm: Option<&WlShm>,
+        compositor: Option<&WlCompositor>,
+        qh: &QueueHandle<AppData>,
+    ) {
         let gap = self.config.general.gap as i32;
         let border = self.config.general.border_width as i32;
+        let tab_bar_h = TAB_BAR_HEIGHT;
         let active_color = parse_hex_color(&self.config.appearance.active_border);
         let inactive_color = parse_hex_color(&self.config.appearance.inactive_border);
 
         let focused_ws_id = self.workspaces.focused_workspace;
         let focused_frame_id = self.workspaces.workspaces[focused_ws_id.0].focused_frame;
+
+        // Collect draw commands to avoid borrow conflicts
+        struct DrawCmd {
+            window_id: u64,
+            win_idx: usize,
+            frame_id: FrameId,
+            rect_x: i32,
+            rect_y: i32,
+            rect_width: i32,
+            rect_height: i32,
+            is_focused: bool,
+            border_color: (u32, u32, u32, u32),
+        }
+        let mut draw_cmds: Vec<DrawCmd> = Vec::new();
 
         for ws in &self.workspaces.workspaces {
             let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid)) {
@@ -764,23 +801,78 @@ impl WindowManager {
             for (frame_id, rect) in &frame_layouts {
                 if let Some(frame) = ws.root.find_frame(*frame_id) {
                     if let Some(active_win) = frame.active_window() {
-                        if let Some(win) =
-                            self.windows.iter().find(|w| w.id == active_win.window_id)
-                        {
-                            win.node.set_position(rect.x + border, rect.y + border);
-                            win.node.place_top();
+                        let is_focused = *frame_id == focused_frame_id;
+                        let color = if is_focused {
+                            active_color
+                        } else {
+                            inactive_color
+                        };
 
-                            // Apply borders
-                            let color = if *frame_id == focused_frame_id {
-                                active_color
-                            } else {
-                                inactive_color
-                            };
-                            let all_edges = Edges::Left | Edges::Right | Edges::Top | Edges::Bottom;
-                            win.proxy
-                                .set_borders(all_edges, border, color.0, color.1, color.2, color.3);
+                        if let Some((idx, _)) = self
+                            .windows
+                            .iter()
+                            .enumerate()
+                            .find(|(_, w)| w.id == active_win.window_id)
+                        {
+                            draw_cmds.push(DrawCmd {
+                                window_id: active_win.window_id,
+                                win_idx: idx,
+                                frame_id: *frame_id,
+                                rect_x: rect.x,
+                                rect_y: rect.y,
+                                rect_width: rect.width,
+                                rect_height: rect.height,
+                                is_focused,
+                                border_color: color,
+                            });
                         }
                     }
+                }
+            }
+        }
+
+        // Execute draw commands
+        for cmd in &draw_cmds {
+            let win = &self.windows[cmd.win_idx];
+            // Position window below the tab bar
+            win.node
+                .set_position(cmd.rect_x + border, cmd.rect_y + border + tab_bar_h);
+            win.node.place_top();
+
+            // Borders
+            let all_edges = Edges::Left | Edges::Right | Edges::Top | Edges::Bottom;
+            win.proxy.set_borders(
+                all_edges,
+                border,
+                cmd.border_color.0,
+                cmd.border_color.1,
+                cmd.border_color.2,
+                cmd.border_color.3,
+            );
+        }
+
+        // Draw tab bars (needs frame data + decoration manager)
+        if let (Some(shm), Some(compositor)) = (shm, compositor) {
+            for cmd in &draw_cmds {
+                // Find the frame for this window
+                let frame = self
+                    .workspaces
+                    .workspaces
+                    .iter()
+                    .find_map(|ws| ws.root.find_frame(cmd.frame_id));
+
+                if let Some(frame) = frame {
+                    let win = &self.windows[cmd.win_idx];
+                    self.decorations.draw_tab_bar(
+                        cmd.window_id,
+                        &win.proxy,
+                        frame,
+                        cmd.rect_width,
+                        cmd.is_focused,
+                        shm,
+                        compositor,
+                        qh,
+                    );
                 }
             }
         }

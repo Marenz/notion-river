@@ -8,6 +8,7 @@
 mod actions;
 mod bindings;
 mod config;
+mod decorations;
 mod dispatch;
 mod layout;
 mod protocol;

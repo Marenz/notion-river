@@ -4,11 +4,18 @@
 //! events from the compositor. This follows the same pattern as tinyrwm.
 
 use wayland_backend::client::ObjectId;
-use wayland_client::{protocol::wl_registry, Connection, Dispatch, Proxy, QueueHandle};
+use wayland_client::{
+    protocol::{
+        wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_registry, wl_shm::WlShm,
+        wl_shm_pool::WlShmPool, wl_surface::WlSurface,
+    },
+    Connection, Dispatch, Proxy, QueueHandle,
+};
 
 use crate::protocol::{
-    river_node_v1::RiverNodeV1, river_output_v1::RiverOutputV1,
-    river_pointer_binding_v1::RiverPointerBindingV1, river_seat_v1::RiverSeatV1,
+    river_decoration_v1::RiverDecorationV1, river_node_v1::RiverNodeV1,
+    river_output_v1::RiverOutputV1, river_pointer_binding_v1::RiverPointerBindingV1,
+    river_seat_v1::RiverSeatV1, river_shell_surface_v1::RiverShellSurfaceV1,
     river_window_manager_v1::RiverWindowManagerV1, river_window_v1::RiverWindowV1,
     river_xkb_binding_v1::RiverXkbBindingV1, river_xkb_bindings_v1::RiverXkbBindingsV1,
 };
@@ -52,6 +59,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let xkb = registry.bind::<RiverXkbBindingsV1, _, _>(name, XKB_VERSION, qh, ());
                     state.river_xkb = Some(xkb);
                 }
+                "wl_compositor" => {
+                    let comp = registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ());
+                    state.wl_compositor = Some(comp);
+                }
+                "wl_shm" => {
+                    let shm = registry.bind::<WlShm, _, _>(name, version.min(1), qh, ());
+                    state.wl_shm = Some(shm);
+                }
                 _ => {}
             }
         }
@@ -87,7 +102,12 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 state.wm.handle_manage_start(proxy, river_xkb, qh);
             }
             Event::RenderStart => {
-                state.wm.handle_render_start(proxy);
+                state.wm.handle_render_start(
+                    proxy,
+                    state.wl_shm.as_ref(),
+                    state.wl_compositor.as_ref(),
+                    qh,
+                );
             }
             Event::SessionLocked => {
                 log::info!("Session locked");
@@ -341,3 +361,10 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
 
 wayland_client::delegate_noop!(AppData: ignore RiverXkbBindingsV1);
 wayland_client::delegate_noop!(AppData: ignore RiverNodeV1);
+wayland_client::delegate_noop!(AppData: ignore RiverDecorationV1);
+wayland_client::delegate_noop!(AppData: ignore RiverShellSurfaceV1);
+wayland_client::delegate_noop!(AppData: ignore WlCompositor);
+wayland_client::delegate_noop!(AppData: ignore WlShm);
+wayland_client::delegate_noop!(AppData: ignore WlShmPool);
+wayland_client::delegate_noop!(AppData: ignore WlSurface);
+wayland_client::delegate_noop!(AppData: ignore WlBuffer);
