@@ -114,6 +114,9 @@ pub struct Seat {
     pub op_prev_dx: i32,
     pub op_prev_dy: i32,
     pub op_release: bool,
+    /// Current absolute pointer position (from pointer_position event).
+    pub pointer_x: i32,
+    pub pointer_y: i32,
 }
 
 #[derive(Debug)]
@@ -468,16 +471,13 @@ impl WindowManager {
 
         // Handle seat op releases
         // First collect move-drop data before clearing ops
+        // Use absolute pointer position for the drop target
         let move_drops: Vec<(u64, i32, i32)> = self
             .seats
             .values()
             .filter(|s| s.op_release)
             .filter_map(|s| match &s.op {
-                SeatOp::Move {
-                    window_id,
-                    start_x,
-                    start_y,
-                } => Some((*window_id, start_x + s.op_dx, start_y + s.op_dy)),
+                SeatOp::Move { window_id, .. } => Some((*window_id, s.pointer_x, s.pointer_y)),
                 _ => None,
             })
             .collect();
@@ -1149,17 +1149,18 @@ impl WindowManager {
                 };
                 if let Some(area) = area {
                     let ws = &mut self.workspaces.workspaces[ws_idx];
-                    // Convert pixel delta to ratio delta
-                    // Use the larger axis delta to determine direction
-                    if dx.abs() > dy.abs() && area.width > 0 {
-                        let delta = dx as f32 / area.width as f32;
-                        ws.root
-                            .resize_frame(frame_id, crate::layout::Direction::Right, delta);
-                    } else if area.height > 0 {
-                        let delta = dy as f32 / area.height as f32;
-                        ws.root
-                            .resize_frame(frame_id, crate::layout::Direction::Down, delta);
-                    }
+                    // Convert pixel delta to ratio delta along each axis
+                    let ratio_dx = if area.width > 0 {
+                        dx as f32 / area.width as f32
+                    } else {
+                        0.0
+                    };
+                    let ratio_dy = if area.height > 0 {
+                        dy as f32 / area.height as f32
+                    } else {
+                        0.0
+                    };
+                    ws.root.adjust_ratio(frame_id, ratio_dx, ratio_dy);
                 }
             }
         }
@@ -1197,6 +1198,8 @@ impl Seat {
             op_prev_dx: 0,
             op_prev_dy: 0,
             op_release: false,
+            pointer_x: 0,
+            pointer_y: 0,
         }
     }
 }

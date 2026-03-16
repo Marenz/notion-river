@@ -275,7 +275,10 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
                 seat.op_dy = dy;
             }
             Event::OpRelease => seat.op_release = true,
-            Event::PointerPosition { .. } => {}
+            Event::PointerPosition { x, y } => {
+                seat.pointer_x = x;
+                seat.pointer_y = y;
+            }
         }
     }
 }
