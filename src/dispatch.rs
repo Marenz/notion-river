@@ -325,24 +325,32 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
         _qh: &QueueHandle<Self>,
     ) {
         use crate::protocol::river_pointer_binding_v1::Event;
-        let seat = match state.wm.seats.get_mut(data) {
-            Some(s) => s,
-            None => return,
+
+        // Extract what we need from the seat without holding a mutable borrow
+        let (is_move, hovered_id, ptr_x, ptr_y) = {
+            let seat = match state.wm.seats.get(data) {
+                Some(s) => s,
+                None => return,
+            };
+            let binding = match seat.pointer_bindings.get(&proxy.id()) {
+                Some(b) => b,
+                None => return,
+            };
+            (
+                binding.is_move,
+                seat.hovered.as_ref().map(|h| h.id().protocol_id() as u64),
+                seat.pointer_x,
+                seat.pointer_y,
+            )
         };
-        let binding = match seat.pointer_bindings.get(&proxy.id()) {
-            Some(b) => b,
-            None => return,
-        };
-        let is_move = binding.is_move;
+
         match event {
             Event::Pressed => {
-                let hovered_win = seat.hovered.as_ref().and_then(|h| {
-                    let hid = h.id().protocol_id() as u64;
-                    state.wm.windows.iter().find(|w| w.id == hid)
-                });
+                let hovered_win =
+                    hovered_id.and_then(|hid| state.wm.windows.iter().find(|w| w.id == hid));
 
-                if let Some(win) = hovered_win {
-                    // Pointer is over a window
+                // Compute the op to start (all immutable borrows)
+                let new_op = if let Some(win) = hovered_win {
                     let gap = state.wm.config.general.gap as i32;
                     let border = state.wm.config.general.border_width as i32;
                     let (sx, sy) = if win.floating {
@@ -354,10 +362,10 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                                 .and_then(|oid| state.wm.workspaces.output(oid))?;
                             let area = output.usable_rect();
                             let layouts = ws.root.calculate_layout(area, gap);
-                            let frame_id = ws.root.find_frame_with_window(win.id)?;
+                            let fid = ws.root.find_frame_with_window(win.id)?;
                             layouts
                                 .into_iter()
-                                .find(|(id, _)| *id == frame_id)
+                                .find(|(id, _)| *id == fid)
                                 .map(|(_, r)| {
                                     (
                                         r.x + border,
@@ -368,35 +376,45 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                         pos.unwrap_or((win.float_x, win.float_y))
                     };
 
-                    seat.proxy.op_start_pointer();
-                    seat.op_dx = 0;
-                    seat.op_dy = 0;
-                    seat.op_prev_dx = 0;
-                    seat.op_prev_dy = 0;
                     if is_move {
                         log::info!("Pointer move start on window {} at ({},{})", win.id, sx, sy);
-                        seat.op = SeatOp::Move {
+                        Some(SeatOp::Move {
                             window_id: win.id,
                             start_x: sx,
                             start_y: sy,
-                        };
+                        })
                     } else {
-                        log::info!("Pointer resize start on window {}", win.id);
+                        let frame_id = state
+                            .wm
+                            .workspaces
+                            .workspaces
+                            .iter()
+                            .find_map(|ws| ws.root.find_frame_with_window(win.id));
+                        let (rh, rv) = frame_id
+                            .map(|fid| state.wm.detect_resize_axes(fid, ptr_x, ptr_y))
+                            .unwrap_or((true, true));
+                        log::info!(
+                            "Pointer resize start on window {} (h={}, v={})",
+                            win.id,
+                            rh,
+                            rv
+                        );
                         let edges = crate::protocol::river_window_v1::Edges::Right
                             | crate::protocol::river_window_v1::Edges::Bottom;
                         win.proxy.inform_resize_start();
-                        seat.op = SeatOp::Resize {
+                        Some(SeatOp::Resize {
                             window_id: win.id,
                             start_x: sx,
                             start_y: sy,
                             start_width: win.width,
                             start_height: win.height,
                             edges,
-                        };
+                            resize_h: rh,
+                            resize_v: rv,
+                        })
                     }
                 } else if !is_move {
-                    // Pointer is over empty space — start a resize-empty op
-                    // Find which frame the pointer is in
+                    // Empty space resize
                     let gap = state.wm.config.general.gap as i32;
                     let frame_at_pointer = state.wm.workspaces.workspaces.iter().find_map(|ws| {
                         let output = ws
@@ -405,10 +423,10 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                         let area = output.usable_rect();
                         let layouts = ws.root.calculate_layout(area, gap);
                         layouts.into_iter().find_map(|(fid, rect)| {
-                            if seat.pointer_x >= rect.x
-                                && seat.pointer_x < rect.x + rect.width
-                                && seat.pointer_y >= rect.y
-                                && seat.pointer_y < rect.y + rect.height
+                            if ptr_x >= rect.x
+                                && ptr_x < rect.x + rect.width
+                                && ptr_y >= rect.y
+                                && ptr_y < rect.y + rect.height
                             {
                                 Some(fid)
                             } else {
@@ -416,16 +434,33 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                             }
                         })
                     });
+                    frame_at_pointer.map(|frame_id| {
+                        let (rh, rv) = state.wm.detect_resize_axes(frame_id, ptr_x, ptr_y);
+                        log::info!(
+                            "Pointer resize start on empty frame {:?} (h={}, v={})",
+                            frame_id,
+                            rh,
+                            rv
+                        );
+                        SeatOp::ResizeEmpty {
+                            frame_id,
+                            resize_h: rh,
+                            resize_v: rv,
+                        }
+                    })
+                } else {
+                    None
+                };
 
-                    if let Some(frame_id) = frame_at_pointer {
-                        log::info!("Pointer resize start on empty frame {:?}", frame_id);
-                        seat.proxy.op_start_pointer();
-                        seat.op_dx = 0;
-                        seat.op_dy = 0;
-                        seat.op_prev_dx = 0;
-                        seat.op_prev_dy = 0;
-                        seat.op = SeatOp::ResizeEmpty { frame_id };
-                    }
+                // Now mutably borrow the seat and apply
+                if let Some(op) = new_op {
+                    let seat = state.wm.seats.get_mut(data).unwrap();
+                    seat.proxy.op_start_pointer();
+                    seat.op_dx = 0;
+                    seat.op_dy = 0;
+                    seat.op_prev_dx = 0;
+                    seat.op_prev_dy = 0;
+                    seat.op = op;
                 }
             }
             Event::Released => {}

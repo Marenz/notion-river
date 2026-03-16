@@ -148,11 +148,15 @@ pub enum SeatOp {
         start_width: i32,
         start_height: i32,
         edges: Edges,
+        /// Which axes to resize (determined by proximity to split boundaries).
+        resize_h: bool,
+        resize_v: bool,
     },
     /// Resize split boundary from an empty frame area.
-    /// Uses the frame under the pointer for split ratio adjustment.
     ResizeEmpty {
         frame_id: FrameId,
+        resize_h: bool,
+        resize_v: bool,
     },
 }
 
@@ -779,6 +783,69 @@ impl WindowManager {
         }
     }
 
+    /// Determine which resize axes are active based on pointer proximity
+    /// to split boundaries. Returns (resize_h, resize_v).
+    pub fn detect_resize_axes(&self, frame_id: FrameId, px: i32, py: i32) -> (bool, bool) {
+        let gap = self.config.general.gap as i32;
+        let threshold = gap + 20; // pixels from frame edge to activate resize
+
+        let ws = self.workspaces.focused_workspace();
+        let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid)) {
+            Some(o) => o,
+            None => return (true, true),
+        };
+        let area = output.usable_rect();
+        let layouts = ws.root.calculate_layout(area, gap);
+
+        let my_rect = match layouts.iter().find(|(id, _)| *id == frame_id) {
+            Some((_, r)) => *r,
+            None => return (true, true),
+        };
+
+        // Check if pointer is near the left/right edges of this frame
+        let near_left = (px - my_rect.x).abs() < threshold;
+        let near_right = ((my_rect.x + my_rect.width) - px).abs() < threshold;
+        let near_h = near_left || near_right;
+
+        // Check if pointer is near the top/bottom edges
+        let near_top = (py - my_rect.y).abs() < threshold;
+        let near_bottom = ((my_rect.y + my_rect.height) - py).abs() < threshold;
+        let near_v = near_top || near_bottom;
+
+        // But only if there's actually a split boundary on that edge
+        // (not at the screen edge). Check if a neighbor exists in that direction.
+        let has_h_neighbor = layouts.iter().any(|(id, rect)| {
+            *id != frame_id
+                && crate::layout::vertical_overlap(my_rect, *rect) > 0
+                && ((near_left && rect.x + rect.width <= my_rect.x)
+                    || (near_right && rect.x >= my_rect.x + my_rect.width))
+        });
+
+        let has_v_neighbor = layouts.iter().any(|(id, rect)| {
+            *id != frame_id
+                && crate::layout::horizontal_overlap(my_rect, *rect) > 0
+                && ((near_top && rect.y + rect.height <= my_rect.y)
+                    || (near_bottom && rect.y >= my_rect.y + my_rect.height))
+        });
+
+        let resize_h = near_h && has_h_neighbor;
+        let resize_v = near_v && has_v_neighbor;
+
+        // If not near any edge, default to the axis of the nearest boundary
+        if !resize_h && !resize_v {
+            // Fall back: allow the axis that has a neighbor at all
+            let any_h = layouts.iter().any(|(id, rect)| {
+                *id != frame_id && crate::layout::vertical_overlap(my_rect, *rect) > 0
+            });
+            let any_v = layouts.iter().any(|(id, rect)| {
+                *id != frame_id && crate::layout::horizontal_overlap(my_rect, *rect) > 0
+            });
+            return (any_h, any_v);
+        }
+
+        (resize_h, resize_v)
+    }
+
     fn warp_cursor_to_frame(&self, frame_id: FrameId) {
         let gap = self.config.general.gap as i32;
         let ws = self.workspaces.focused_workspace();
@@ -1141,38 +1208,60 @@ impl WindowManager {
     }
 
     fn handle_seat_ops(&mut self) {
-        // Collect resize ops: both window-based and empty-frame-based
-        // Each yields (FrameId, per-frame dx, per-frame dy)
-        let resize_ops: Vec<(FrameId, i32, i32)> = self
+        // Collect resize ops with axis flags
+        struct ResizeCmd {
+            frame_id: FrameId,
+            dx: i32,
+            dy: i32,
+            resize_h: bool,
+            resize_v: bool,
+        }
+        let resize_ops: Vec<ResizeCmd> = self
             .seats
             .values_mut()
             .filter(|s| !s.op_release)
             .filter_map(|s| {
-                let frame_id = match &s.op {
-                    SeatOp::Resize { window_id, .. } => {
-                        // Find frame containing this window
-                        self.workspaces
+                let (frame_id, rh, rv) = match &s.op {
+                    SeatOp::Resize {
+                        window_id,
+                        resize_h,
+                        resize_v,
+                        ..
+                    } => {
+                        let fid = self
+                            .workspaces
                             .workspaces
                             .iter()
-                            .find_map(|ws| ws.root.find_frame_with_window(*window_id))
+                            .find_map(|ws| ws.root.find_frame_with_window(*window_id))?;
+                        (fid, *resize_h, *resize_v)
                     }
-                    SeatOp::ResizeEmpty { frame_id } => Some(*frame_id),
-                    _ => None,
-                }?;
+                    SeatOp::ResizeEmpty {
+                        frame_id,
+                        resize_h,
+                        resize_v,
+                    } => (*frame_id, *resize_h, *resize_v),
+                    _ => return None,
+                };
 
                 let ddx = s.op_dx - s.op_prev_dx;
                 let ddy = s.op_dy - s.op_prev_dy;
                 s.op_prev_dx = s.op_dx;
                 s.op_prev_dy = s.op_dy;
                 if ddx != 0 || ddy != 0 {
-                    Some((frame_id, ddx, ddy))
+                    Some(ResizeCmd {
+                        frame_id,
+                        dx: ddx,
+                        dy: ddy,
+                        resize_h: rh,
+                        resize_v: rv,
+                    })
                 } else {
                     None
                 }
             })
             .collect();
 
-        for (frame_id, dx, dy) in resize_ops {
+        for cmd in resize_ops {
             let ws_idx = self.workspaces.focused_workspace.0;
             let area = {
                 let ws = &self.workspaces.workspaces[ws_idx];
@@ -1182,17 +1271,17 @@ impl WindowManager {
             };
             if let Some(area) = area {
                 let ws = &mut self.workspaces.workspaces[ws_idx];
-                let ratio_dx = if area.width > 0 {
-                    dx as f32 / area.width as f32
+                let ratio_dx = if cmd.resize_h && area.width > 0 {
+                    cmd.dx as f32 / area.width as f32
                 } else {
                     0.0
                 };
-                let ratio_dy = if area.height > 0 {
-                    dy as f32 / area.height as f32
+                let ratio_dy = if cmd.resize_v && area.height > 0 {
+                    cmd.dy as f32 / area.height as f32
                 } else {
                     0.0
                 };
-                ws.root.adjust_ratio(frame_id, ratio_dx, ratio_dy);
+                ws.root.adjust_ratio(cmd.frame_id, ratio_dx, ratio_dy);
             }
         }
     }

@@ -613,13 +613,13 @@ impl Direction {
     }
 }
 
-fn vertical_overlap(a: Rect, b: Rect) -> i32 {
+pub fn vertical_overlap(a: Rect, b: Rect) -> i32 {
     let top = a.y.max(b.y);
     let bottom = (a.y + a.height).min(b.y + b.height);
     (bottom - top).max(0)
 }
 
-fn horizontal_overlap(a: Rect, b: Rect) -> i32 {
+pub fn horizontal_overlap(a: Rect, b: Rect) -> i32 {
     let left = a.x.max(b.x);
     let right = (a.x + a.width).min(b.x + b.width);
     (right - left).max(0)
