@@ -336,68 +336,95 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
         let is_move = binding.is_move;
         match event {
             Event::Pressed => {
-                if let Some(hovered) = &seat.hovered {
-                    let hovered_id = hovered.id().protocol_id() as u64;
-                    if let Some(win) = state.wm.windows.iter().find(|w| w.id == hovered_id) {
-                        // Get current position: use float coords if floating,
-                        // otherwise compute from layout
-                        let (sx, sy) = if win.floating {
-                            (win.float_x, win.float_y)
-                        } else {
-                            // Find the frame rect for this window
-                            let gap = state.wm.config.general.gap as i32;
-                            let border = state.wm.config.general.border_width as i32;
-                            let pos = state.wm.workspaces.workspaces.iter().find_map(|ws| {
-                                let output = ws
-                                    .active_output
-                                    .and_then(|oid| state.wm.workspaces.output(oid))?;
-                                let area = output.usable_rect();
-                                let layouts = ws.root.calculate_layout(area, gap);
-                                let frame_id = ws.root.find_frame_with_window(win.id)?;
-                                layouts
-                                    .into_iter()
-                                    .find(|(id, _)| *id == frame_id)
-                                    .map(|(_, r)| {
-                                        (
-                                            r.x + border,
-                                            r.y + border + crate::decorations::TAB_BAR_HEIGHT,
-                                        )
-                                    })
-                            });
-                            pos.unwrap_or((win.float_x, win.float_y))
-                        };
+                let hovered_win = seat.hovered.as_ref().and_then(|h| {
+                    let hid = h.id().protocol_id() as u64;
+                    state.wm.windows.iter().find(|w| w.id == hid)
+                });
 
+                if let Some(win) = hovered_win {
+                    // Pointer is over a window
+                    let gap = state.wm.config.general.gap as i32;
+                    let border = state.wm.config.general.border_width as i32;
+                    let (sx, sy) = if win.floating {
+                        (win.float_x, win.float_y)
+                    } else {
+                        let pos = state.wm.workspaces.workspaces.iter().find_map(|ws| {
+                            let output = ws
+                                .active_output
+                                .and_then(|oid| state.wm.workspaces.output(oid))?;
+                            let area = output.usable_rect();
+                            let layouts = ws.root.calculate_layout(area, gap);
+                            let frame_id = ws.root.find_frame_with_window(win.id)?;
+                            layouts
+                                .into_iter()
+                                .find(|(id, _)| *id == frame_id)
+                                .map(|(_, r)| {
+                                    (
+                                        r.x + border,
+                                        r.y + border + crate::decorations::TAB_BAR_HEIGHT,
+                                    )
+                                })
+                        });
+                        pos.unwrap_or((win.float_x, win.float_y))
+                    };
+
+                    seat.proxy.op_start_pointer();
+                    seat.op_dx = 0;
+                    seat.op_dy = 0;
+                    seat.op_prev_dx = 0;
+                    seat.op_prev_dy = 0;
+                    if is_move {
+                        log::info!("Pointer move start on window {} at ({},{})", win.id, sx, sy);
+                        seat.op = SeatOp::Move {
+                            window_id: win.id,
+                            start_x: sx,
+                            start_y: sy,
+                        };
+                    } else {
+                        log::info!("Pointer resize start on window {}", win.id);
+                        let edges = crate::protocol::river_window_v1::Edges::Right
+                            | crate::protocol::river_window_v1::Edges::Bottom;
+                        win.proxy.inform_resize_start();
+                        seat.op = SeatOp::Resize {
+                            window_id: win.id,
+                            start_x: sx,
+                            start_y: sy,
+                            start_width: win.width,
+                            start_height: win.height,
+                            edges,
+                        };
+                    }
+                } else if !is_move {
+                    // Pointer is over empty space — start a resize-empty op
+                    // Find which frame the pointer is in
+                    let gap = state.wm.config.general.gap as i32;
+                    let frame_at_pointer = state.wm.workspaces.workspaces.iter().find_map(|ws| {
+                        let output = ws
+                            .active_output
+                            .and_then(|oid| state.wm.workspaces.output(oid))?;
+                        let area = output.usable_rect();
+                        let layouts = ws.root.calculate_layout(area, gap);
+                        layouts.into_iter().find_map(|(fid, rect)| {
+                            if seat.pointer_x >= rect.x
+                                && seat.pointer_x < rect.x + rect.width
+                                && seat.pointer_y >= rect.y
+                                && seat.pointer_y < rect.y + rect.height
+                            {
+                                Some(fid)
+                            } else {
+                                None
+                            }
+                        })
+                    });
+
+                    if let Some(frame_id) = frame_at_pointer {
+                        log::info!("Pointer resize start on empty frame {:?}", frame_id);
                         seat.proxy.op_start_pointer();
                         seat.op_dx = 0;
                         seat.op_dy = 0;
                         seat.op_prev_dx = 0;
                         seat.op_prev_dy = 0;
-                        if is_move {
-                            log::info!(
-                                "Pointer move start on window {} at ({},{})",
-                                win.id,
-                                sx,
-                                sy
-                            );
-                            seat.op = SeatOp::Move {
-                                window_id: win.id,
-                                start_x: sx,
-                                start_y: sy,
-                            };
-                        } else {
-                            log::info!("Pointer resize start on window {}", win.id);
-                            let edges = crate::protocol::river_window_v1::Edges::Right
-                                | crate::protocol::river_window_v1::Edges::Bottom;
-                            win.proxy.inform_resize_start();
-                            seat.op = SeatOp::Resize {
-                                window_id: win.id,
-                                start_x: sx,
-                                start_y: sy,
-                                start_width: win.width,
-                                start_height: win.height,
-                                edges,
-                            };
-                        }
+                        seat.op = SeatOp::ResizeEmpty { frame_id };
                     }
                 }
             }

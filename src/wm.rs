@@ -149,6 +149,11 @@ pub enum SeatOp {
         start_height: i32,
         edges: Edges,
     },
+    /// Resize split boundary from an empty frame area.
+    /// Uses the frame under the pointer for split ratio adjustment.
+    ResizeEmpty {
+        frame_id: FrameId,
+    },
 }
 
 impl WindowManager {
@@ -444,17 +449,36 @@ impl WindowManager {
         // Focus-follows-mouse: only when no keyboard action is pending,
         // otherwise the keyboard focus change would be immediately overridden
         if self.config.general.focus_follows_mouse && !has_keyboard_action {
-            let hovered_ids: Vec<u64> = self
+            // Get pointer positions from all seats
+            let pointer_positions: Vec<(i32, i32)> = self
                 .seats
                 .values()
-                .filter_map(|seat| seat.hovered.as_ref().map(|w| w.id().protocol_id() as u64))
+                .map(|seat| (seat.pointer_x, seat.pointer_y))
                 .collect();
 
-            for hovered_id in hovered_ids {
+            let gap = self.config.general.gap as i32;
+
+            for (px, py) in pointer_positions {
+                // Find which frame the pointer is over (works for both
+                // windows and empty frames)
                 for ws in &self.workspaces.workspaces {
-                    if let Some(frame_id) = ws.root.find_frame_with_window(hovered_id) {
-                        if ws.focused_frame != frame_id {
+                    let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid))
+                    {
+                        Some(o) => o,
+                        None => continue,
+                    };
+                    let area = output.usable_rect();
+                    let layouts = ws.root.calculate_layout(area, gap);
+
+                    if let Some((frame_id, _)) = layouts.iter().find(|(_, rect)| {
+                        px >= rect.x
+                            && px < rect.x + rect.width
+                            && py >= rect.y
+                            && py < rect.y + rect.height
+                    }) {
+                        if ws.focused_frame != *frame_id {
                             let ws_id = ws.id;
+                            let frame_id = *frame_id;
                             let ws_mut = &mut self.workspaces.workspaces[ws_id.0];
                             ws_mut.focused_frame = frame_id;
                             self.workspaces.focused_workspace = ws_id;
@@ -1110,58 +1134,58 @@ impl WindowManager {
     }
 
     fn handle_seat_ops(&mut self) {
-        // Handle resize ops: adjust split ratio based on per-frame pointer delta
-        let resize_ops: Vec<(u64, i32, i32)> = self
+        // Collect resize ops: both window-based and empty-frame-based
+        // Each yields (FrameId, per-frame dx, per-frame dy)
+        let resize_ops: Vec<(FrameId, i32, i32)> = self
             .seats
             .values_mut()
             .filter(|s| !s.op_release)
-            .filter_map(|s| match &s.op {
-                SeatOp::Resize { window_id, .. } => {
-                    let ddx = s.op_dx - s.op_prev_dx;
-                    let ddy = s.op_dy - s.op_prev_dy;
-                    s.op_prev_dx = s.op_dx;
-                    s.op_prev_dy = s.op_dy;
-                    if ddx != 0 || ddy != 0 {
-                        Some((*window_id, ddx, ddy))
-                    } else {
-                        None
+            .filter_map(|s| {
+                let frame_id = match &s.op {
+                    SeatOp::Resize { window_id, .. } => {
+                        // Find frame containing this window
+                        self.workspaces
+                            .workspaces
+                            .iter()
+                            .find_map(|ws| ws.root.find_frame_with_window(*window_id))
                     }
+                    SeatOp::ResizeEmpty { frame_id } => Some(*frame_id),
+                    _ => None,
+                }?;
+
+                let ddx = s.op_dx - s.op_prev_dx;
+                let ddy = s.op_dy - s.op_prev_dy;
+                s.op_prev_dx = s.op_dx;
+                s.op_prev_dy = s.op_dy;
+                if ddx != 0 || ddy != 0 {
+                    Some((frame_id, ddx, ddy))
+                } else {
+                    None
                 }
-                _ => None,
             })
             .collect();
 
-        for (window_id, dx, dy) in resize_ops {
-            // Find the frame this window is in and resize its parent split
-            let frame_id = self
-                .workspaces
-                .workspaces
-                .iter()
-                .find_map(|ws| ws.root.find_frame_with_window(window_id));
-
-            if let Some(frame_id) = frame_id {
-                let ws_idx = self.workspaces.focused_workspace.0;
-                let area = {
-                    let ws = &self.workspaces.workspaces[ws_idx];
-                    ws.active_output
-                        .and_then(|oid| self.workspaces.output(oid))
-                        .map(|o| o.usable_rect())
+        for (frame_id, dx, dy) in resize_ops {
+            let ws_idx = self.workspaces.focused_workspace.0;
+            let area = {
+                let ws = &self.workspaces.workspaces[ws_idx];
+                ws.active_output
+                    .and_then(|oid| self.workspaces.output(oid))
+                    .map(|o| o.usable_rect())
+            };
+            if let Some(area) = area {
+                let ws = &mut self.workspaces.workspaces[ws_idx];
+                let ratio_dx = if area.width > 0 {
+                    dx as f32 / area.width as f32
+                } else {
+                    0.0
                 };
-                if let Some(area) = area {
-                    let ws = &mut self.workspaces.workspaces[ws_idx];
-                    // Convert pixel delta to ratio delta along each axis
-                    let ratio_dx = if area.width > 0 {
-                        dx as f32 / area.width as f32
-                    } else {
-                        0.0
-                    };
-                    let ratio_dy = if area.height > 0 {
-                        dy as f32 / area.height as f32
-                    } else {
-                        0.0
-                    };
-                    ws.root.adjust_ratio(frame_id, ratio_dx, ratio_dy);
-                }
+                let ratio_dy = if area.height > 0 {
+                    dy as f32 / area.height as f32
+                } else {
+                    0.0
+                };
+                ws.root.adjust_ratio(frame_id, ratio_dx, ratio_dy);
             }
         }
     }
