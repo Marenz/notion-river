@@ -537,11 +537,18 @@ impl SplitNode {
         }
     }
 
-    /// Adjust the ratio of the nearest parent split containing the target frame.
-    /// Positive delta grows the first child, negative shrinks it.
-    /// Unlike resize_frame, this ignores direction — it directly adjusts the ratio
-    /// based on pointer delta projected onto the split axis.
+    /// Adjust split ratios based on pointer drag delta.
+    /// Applies dx to the nearest horizontal ancestor split, and dy to the
+    /// nearest vertical ancestor split. Both can apply independently.
     pub fn adjust_ratio(&mut self, target_id: FrameId, dx: f32, dy: f32) -> bool {
+        self.adjust_ratio_axis(target_id, Orientation::Horizontal, dx)
+            | self.adjust_ratio_axis(target_id, Orientation::Vertical, dy)
+    }
+
+    fn adjust_ratio_axis(&mut self, target_id: FrameId, axis: Orientation, delta: f32) -> bool {
+        if delta.abs() < 0.0001 {
+            return false;
+        }
         match self {
             SplitNode::Leaf(_) => false,
             SplitNode::Split {
@@ -553,28 +560,24 @@ impl SplitNode {
                 let in_first = first.contains_frame(target_id);
                 let in_second = second.contains_frame(target_id);
 
-                if in_first || in_second {
-                    // Try to recurse first (deepest split wins)
-                    let handled = if in_first {
-                        first.adjust_ratio(target_id, dx, dy)
-                    } else {
-                        second.adjust_ratio(target_id, dx, dy)
-                    };
-
-                    if !handled {
-                        // We are the nearest parent — adjust ratio along our axis
-                        let delta = match *orientation {
-                            Orientation::Horizontal => dx,
-                            Orientation::Vertical => dy,
-                        };
-                        *ratio = (*ratio + delta).clamp(0.1, 0.9);
-                        return true;
-                    }
-                    return handled;
+                if !(in_first || in_second) {
+                    return first.adjust_ratio_axis(target_id, axis, delta)
+                        || second.adjust_ratio_axis(target_id, axis, delta);
                 }
 
-                // Target not in this subtree, recurse
-                first.adjust_ratio(target_id, dx, dy) || second.adjust_ratio(target_id, dx, dy)
+                // Recurse into the child that contains the target first
+                let handled = if in_first {
+                    first.adjust_ratio_axis(target_id, axis, delta)
+                } else {
+                    second.adjust_ratio_axis(target_id, axis, delta)
+                };
+
+                if !handled && *orientation == axis {
+                    // We are the nearest ancestor with matching axis
+                    *ratio = (*ratio + delta).clamp(0.1, 0.9);
+                    return true;
+                }
+                handled
             }
         }
     }
