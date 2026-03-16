@@ -367,6 +367,8 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                         seat.proxy.op_start_pointer();
                         seat.op_dx = 0;
                         seat.op_dy = 0;
+                        seat.op_prev_dx = 0;
+                        seat.op_prev_dy = 0;
                         if is_move {
                             log::info!(
                                 "Pointer move start on window {} at ({},{})",

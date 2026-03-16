@@ -110,6 +110,9 @@ pub struct Seat {
     pub op: SeatOp,
     pub op_dx: i32,
     pub op_dy: i32,
+    /// Previous frame's dx/dy for computing per-frame deltas.
+    pub op_prev_dx: i32,
+    pub op_prev_dy: i32,
     pub op_release: bool,
 }
 
@@ -464,6 +467,28 @@ impl WindowManager {
         }
 
         // Handle seat op releases
+        // First collect move-drop data before clearing ops
+        let move_drops: Vec<(u64, i32, i32)> = self
+            .seats
+            .values()
+            .filter(|s| s.op_release)
+            .filter_map(|s| match &s.op {
+                SeatOp::Move {
+                    window_id,
+                    start_x,
+                    start_y,
+                } => Some((*window_id, start_x + s.op_dx, start_y + s.op_dy)),
+                _ => None,
+            })
+            .collect();
+
+        // Process move drops
+        let gap = self.config.general.gap as i32;
+        for (window_id, drop_x, drop_y) in move_drops {
+            self.handle_move_drop(window_id, drop_x, drop_y, gap);
+        }
+
+        // Now clear the ops
         for seat in self.seats.values_mut() {
             if seat.op_release {
                 if let SeatOp::Resize { window_id, .. } = &seat.op {
@@ -1023,98 +1048,85 @@ impl WindowManager {
         }
     }
 
-    fn handle_seat_ops(&mut self) {
-        // On pointer release with a move op, move window to the frame under the cursor
-        let releases: Vec<(u64, i32, i32)> = self
-            .seats
-            .values()
-            .filter(|s| s.op_release)
-            .filter_map(|s| match &s.op {
-                SeatOp::Move {
-                    window_id,
-                    start_x,
-                    start_y,
-                } => Some((*window_id, start_x + s.op_dx, start_y + s.op_dy)),
-                _ => None,
+    fn handle_move_drop(&mut self, window_id: u64, drop_x: i32, drop_y: i32, gap: i32) {
+        let target_frame = self.workspaces.workspaces.iter().find_map(|ws| {
+            let output = ws
+                .active_output
+                .and_then(|oid| self.workspaces.output(oid))?;
+            let area = output.usable_rect();
+            let layouts = ws.root.calculate_layout(area, gap);
+            layouts.into_iter().find_map(|(frame_id, rect)| {
+                if drop_x >= rect.x
+                    && drop_x < rect.x + rect.width
+                    && drop_y >= rect.y
+                    && drop_y < rect.y + rect.height
+                {
+                    Some((ws.id, frame_id))
+                } else {
+                    None
+                }
             })
-            .collect();
+        });
 
-        let gap = self.config.general.gap as i32;
+        if let Some((ws_id, target_frame_id)) = target_frame {
+            let source_frame_id = self
+                .workspaces
+                .workspaces
+                .iter()
+                .find_map(|ws| ws.root.find_frame_with_window(window_id));
 
-        for (window_id, drop_x, drop_y) in releases {
-            // Find which frame the drop position falls in
-            let target_frame = self.workspaces.workspaces.iter().find_map(|ws| {
-                let output = ws
-                    .active_output
-                    .and_then(|oid| self.workspaces.output(oid))?;
-                let area = output.usable_rect();
-                let layouts = ws.root.calculate_layout(area, gap);
-                layouts.into_iter().find_map(|(frame_id, rect)| {
-                    if drop_x >= rect.x
-                        && drop_x < rect.x + rect.width
-                        && drop_y >= rect.y
-                        && drop_y < rect.y + rect.height
-                    {
-                        Some((ws.id, frame_id))
-                    } else {
-                        None
-                    }
-                })
-            });
+            if let Some(src_fid) = source_frame_id {
+                if src_fid != target_frame_id {
+                    let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
+                        ws.root
+                            .find_frame(src_fid)
+                            .and_then(|f| f.active_window().cloned())
+                    });
 
-            if let Some((ws_id, target_frame_id)) = target_frame {
-                // Find current frame of this window
-                let source_frame_id = self
-                    .workspaces
-                    .workspaces
-                    .iter()
-                    .find_map(|ws| ws.root.find_frame_with_window(window_id));
-
-                if let Some(src_fid) = source_frame_id {
-                    if src_fid != target_frame_id {
-                        // Get window ref
-                        let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
-                            ws.root
-                                .find_frame(src_fid)
-                                .and_then(|f| f.active_window().cloned())
-                        });
-
-                        if let Some(win_ref) = win_ref {
-                            // Remove from source
-                            for ws in &mut self.workspaces.workspaces {
-                                if let Some(frame) = ws.root.find_frame_mut(src_fid) {
-                                    frame.remove_window(window_id);
-                                }
+                    if let Some(win_ref) = win_ref {
+                        for ws in &mut self.workspaces.workspaces {
+                            if let Some(frame) = ws.root.find_frame_mut(src_fid) {
+                                frame.remove_window(window_id);
                             }
-                            // Add to target
-                            let ws = &mut self.workspaces.workspaces[ws_id.0];
-                            if let Some(frame) = ws.root.find_frame_mut(target_frame_id) {
-                                frame.add_window(win_ref);
-                            }
-                            // Update frame tracking
-                            if let Some(win) = self.windows.iter_mut().find(|w| w.id == window_id) {
-                                win.frame_id = Some(target_frame_id);
-                            }
-                            ws.focused_frame = target_frame_id;
-                            log::info!(
-                                "Pointer drag moved window {} from {:?} to {:?}",
-                                window_id,
-                                src_fid,
-                                target_frame_id
-                            );
                         }
+                        let ws = &mut self.workspaces.workspaces[ws_id.0];
+                        if let Some(frame) = ws.root.find_frame_mut(target_frame_id) {
+                            frame.add_window(win_ref);
+                        }
+                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == window_id) {
+                            win.frame_id = Some(target_frame_id);
+                        }
+                        ws.focused_frame = target_frame_id;
+                        log::info!(
+                            "Pointer drag moved window {} from {:?} to {:?}",
+                            window_id,
+                            src_fid,
+                            target_frame_id
+                        );
                     }
                 }
             }
         }
+    }
 
-        // Handle resize ops: adjust split ratio based on pointer delta
+    fn handle_seat_ops(&mut self) {
+        // Handle resize ops: adjust split ratio based on per-frame pointer delta
         let resize_ops: Vec<(u64, i32, i32)> = self
             .seats
-            .values()
-            .filter(|s| !s.op_release) // only during active drag
+            .values_mut()
+            .filter(|s| !s.op_release)
             .filter_map(|s| match &s.op {
-                SeatOp::Resize { window_id, .. } => Some((*window_id, s.op_dx, s.op_dy)),
+                SeatOp::Resize { window_id, .. } => {
+                    let ddx = s.op_dx - s.op_prev_dx;
+                    let ddy = s.op_dy - s.op_prev_dy;
+                    s.op_prev_dx = s.op_dx;
+                    s.op_prev_dy = s.op_dy;
+                    if ddx != 0 || ddy != 0 {
+                        Some((*window_id, ddx, ddy))
+                    } else {
+                        None
+                    }
+                }
                 _ => None,
             })
             .collect();
@@ -1182,6 +1194,8 @@ impl Seat {
             op: SeatOp::None,
             op_dx: 0,
             op_dy: 0,
+            op_prev_dx: 0,
+            op_prev_dy: 0,
             op_release: false,
         }
     }
