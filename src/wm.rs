@@ -177,6 +177,8 @@ impl WindowManager {
         river_xkb: &RiverXkbBindingsV1,
         qh: &QueueHandle<AppData>,
     ) {
+        let prev_focused_frame = self.workspaces.focused_workspace().focused_frame;
+
         self.remove_closed_outputs();
         self.remove_closed_windows();
         self.remove_closed_seats();
@@ -185,6 +187,13 @@ impl WindowManager {
         self.handle_pending_actions(proxy);
         self.apply_window_management(proxy);
         self.update_binding_modes();
+
+        // Cursor follows focus: warp pointer when focus changed via keyboard
+        let new_focused_frame = self.workspaces.focused_workspace().focused_frame;
+        if self.config.general.cursor_follows_focus && new_focused_frame != prev_focused_frame {
+            self.warp_cursor_to_frame(new_focused_frame);
+        }
+
         proxy.manage_finish();
     }
 
@@ -681,6 +690,23 @@ impl WindowManager {
                 self.config = Config::load();
                 log::info!("Configuration reloaded");
                 // TODO: re-parse bindings and re-register with seats
+            }
+        }
+    }
+
+    fn warp_cursor_to_frame(&self, frame_id: FrameId) {
+        let gap = self.config.general.gap as i32;
+        let ws = self.workspaces.focused_workspace();
+        let output = ws.active_output.and_then(|oid| self.workspaces.output(oid));
+        if let Some(output) = output {
+            let area = output.usable_rect();
+            let layouts = ws.root.calculate_layout(area, gap);
+            if let Some((_, rect)) = layouts.iter().find(|(id, _)| *id == frame_id) {
+                let cx = rect.x + rect.width / 2;
+                let cy = rect.y + rect.height / 2;
+                for seat in self.seats.values() {
+                    seat.proxy.pointer_warp(cx, cy);
+                }
             }
         }
     }

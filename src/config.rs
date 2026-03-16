@@ -44,6 +44,9 @@ pub struct GeneralConfig {
     /// Focus follows mouse pointer into frames.
     pub focus_follows_mouse: bool,
 
+    /// Warp cursor to focused frame on keyboard focus change.
+    pub cursor_follows_focus: bool,
+
     /// Default split ratio for new splits.
     pub default_split_ratio: f32,
 
@@ -144,6 +147,7 @@ impl Default for GeneralConfig {
             physical_keys: true,
             physical_layout_index: 0,
             focus_follows_mouse: true,
+            cursor_follows_focus: true,
             default_split_ratio: 0.5,
             gap: 4,
             border_width: 2,
