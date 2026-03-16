@@ -124,6 +124,7 @@ pub struct XkbBindingEntry {
 pub struct PointerBindingEntry {
     pub proxy: RiverPointerBindingV1,
     pub action: Action,
+    pub is_move: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +192,11 @@ impl WindowManager {
         // Cursor follows focus: warp pointer when focus changed via keyboard
         let new_focused_frame = self.workspaces.focused_workspace().focused_frame;
         if self.config.general.cursor_follows_focus && new_focused_frame != prev_focused_frame {
+            log::info!(
+                "Focus changed {:?} -> {:?}, warping cursor",
+                prev_focused_frame,
+                new_focused_frame
+            );
             self.warp_cursor_to_frame(new_focused_frame);
         }
 
@@ -308,6 +314,11 @@ impl WindowManager {
                 continue;
             }
 
+            log::info!(
+                "Initializing seat, registering {} normal + {} resize bindings",
+                self.normal_bindings.len(),
+                self.resize_bindings.len()
+            );
             // Register normal mode bindings
             for binding in &self.normal_bindings {
                 let mods = Modifiers::from_bits_truncate(binding.modifiers);
@@ -361,33 +372,42 @@ impl WindowManager {
                 );
             }
 
-            // Register pointer bindings (Super+Left=move, Super+Right=resize)
+            // Register pointer bindings (Mod+Left=move, Mod+Right=resize)
+            // Use the same modifier as the keybinding profile
             {
                 const BTN_LEFT: u32 = 0x110;
                 const BTN_RIGHT: u32 = 0x111;
-                let mods = Modifiers::Mod4;
+
+                // Derive pointer modifier from the first keybinding's modifier
+                let pointer_mods = self
+                    .normal_bindings
+                    .first()
+                    .map(|b| Modifiers::from_bits_truncate(b.modifiers))
+                    .unwrap_or(Modifiers::Mod4);
 
                 let move_proxy =
                     seat.proxy
-                        .get_pointer_binding(BTN_LEFT, mods, qh, seat.proxy.id());
+                        .get_pointer_binding(BTN_LEFT, pointer_mods, qh, seat.proxy.id());
                 move_proxy.enable();
                 seat.pointer_bindings.insert(
                     move_proxy.id(),
                     PointerBindingEntry {
                         proxy: move_proxy,
-                        action: Action::None, // handled via SeatOp
+                        action: Action::ToggleFloat, // marker: this is the move binding
+                        is_move: true,
                     },
                 );
 
                 let resize_proxy =
                     seat.proxy
-                        .get_pointer_binding(BTN_RIGHT, mods, qh, seat.proxy.id());
+                        .get_pointer_binding(BTN_RIGHT, pointer_mods, qh, seat.proxy.id());
                 resize_proxy.enable();
                 seat.pointer_bindings.insert(
                     resize_proxy.id(),
                     PointerBindingEntry {
                         proxy: resize_proxy,
                         action: Action::None,
+                        is_move: false,
                     },
                 );
             }
@@ -399,8 +419,25 @@ impl WindowManager {
     // ── Action execution ─────────────────────────────────────────────────
 
     fn handle_pending_actions(&mut self, wm_proxy: &RiverWindowManagerV1) {
-        // Focus-follows-mouse: when pointer enters a window, focus its frame
-        if self.config.general.focus_follows_mouse {
+        // Collect actions from all seats first — we need to know if there's
+        // a keyboard action before applying focus-follows-mouse
+        let actions: Vec<Action> = self
+            .seats
+            .values_mut()
+            .map(|seat| {
+                let action = std::mem::replace(&mut seat.pending_action, Action::None);
+                if let Some(window_proxy) = seat.interacted.take() {
+                    let _ = window_proxy;
+                }
+                action
+            })
+            .collect();
+
+        let has_keyboard_action = actions.iter().any(|a| !matches!(a, Action::None));
+
+        // Focus-follows-mouse: only when no keyboard action is pending,
+        // otherwise the keyboard focus change would be immediately overridden
+        if self.config.general.focus_follows_mouse && !has_keyboard_action {
             let hovered_ids: Vec<u64> = self
                 .seats
                 .values()
@@ -408,7 +445,6 @@ impl WindowManager {
                 .collect();
 
             for hovered_id in hovered_ids {
-                // Find which frame this window is in
                 for ws in &self.workspaces.workspaces {
                     if let Some(frame_id) = ws.root.find_frame_with_window(hovered_id) {
                         if ws.focused_frame != frame_id {
@@ -422,20 +458,6 @@ impl WindowManager {
                 }
             }
         }
-
-        // Collect actions from all seats
-        let actions: Vec<Action> = self
-            .seats
-            .values_mut()
-            .map(|seat| {
-                let action = std::mem::replace(&mut seat.pending_action, Action::None);
-                // Handle interactions: bring interacted window to top
-                if let Some(window_proxy) = seat.interacted.take() {
-                    let _ = window_proxy;
-                }
-                action
-            })
-            .collect();
 
         for action in actions {
             self.perform_action(action, wm_proxy);
@@ -518,11 +540,18 @@ impl WindowManager {
                     if let Some(output) = self.workspaces.output(output_id) {
                         let area = output.usable_rect();
                         if let Some(neighbor) = ws.root.find_neighbor(frame_id, dir, area, gap) {
+                            log::info!("FocusDirection {dir:?}: {frame_id:?} -> {neighbor:?}");
                             let ws_mut = &mut self.workspaces.workspaces
                                 [self.workspaces.focused_workspace.0];
                             ws_mut.focused_frame = neighbor;
+                        } else {
+                            log::info!("FocusDirection {dir:?}: no neighbor from {frame_id:?} (area={area:?})");
                         }
+                    } else {
+                        log::info!("FocusDirection: no output found");
                     }
+                } else {
+                    log::info!("FocusDirection: workspace has no active output");
                 }
             }
 
@@ -994,18 +1023,40 @@ impl WindowManager {
         }
     }
 
-    fn handle_seat_ops(&self) {
-        for seat in self.seats.values() {
-            match &seat.op {
+    fn handle_seat_ops(&mut self) {
+        // Collect ops to avoid borrow issues
+        let ops: Vec<(SeatOp, i32, i32)> = self
+            .seats
+            .values()
+            .map(|s| (s.op.clone(), s.op_dx, s.op_dy))
+            .collect();
+
+        for (op, dx, dy) in &ops {
+            match op {
                 SeatOp::None => {}
                 SeatOp::Move {
                     window_id,
                     start_x,
                     start_y,
                 } => {
-                    if let Some(win) = self.windows.iter().find(|w| w.id == *window_id) {
-                        win.node
-                            .set_position(start_x + seat.op_dx, start_y + seat.op_dy);
+                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == *window_id) {
+                        // Auto-float on drag
+                        if !win.floating {
+                            win.floating = true;
+                            // Remove from frame
+                            for ws in &mut self.workspaces.workspaces {
+                                if let Some(frame_id) = ws.root.find_frame_with_window(*window_id) {
+                                    if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                                        frame.remove_window(*window_id);
+                                    }
+                                }
+                            }
+                        }
+                        let new_x = start_x + dx;
+                        let new_y = start_y + dy;
+                        win.float_x = new_x;
+                        win.float_y = new_y;
+                        win.node.set_position(new_x, new_y);
                     }
                 }
                 SeatOp::Resize {
@@ -1016,7 +1067,17 @@ impl WindowManager {
                     start_height,
                     edges,
                 } => {
-                    if let Some(win) = self.windows.iter().find(|w| w.id == *window_id) {
+                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == *window_id) {
+                        if !win.floating {
+                            win.floating = true;
+                            for ws in &mut self.workspaces.workspaces {
+                                if let Some(frame_id) = ws.root.find_frame_with_window(*window_id) {
+                                    if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                                        frame.remove_window(*window_id);
+                                    }
+                                }
+                            }
+                        }
                         let (mut x, mut y) = (*start_x, *start_y);
                         if edges.contains(Edges::Left) {
                             x += start_width - win.width;
@@ -1024,6 +1085,8 @@ impl WindowManager {
                         if edges.contains(Edges::Top) {
                             y += start_height - win.height;
                         }
+                        win.float_x = x;
+                        win.float_y = y;
                         win.node.set_position(x, y);
                     }
                 }

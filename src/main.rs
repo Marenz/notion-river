@@ -19,8 +19,34 @@ use wayland_client::Connection;
 
 use crate::wm::AppData;
 
+/// Wrapper that flushes after every write (line-buffered).
+struct LineFlush(std::fs::File);
+
+impl std::io::Write for LineFlush {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.0.write(buf)?;
+        self.0.flush()?;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Log to /tmp/notion-river.log since River's child stderr goes to a socket.
+    let log_target = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/notion-river.log");
+
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    if let Ok(file) = log_target {
+        use std::io::Write;
+        builder.target(env_logger::Target::Pipe(Box::new(LineFlush(file))));
+    }
+    builder.init();
 
     log::info!("notion-river starting");
 
