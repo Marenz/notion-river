@@ -13,7 +13,7 @@ use wayland_client::protocol::{
     wl_shm_pool::WlShmPool,
     wl_surface::WlSurface,
 };
-use wayland_client::{Proxy, QueueHandle};
+use wayland_client::QueueHandle;
 
 use crate::layout::{Frame, FrameId, Rect};
 use crate::protocol::river_decoration_v1::RiverDecorationV1;
@@ -178,6 +178,7 @@ impl DecorationManager {
     }
 
     /// Remove decoration for a window that's gone.
+    #[allow(dead_code)]
     pub fn remove(&mut self, window_id: u64) {
         if let Some(dec) = self.decorations.remove(&window_id) {
             if let Some(buf) = dec.buffer {
@@ -192,6 +193,7 @@ impl DecorationManager {
     }
 
     /// Remove decorations for windows not in the provided set.
+    #[allow(dead_code)]
     pub fn cleanup(&mut self, active_window_ids: &[u64]) {
         let to_remove: Vec<u64> = self
             .decorations

@@ -43,7 +43,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
     if let Ok(file) = log_target {
-        use std::io::Write;
         builder.target(env_logger::Target::Pipe(Box::new(LineFlush(file))));
     }
     builder.init();

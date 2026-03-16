@@ -15,6 +15,7 @@ pub struct Binding {
 /// These are bitmask values.
 pub mod modifiers {
     pub const SHIFT: u32 = 1;
+    #[allow(dead_code)]
     pub const CAPS_LOCK: u32 = 2;
     pub const CTRL: u32 = 4;
     pub const MOD1: u32 = 8; // Alt

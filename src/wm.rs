@@ -101,6 +101,7 @@ pub struct Seat {
     pub proxy: RiverSeatV1,
     pub new: bool,
     pub removed: bool,
+    #[allow(dead_code)]
     pub focused_window: Option<RiverWindowV1>,
     pub hovered: Option<RiverWindowV1>,
     pub interacted: Option<RiverWindowV1>,
@@ -127,6 +128,7 @@ pub struct XkbBindingEntry {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PointerBindingEntry {
     pub proxy: RiverPointerBindingV1,
     pub action: Action,
@@ -138,15 +140,22 @@ pub enum SeatOp {
     None,
     Move {
         window_id: u64,
+        #[allow(dead_code)]
         start_x: i32,
+        #[allow(dead_code)]
         start_y: i32,
     },
     Resize {
         window_id: u64,
+        #[allow(dead_code)]
         start_x: i32,
+        #[allow(dead_code)]
         start_y: i32,
+        #[allow(dead_code)]
         start_width: i32,
+        #[allow(dead_code)]
         start_height: i32,
+        #[allow(dead_code)]
         edges: Edges,
         /// Which axes to resize (determined by proximity to split boundaries).
         resize_h: bool,
@@ -567,10 +576,11 @@ impl WindowManager {
                 let frame_id = ws.focused_frame;
                 if let Some(frame) = ws.root.find_frame(frame_id) {
                     if let Some(win_ref) = frame.active_window() {
-                        if let Some(win) = self.windows.iter().find(|w| w.id == win_ref.window_id) {
+                        if let Some(_win) = self.windows.iter().find(|w| w.id == win_ref.window_id)
+                        {
                             // TODO: track fullscreen state to toggle properly
                             // For now, need to get the output proxy to fullscreen on
-                            // win.proxy.fullscreen(&output_proxy);
+                            // _win.proxy.fullscreen(&output_proxy);
                             // For toggle, we'd need to track state. Skip for now.
                             log::info!("Fullscreen toggle not yet implemented");
                         }
@@ -999,6 +1009,7 @@ impl WindowManager {
             rect_x: i32,
             rect_y: i32,
             rect_width: i32,
+            #[allow(dead_code)]
             rect_height: i32,
             is_focused: bool,
             border_color: (u32, u32, u32, u32),
@@ -1097,7 +1108,7 @@ impl WindowManager {
 
         // Draw tab bars and empty frame indicators
         if let (Some(shm), Some(compositor)) = (shm, compositor) {
-            let wm_proxy_ref: Option<&RiverWindowManagerV1> = None; // we need it for shell surfaces
+            let _wm_proxy_ref: Option<&RiverWindowManagerV1> = None; // we need it for shell surfaces
 
             for cmd in &draw_cmds {
                 let frame = self

@@ -17,6 +17,7 @@ pub struct Config {
 
     /// Window placement rules (like Notion's winprops).
     #[serde(default)]
+    #[allow(dead_code)]
     pub winprops: Vec<WinProp>,
 
     /// Named keybinding profiles. "i3_neo" and "notion" are built-in defaults.
@@ -77,6 +78,7 @@ pub struct WorkspaceConfig {
 /// A window placement rule, like Notion's winprops.
 /// Routes windows matching a pattern to a specific named frame or workspace.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct WinProp {
     /// Regex pattern matched against app_id.
     pub app_id: Option<String>,

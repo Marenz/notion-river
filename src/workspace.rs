@@ -210,11 +210,13 @@ impl WorkspaceManager {
     }
 
     /// Get the currently focused workspace mutably.
+    #[allow(dead_code)]
     pub fn focused_workspace_mut(&mut self) -> &mut Workspace {
         &mut self.workspaces[self.focused_workspace.0]
     }
 
     /// Get a workspace by name.
+    #[allow(dead_code)]
     pub fn workspace_by_name(&self, name: &str) -> Option<&Workspace> {
         self.workspaces.iter().find(|w| w.name == name)
     }

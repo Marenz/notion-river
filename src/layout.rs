@@ -97,6 +97,7 @@ impl Frame {
         }
     }
 
+    #[allow(dead_code)]
     pub fn named(name: &str) -> Self {
         Self {
             id: FrameId::new(),
@@ -110,6 +111,7 @@ impl Frame {
         self.windows.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn window_count(&self) -> usize {
         self.windows.len()
     }
@@ -301,6 +303,7 @@ impl SplitNode {
     }
 
     /// Find a frame by name (for winprop targeting).
+    #[allow(dead_code)]
     pub fn find_frame_by_name(&self, name: &str) -> Option<FrameId> {
         match self {
             SplitNode::Leaf(frame) => {
