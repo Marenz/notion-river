@@ -1,0 +1,105 @@
+# notion-river configuration
+# Place this at ~/.config/notion-river/config.toml
+
+[general]
+# Use physical key positions (layout index 0) instead of logical keysyms.
+# This makes keybindings work identically across keyboard layouts (e.g. Neo, Dvorak).
+physical_keys = true
+physical_layout_index = 0
+
+# Default split ratio for new splits.
+default_split_ratio = 0.5
+
+# Gap between frames in pixels.
+gap = 4
+
+# Border width in pixels.
+border_width = 2
+
+[commands]
+terminal = "contour"
+launcher = ["rofi", "-show", "combi"]
+
+# Choose keybinding profile: "i3_neo" or "notion"
+active_profile = "i3_neo"
+
+[appearance]
+active_border = "#4c7899"
+inactive_border = "#333333"
+empty_border = "#555555"
+urgent_border = "#900000"
+
+# ── Workspaces ──────────────────────────────────────────────────────────
+# Each workspace has a name, optional preferred output, and optional initial layout.
+# initial_layout: "hsplit" (side-by-side) or "vsplit" (stacked) or omit for single frame.
+
+[[workspaces]]
+name = "main"
+output = "HDMI-0"
+initial_layout = "hsplit"
+
+[[workspaces]]
+name = "secondary"
+output = "HDMI-0"
+
+[[workspaces]]
+name = "utility"
+output = "HDMI-0"
+
+[[workspaces]]
+name = "steam-games"
+output = "HDMI-0"
+
+[[workspaces]]
+name = "social"
+output = "DP-0"
+
+[[workspaces]]
+name = "work"
+output = "DP-0"
+
+[[workspaces]]
+name = "term"
+output = "DP-0"
+
+# ── Window Rules (winprops) ─────────────────────────────────────────────
+# Route windows to specific workspaces or frames based on app_id/title patterns.
+
+[[winprops]]
+app_id = "telegramdesktop"
+workspace = "social"
+
+[[winprops]]
+app_id = "vivaldi.*"
+workspace = "main"
+
+[[winprops]]
+app_id = "discord"
+workspace = "social"
+
+[[winprops]]
+app_id = "keepassxc"
+workspace = "utility"
+
+[[winprops]]
+app_id = "thunderbird.*"
+workspace = "utility"
+
+[[winprops]]
+app_id = "steam_app_.*"
+floating = true
+
+# ── Custom Keybinding Profile ────────────────────────────────────────────
+# Uncomment and modify to define your own keybinding profile.
+# Set active_profile = "custom" above to use it.
+#
+# [profiles.custom]
+# [[profiles.custom.bindings]]
+# modifiers = "super"
+# key = "Return"
+# action = "spawn_terminal"
+#
+# [[profiles.custom.bindings]]
+# modifiers = "super"
+# key = "c"
+# action = "close"

@@ -1,0 +1,17 @@
+[package]
+name = "notion-river"
+version = "0.1.0"
+edition = "2024"
+description = "A Notion/Ion3-style static tiling window manager for River"
+
+[dependencies]
+bitflags = "2.11"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+wayland-backend = "0.3.14"
+wayland-client = "0.31.13"
+wayland-scanner = "0.31.9"
+xkbcommon = { version = "0.8", features = ["wayland"] }
+dirs = "6"
