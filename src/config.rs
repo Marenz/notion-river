@@ -41,6 +41,9 @@ pub struct GeneralConfig {
     /// 0 = first layout (usually the base layout like "de" or "us").
     pub physical_layout_index: u32,
 
+    /// Focus follows mouse pointer into frames.
+    pub focus_follows_mouse: bool,
+
     /// Default split ratio for new splits.
     pub default_split_ratio: f32,
 
@@ -140,6 +143,7 @@ impl Default for GeneralConfig {
         Self {
             physical_keys: true,
             physical_layout_index: 0,
+            focus_follows_mouse: true,
             default_split_ratio: 0.5,
             gap: 4,
             border_width: 2,

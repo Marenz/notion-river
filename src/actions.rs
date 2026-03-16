@@ -11,6 +11,8 @@ pub enum Action {
     ToggleFullscreen,
     /// Toggle floating for the focused window.
     ToggleFloat,
+    /// Toggle the split orientation (H↔V) of the parent of the focused frame.
+    ToggleSplit,
 
     // ── Focus ──
     /// Move focus to the frame in the given direction.
@@ -73,6 +75,7 @@ impl Action {
             "close" => Action::Close,
             "toggle_fullscreen" | "fullscreen" => Action::ToggleFullscreen,
             "toggle_float" | "floating" => Action::ToggleFloat,
+            "toggle_split" => Action::ToggleSplit,
 
             "focus" => {
                 if let Some(dir) = args.first().and_then(|s| Direction::from_str(s)) {

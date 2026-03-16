@@ -140,6 +140,7 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     // ── Layout manipulation ──
     bind(&mut b, "super", "b", "split_horizontal", &[]);
     bind(&mut b, "super", "v", "split_vertical", &[]);
+    bind(&mut b, "super", "t", "toggle_split", &[]);
 
     // ── Tabbing ──
     bind(&mut b, "super", "w", "next_tab", &[]);
@@ -252,6 +253,8 @@ pub fn builtin_notion_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super", "s", "split_horizontal", &[]);
     // Super+v = split vertical
     bind(&mut b, "super", "v", "split_vertical", &[]);
+    // Super+t = toggle split orientation
+    bind(&mut b, "super", "t", "toggle_split", &[]);
     // Super+x = unsplit / remove empty frame (mnemonic: "x out")
     bind(&mut b, "super", "x", "unsplit", &[]);
 

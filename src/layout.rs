@@ -506,6 +506,37 @@ impl SplitNode {
         }
     }
 
+    /// Toggle the orientation of the parent split containing the target frame.
+    pub fn toggle_orientation(&mut self, target_id: FrameId) -> bool {
+        match self {
+            SplitNode::Leaf(_) => false,
+            SplitNode::Split {
+                orientation,
+                first,
+                second,
+                ..
+            } => {
+                let in_first = first.contains_frame(target_id);
+                let in_second = second.contains_frame(target_id);
+                if in_first || in_second {
+                    // Try children first (deepest match wins)
+                    let handled =
+                        first.toggle_orientation(target_id) || second.toggle_orientation(target_id);
+                    if !handled {
+                        // We are the direct parent — toggle
+                        *orientation = match *orientation {
+                            Orientation::Horizontal => Orientation::Vertical,
+                            Orientation::Vertical => Orientation::Horizontal,
+                        };
+                        return true;
+                    }
+                    return handled;
+                }
+                false
+            }
+        }
+    }
+
     fn contains_frame(&self, target_id: FrameId) -> bool {
         match self {
             SplitNode::Leaf(frame) => frame.id == target_id,

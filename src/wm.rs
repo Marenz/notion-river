@@ -8,7 +8,7 @@ use wayland_client::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
 use crate::actions::Action;
 use crate::bindings::{get_profile_bindings, parse_all_bindings, Binding};
 use crate::config::Config;
-use crate::decorations::{DecorationManager, TAB_BAR_HEIGHT};
+use crate::decorations::{DecorationManager, EmptyFrameManager, TAB_BAR_HEIGHT};
 use crate::layout::{FrameId, Orientation, WindowRef};
 use crate::workspace::{OutputId, WorkspaceManager};
 
@@ -66,6 +66,8 @@ pub struct WindowManager {
     pub resize_bindings: Vec<Binding>,
     /// Decoration manager for tab bars.
     pub decorations: DecorationManager,
+    /// Empty frame indicator manager.
+    pub empty_frames: EmptyFrameManager,
 }
 
 /// A window tracked by the WM.
@@ -163,6 +165,7 @@ impl WindowManager {
             normal_bindings,
             resize_bindings,
             decorations: DecorationManager::new(),
+            empty_frames: EmptyFrameManager::new(),
         }
     }
 
@@ -192,7 +195,7 @@ impl WindowManager {
         compositor: Option<&WlCompositor>,
         qh: &QueueHandle<AppData>,
     ) {
-        self.apply_layout_positions(shm, compositor, qh);
+        self.apply_layout_positions(proxy, shm, compositor, qh);
         self.handle_seat_ops();
         proxy.render_finish();
     }
@@ -387,6 +390,30 @@ impl WindowManager {
     // ── Action execution ─────────────────────────────────────────────────
 
     fn handle_pending_actions(&mut self, wm_proxy: &RiverWindowManagerV1) {
+        // Focus-follows-mouse: when pointer enters a window, focus its frame
+        if self.config.general.focus_follows_mouse {
+            let hovered_ids: Vec<u64> = self
+                .seats
+                .values()
+                .filter_map(|seat| seat.hovered.as_ref().map(|w| w.id().protocol_id() as u64))
+                .collect();
+
+            for hovered_id in hovered_ids {
+                // Find which frame this window is in
+                for ws in &self.workspaces.workspaces {
+                    if let Some(frame_id) = ws.root.find_frame_with_window(hovered_id) {
+                        if ws.focused_frame != frame_id {
+                            let ws_id = ws.id;
+                            let ws_mut = &mut self.workspaces.workspaces[ws_id.0];
+                            ws_mut.focused_frame = frame_id;
+                            self.workspaces.focused_workspace = ws_id;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
         // Collect actions from all seats
         let actions: Vec<Action> = self
             .seats
@@ -395,8 +422,7 @@ impl WindowManager {
                 let action = std::mem::replace(&mut seat.pending_action, Action::None);
                 // Handle interactions: bring interacted window to top
                 if let Some(window_proxy) = seat.interacted.take() {
-                    // Find and refocus
-                    let _ = window_proxy; // TODO: raise to top
+                    let _ = window_proxy;
                 }
                 action
             })
@@ -422,6 +448,9 @@ impl WindowManager {
     }
 
     fn perform_action(&mut self, action: Action, wm_proxy: &RiverWindowManagerV1) {
+        if !matches!(action, Action::None) {
+            log::info!("Action: {action:?}");
+        }
         match action {
             Action::None => {}
 
@@ -599,6 +628,14 @@ impl WindowManager {
                 self.perform_unsplit();
             }
 
+            Action::ToggleSplit => {
+                let ws = &mut self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+                let frame_id = ws.focused_frame;
+                if ws.root.toggle_orientation(frame_id) {
+                    log::info!("Toggled split orientation for frame {frame_id:?}");
+                }
+            }
+
             Action::SwitchWorkspace(name) => {
                 self.workspaces.switch_workspace(&name);
             }
@@ -762,6 +799,7 @@ impl WindowManager {
 
     fn apply_layout_positions(
         &mut self,
+        wm_proxy: &RiverWindowManagerV1,
         shm: Option<&WlShm>,
         compositor: Option<&WlCompositor>,
         qh: &QueueHandle<AppData>,
@@ -851,10 +889,39 @@ impl WindowManager {
             );
         }
 
-        // Draw tab bars (needs frame data + decoration manager)
+        // Collect empty frames
+        struct EmptyCmd {
+            frame_id: FrameId,
+            rect: crate::layout::Rect,
+            is_focused: bool,
+        }
+        let mut empty_cmds: Vec<EmptyCmd> = Vec::new();
+
+        for ws in &self.workspaces.workspaces {
+            let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid)) {
+                Some(o) => o,
+                None => continue,
+            };
+            let area = output.usable_rect();
+            let frame_layouts = ws.root.calculate_layout(area, gap);
+            for (frame_id, rect) in &frame_layouts {
+                if let Some(frame) = ws.root.find_frame(*frame_id) {
+                    if frame.is_empty() {
+                        empty_cmds.push(EmptyCmd {
+                            frame_id: *frame_id,
+                            rect: *rect,
+                            is_focused: *frame_id == focused_frame_id,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Draw tab bars and empty frame indicators
         if let (Some(shm), Some(compositor)) = (shm, compositor) {
+            let wm_proxy_ref: Option<&RiverWindowManagerV1> = None; // we need it for shell surfaces
+
             for cmd in &draw_cmds {
-                // Find the frame for this window
                 let frame = self
                     .workspaces
                     .workspaces
@@ -875,6 +942,21 @@ impl WindowManager {
                     );
                 }
             }
+
+            // Draw empty frame indicators
+            let empty_ids: Vec<FrameId> = empty_cmds.iter().map(|c| c.frame_id).collect();
+            for cmd in &empty_cmds {
+                self.empty_frames.draw_empty_frame(
+                    cmd.frame_id,
+                    cmd.rect,
+                    cmd.is_focused,
+                    shm,
+                    compositor,
+                    wm_proxy,
+                    qh,
+                );
+            }
+            self.empty_frames.cleanup(&empty_ids);
         }
 
         // Position floating windows

@@ -15,8 +15,11 @@ use wayland_client::protocol::{
 };
 use wayland_client::{Proxy, QueueHandle};
 
-use crate::layout::Frame;
+use crate::layout::{Frame, FrameId, Rect};
 use crate::protocol::river_decoration_v1::RiverDecorationV1;
+use crate::protocol::river_node_v1::RiverNodeV1;
+use crate::protocol::river_shell_surface_v1::RiverShellSurfaceV1;
+use crate::protocol::river_window_manager_v1::RiverWindowManagerV1;
 use crate::protocol::river_window_v1::RiverWindowV1;
 use crate::wm::AppData;
 
@@ -198,6 +201,178 @@ impl DecorationManager {
             .collect();
         for id in to_remove {
             self.remove(id);
+        }
+    }
+}
+
+// ── Empty frame indicators using shell surfaces ──────────────────────────
+
+const COLOR_EMPTY_FOCUSED: u32 = 0xFF4c7899;
+const COLOR_EMPTY_UNFOCUSED: u32 = 0xFF444444;
+
+/// A shell surface indicator for an empty frame.
+pub struct EmptyFrameIndicator {
+    pub surface: WlSurface,
+    pub shell_surface: RiverShellSurfaceV1,
+    pub node: RiverNodeV1,
+    pub buffer: Option<WlBuffer>,
+    pub pool: Option<WlShmPool>,
+    pub last_width: i32,
+    pub last_height: i32,
+    pub last_focused: bool,
+}
+
+impl std::fmt::Debug for EmptyFrameIndicator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmptyFrameIndicator").finish()
+    }
+}
+
+/// Manages empty frame indicators.
+#[derive(Debug, Default)]
+pub struct EmptyFrameManager {
+    pub indicators: HashMap<FrameId, EmptyFrameIndicator>,
+}
+
+impl EmptyFrameManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Draw an empty frame border indicator.
+    pub fn draw_empty_frame(
+        &mut self,
+        frame_id: FrameId,
+        rect: Rect,
+        is_focused: bool,
+        shm: &WlShm,
+        compositor: &WlCompositor,
+        wm_proxy: &RiverWindowManagerV1,
+        qh: &QueueHandle<AppData>,
+    ) {
+        let width = rect.width;
+        let height = rect.height;
+        if width <= 0 || height <= 0 {
+            return;
+        }
+
+        let ind = self.indicators.entry(frame_id).or_insert_with(|| {
+            let surface = compositor.create_surface(qh, ());
+            let shell_surface = wm_proxy.get_shell_surface(&surface, qh, ());
+            let node = shell_surface.get_node(qh, ());
+            EmptyFrameIndicator {
+                surface,
+                shell_surface,
+                node,
+                buffer: None,
+                pool: None,
+                last_width: 0,
+                last_height: 0,
+                last_focused: false,
+            }
+        });
+
+        let needs_redraw =
+            ind.last_width != width || ind.last_height != height || ind.last_focused != is_focused;
+
+        if needs_redraw {
+            if let Some(buf) = ind.buffer.take() {
+                buf.destroy();
+            }
+            if let Some(pool) = ind.pool.take() {
+                pool.destroy();
+            }
+
+            let stride = width * 4;
+            let size = stride * height;
+
+            let fd = match create_shm_file(size as usize) {
+                Ok(fd) => fd,
+                Err(e) => {
+                    log::error!("Failed to create shm file for empty frame: {e}");
+                    return;
+                }
+            };
+
+            let map = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    size as usize,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED,
+                    fd.as_fd().as_raw_fd(),
+                    0,
+                )
+            };
+            if map == libc::MAP_FAILED {
+                return;
+            }
+
+            let pixels = unsafe {
+                std::slice::from_raw_parts_mut(map as *mut u32, (width * height) as usize)
+            };
+
+            // Draw a thin border rectangle, transparent inside
+            let border_w = 2usize;
+            let color = if is_focused {
+                COLOR_EMPTY_FOCUSED
+            } else {
+                COLOR_EMPTY_UNFOCUSED
+            };
+            let w = width as usize;
+            let h = height as usize;
+            for y in 0..h {
+                for x in 0..w {
+                    let on_border =
+                        y < border_w || y >= h - border_w || x < border_w || x >= w - border_w;
+                    pixels[y * w + x] = if on_border { color } else { 0x00000000 };
+                }
+            }
+
+            unsafe {
+                libc::munmap(map, size as usize);
+            }
+
+            let pool = shm.create_pool(fd.as_fd(), size, qh, ());
+            let buffer =
+                pool.create_buffer(0, width, height, stride, wl_shm::Format::Argb8888, qh, ());
+
+            ind.surface.attach(Some(&buffer), 0, 0);
+            ind.surface.damage_buffer(0, 0, width, height);
+
+            ind.buffer = Some(buffer);
+            ind.pool = Some(pool);
+            ind.last_width = width;
+            ind.last_height = height;
+            ind.last_focused = is_focused;
+        }
+
+        ind.node.set_position(rect.x, rect.y);
+        ind.node.place_top();
+        ind.shell_surface.sync_next_commit();
+        ind.surface.commit();
+    }
+
+    /// Remove indicators for frames that no longer exist or are no longer empty.
+    pub fn cleanup(&mut self, empty_frame_ids: &[FrameId]) {
+        let to_remove: Vec<FrameId> = self
+            .indicators
+            .keys()
+            .filter(|id| !empty_frame_ids.contains(id))
+            .copied()
+            .collect();
+        for id in to_remove {
+            if let Some(ind) = self.indicators.remove(&id) {
+                if let Some(buf) = ind.buffer {
+                    buf.destroy();
+                }
+                if let Some(pool) = ind.pool {
+                    pool.destroy();
+                }
+                ind.node.destroy();
+                ind.shell_surface.destroy();
+                ind.surface.destroy();
+            }
         }
     }
 }
