@@ -1024,70 +1024,129 @@ impl WindowManager {
     }
 
     fn handle_seat_ops(&mut self) {
-        // Collect ops to avoid borrow issues
-        let ops: Vec<(SeatOp, i32, i32)> = self
+        // On pointer release with a move op, move window to the frame under the cursor
+        let releases: Vec<(u64, i32, i32)> = self
             .seats
             .values()
-            .map(|s| (s.op.clone(), s.op_dx, s.op_dy))
-            .collect();
-
-        for (op, dx, dy) in &ops {
-            match op {
-                SeatOp::None => {}
+            .filter(|s| s.op_release)
+            .filter_map(|s| match &s.op {
                 SeatOp::Move {
                     window_id,
                     start_x,
                     start_y,
-                } => {
-                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == *window_id) {
-                        // Auto-float on drag
-                        if !win.floating {
-                            win.floating = true;
-                            // Remove from frame
+                } => Some((*window_id, start_x + s.op_dx, start_y + s.op_dy)),
+                _ => None,
+            })
+            .collect();
+
+        let gap = self.config.general.gap as i32;
+
+        for (window_id, drop_x, drop_y) in releases {
+            // Find which frame the drop position falls in
+            let target_frame = self.workspaces.workspaces.iter().find_map(|ws| {
+                let output = ws
+                    .active_output
+                    .and_then(|oid| self.workspaces.output(oid))?;
+                let area = output.usable_rect();
+                let layouts = ws.root.calculate_layout(area, gap);
+                layouts.into_iter().find_map(|(frame_id, rect)| {
+                    if drop_x >= rect.x
+                        && drop_x < rect.x + rect.width
+                        && drop_y >= rect.y
+                        && drop_y < rect.y + rect.height
+                    {
+                        Some((ws.id, frame_id))
+                    } else {
+                        None
+                    }
+                })
+            });
+
+            if let Some((ws_id, target_frame_id)) = target_frame {
+                // Find current frame of this window
+                let source_frame_id = self
+                    .workspaces
+                    .workspaces
+                    .iter()
+                    .find_map(|ws| ws.root.find_frame_with_window(window_id));
+
+                if let Some(src_fid) = source_frame_id {
+                    if src_fid != target_frame_id {
+                        // Get window ref
+                        let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
+                            ws.root
+                                .find_frame(src_fid)
+                                .and_then(|f| f.active_window().cloned())
+                        });
+
+                        if let Some(win_ref) = win_ref {
+                            // Remove from source
                             for ws in &mut self.workspaces.workspaces {
-                                if let Some(frame_id) = ws.root.find_frame_with_window(*window_id) {
-                                    if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                                        frame.remove_window(*window_id);
-                                    }
+                                if let Some(frame) = ws.root.find_frame_mut(src_fid) {
+                                    frame.remove_window(window_id);
                                 }
                             }
+                            // Add to target
+                            let ws = &mut self.workspaces.workspaces[ws_id.0];
+                            if let Some(frame) = ws.root.find_frame_mut(target_frame_id) {
+                                frame.add_window(win_ref);
+                            }
+                            // Update frame tracking
+                            if let Some(win) = self.windows.iter_mut().find(|w| w.id == window_id) {
+                                win.frame_id = Some(target_frame_id);
+                            }
+                            ws.focused_frame = target_frame_id;
+                            log::info!(
+                                "Pointer drag moved window {} from {:?} to {:?}",
+                                window_id,
+                                src_fid,
+                                target_frame_id
+                            );
                         }
-                        let new_x = start_x + dx;
-                        let new_y = start_y + dy;
-                        win.float_x = new_x;
-                        win.float_y = new_y;
-                        win.node.set_position(new_x, new_y);
                     }
                 }
-                SeatOp::Resize {
-                    window_id,
-                    start_x,
-                    start_y,
-                    start_width,
-                    start_height,
-                    edges,
-                } => {
-                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == *window_id) {
-                        if !win.floating {
-                            win.floating = true;
-                            for ws in &mut self.workspaces.workspaces {
-                                if let Some(frame_id) = ws.root.find_frame_with_window(*window_id) {
-                                    if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                                        frame.remove_window(*window_id);
-                                    }
-                                }
-                            }
-                        }
-                        let (mut x, mut y) = (*start_x, *start_y);
-                        if edges.contains(Edges::Left) {
-                            x += start_width - win.width;
-                        }
-                        if edges.contains(Edges::Top) {
-                            y += start_height - win.height;
-                        }
-                        win.float_x = x;
-                        win.float_y = y;
-                        win.node.set_position(x, y);
+            }
+        }
+
+        // Handle resize ops: adjust split ratio based on pointer delta
+        let resize_ops: Vec<(u64, i32, i32)> = self
+            .seats
+            .values()
+            .filter(|s| !s.op_release) // only during active drag
+            .filter_map(|s| match &s.op {
+                SeatOp::Resize { window_id, .. } => Some((*window_id, s.op_dx, s.op_dy)),
+                _ => None,
+            })
+            .collect();
+
+        for (window_id, dx, dy) in resize_ops {
+            // Find the frame this window is in and resize its parent split
+            let frame_id = self
+                .workspaces
+                .workspaces
+                .iter()
+                .find_map(|ws| ws.root.find_frame_with_window(window_id));
+
+            if let Some(frame_id) = frame_id {
+                let ws_idx = self.workspaces.focused_workspace.0;
+                let area = {
+                    let ws = &self.workspaces.workspaces[ws_idx];
+                    ws.active_output
+                        .and_then(|oid| self.workspaces.output(oid))
+                        .map(|o| o.usable_rect())
+                };
+                if let Some(area) = area {
+                    let ws = &mut self.workspaces.workspaces[ws_idx];
+                    // Convert pixel delta to ratio delta
+                    // Use the larger axis delta to determine direction
+                    if dx.abs() > dy.abs() && area.width > 0 {
+                        let delta = dx as f32 / area.width as f32;
+                        ws.root
+                            .resize_frame(frame_id, crate::layout::Direction::Right, delta);
+                    } else if area.height > 0 {
+                        let delta = dy as f32 / area.height as f32;
+                        ws.root
+                            .resize_frame(frame_id, crate::layout::Direction::Down, delta);
                     }
                 }
             }
