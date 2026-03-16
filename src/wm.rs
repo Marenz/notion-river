@@ -196,18 +196,24 @@ impl WindowManager {
         self.remove_closed_seats();
         self.init_new_windows();
         self.init_new_seats(river_xkb, qh);
+
+        // Check if any keyboard action is pending (before handle_pending_actions consumes it)
+        let has_keyboard_action = self
+            .seats
+            .values()
+            .any(|s| !matches!(s.pending_action, Action::None));
+
         self.handle_pending_actions(proxy);
         self.apply_window_management(proxy);
         self.update_binding_modes();
 
-        // Cursor follows focus: warp pointer when focus changed via keyboard
+        // Cursor follows focus: only warp when a keyboard action changed focus,
+        // not when focus-follows-mouse did (to avoid feedback loops)
         let new_focused_frame = self.workspaces.focused_workspace().focused_frame;
-        if self.config.general.cursor_follows_focus && new_focused_frame != prev_focused_frame {
-            log::info!(
-                "Focus changed {:?} -> {:?}, warping cursor",
-                prev_focused_frame,
-                new_focused_frame
-            );
+        if self.config.general.cursor_follows_focus
+            && new_focused_frame != prev_focused_frame
+            && has_keyboard_action
+        {
             self.warp_cursor_to_frame(new_focused_frame);
         }
 
@@ -449,7 +455,6 @@ impl WindowManager {
         // Focus-follows-mouse: only when no keyboard action is pending,
         // otherwise the keyboard focus change would be immediately overridden
         if self.config.general.focus_follows_mouse && !has_keyboard_action {
-            // Get pointer positions from all seats
             let pointer_positions: Vec<(i32, i32)> = self
                 .seats
                 .values()
@@ -457,10 +462,10 @@ impl WindowManager {
                 .collect();
 
             let gap = self.config.general.gap as i32;
+            // Inset from frame edges to avoid bouncing on boundaries
+            let margin = gap + 2;
 
             for (px, py) in pointer_positions {
-                // Find which frame the pointer is over (works for both
-                // windows and empty frames)
                 for ws in &self.workspaces.workspaces {
                     let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid))
                     {
@@ -470,11 +475,13 @@ impl WindowManager {
                     let area = output.usable_rect();
                     let layouts = ws.root.calculate_layout(area, gap);
 
+                    // Use inset rects to require the pointer to be clearly
+                    // inside a frame, not just on the gap boundary
                     if let Some((frame_id, _)) = layouts.iter().find(|(_, rect)| {
-                        px >= rect.x
-                            && px < rect.x + rect.width
-                            && py >= rect.y
-                            && py < rect.y + rect.height
+                        px >= rect.x + margin
+                            && px < rect.x + rect.width - margin
+                            && py >= rect.y + margin
+                            && py < rect.y + rect.height - margin
                     }) {
                         if ws.focused_frame != *frame_id {
                             let ws_id = ws.id;
