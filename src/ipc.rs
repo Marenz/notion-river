@@ -41,36 +41,94 @@ impl IpcState {
     }
 }
 
-/// Generate waybar JSON grouped by monitor.
+/// Monitor colors for workspace grouping in waybar.
+const MONITOR_COLORS: &[&str] = &["#89b4fa", "#a6e3a1", "#f9e2af", "#f38ba8"];
+
+/// Generate waybar JSON grouped by monitor with Pango markup.
 pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
-    let mut output_groups: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
-
+    // Collect outputs in order
+    let mut output_names: Vec<String> = Vec::new();
     for ws in &workspaces.workspaces {
-        let is_focused = ws.id == workspaces.focused_workspace;
-        let is_visible = ws.active_output.is_some();
-        let has_windows = ws
-            .root
-            .all_frame_ids()
-            .iter()
-            .any(|fid| ws.root.find_frame(*fid).is_some_and(|f| !f.is_empty()));
-
-        let marker = if is_focused {
-            "▶"
-        } else if is_visible {
-            "●"
-        } else if has_windows {
-            "○"
-        } else {
-            "·"
-        };
-
-        let output_name = ws.preferred_output.as_deref().unwrap_or("none").to_string();
-        output_groups
-            .entry(output_name)
-            .or_default()
-            .push(format!("{marker} {}", ws.name));
+        let name = ws
+            .preferred_output
+            .as_deref()
+            .unwrap_or("none")
+            .to_string();
+        if !output_names.contains(&name) {
+            output_names.push(name);
+        }
     }
+
+    let focused_output = workspaces
+        .workspaces
+        .get(workspaces.focused_workspace.0)
+        .and_then(|ws| ws.preferred_output.as_deref())
+        .unwrap_or("");
+
+    let mut groups = Vec::new();
+
+    for (i, output_name) in output_names.iter().enumerate() {
+        let color = MONITOR_COLORS[i % MONITOR_COLORS.len()];
+        let is_focused_output = output_name == focused_output;
+
+        let mut parts = Vec::new();
+        for ws in &workspaces.workspaces {
+            let ws_output = ws.preferred_output.as_deref().unwrap_or("none");
+            if ws_output != output_name {
+                continue;
+            }
+
+            let is_focused = ws.id == workspaces.focused_workspace;
+            let is_visible = ws.active_output.is_some();
+            let has_windows = ws
+                .root
+                .all_frame_ids()
+                .iter()
+                .any(|fid| ws.root.find_frame(*fid).is_some_and(|f| !f.is_empty()));
+
+            let ws_text = if is_focused {
+                format!("<b>{}</b>", ws.name)
+            } else if has_windows {
+                ws.name.clone()
+            } else {
+                format!("<span alpha='50%'>{}</span>", ws.name)
+            };
+
+            let marker = if is_focused {
+                "▶"
+            } else if is_visible {
+                "●"
+            } else if has_windows {
+                "○"
+            } else {
+                "·"
+            };
+
+            parts.push(format!("{marker} {ws_text}"));
+        }
+
+        let group_text = parts.join("  ");
+        if is_focused_output {
+            groups.push(format!("<span color='{color}'><b>[{group_text}]</b></span>"));
+        } else {
+            groups.push(format!("<span color='{color}'>{group_text}</span>"));
+        }
+    }
+
+    let text = groups.join("  ");
+    let focused_name = workspaces
+        .workspaces
+        .get(workspaces.focused_workspace.0)
+        .map(|ws| ws.name.as_str())
+        .unwrap_or("");
+
+    // Escape for JSON
+    let text = text.replace('"', "&quot;");
+
+    format!(
+        r#"{{"text": "{text}", "tooltip": "Focused: {focused_name}", "class": "workspaces"}}"#
+    )
+}
 
     let text = output_groups
         .values()
