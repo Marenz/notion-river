@@ -195,6 +195,65 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super+shift", "c", "reload_config", &[]);
     bind(&mut b, "super+shift", "r", "restart", &[]);
 
+    // ── Media keys (no modifier) ──
+    bind(
+        &mut b,
+        "",
+        "XF86AudioRaiseVolume",
+        "spawn",
+        &["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"],
+    );
+    bind(
+        &mut b,
+        "",
+        "XF86AudioLowerVolume",
+        "spawn",
+        &["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"],
+    );
+    bind(
+        &mut b,
+        "",
+        "XF86AudioMute",
+        "spawn",
+        &["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"],
+    );
+    bind(
+        &mut b,
+        "",
+        "XF86AudioMicMute",
+        "spawn",
+        &["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"],
+    );
+    bind(
+        &mut b,
+        "",
+        "XF86AudioPlay",
+        "spawn",
+        &["playerctl", "play-pause"],
+    );
+    bind(&mut b, "", "XF86AudioNext", "spawn", &["playerctl", "next"]);
+    bind(
+        &mut b,
+        "",
+        "XF86AudioPrev",
+        "spawn",
+        &["playerctl", "previous"],
+    );
+    bind(
+        &mut b,
+        "",
+        "XF86MonBrightnessUp",
+        "spawn",
+        &["brightnessctl", "set", "5%+"],
+    );
+    bind(
+        &mut b,
+        "",
+        "XF86MonBrightnessDown",
+        "spawn",
+        &["brightnessctl", "set", "5%-"],
+    );
+
     b
 }
 
