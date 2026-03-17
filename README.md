@@ -172,4 +172,4 @@ Early development. Usable as a daily driver. Waybar shows workspaces, CPU, memor
 
 ## License
 
-TBD
+MIT — see [LICENSE](LICENSE)

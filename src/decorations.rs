@@ -550,10 +550,11 @@ fn draw_text(
         Err(_) => return,
     };
 
-    // Set up pango layout
+    // Set up pango layout with font size in pixels (not points)
     let layout = pangocairo::functions::create_layout(&cr);
-    let font_size_pt = (height as f64 * 0.45).max(8.0);
-    let font_desc = pango::FontDescription::from_string(&format!("Sans {font_size_pt}"));
+    let font_size_px = (height as f64 * 0.58).max(10.0);
+    let mut font_desc = pango::FontDescription::from_string("Noto Sans Bold");
+    font_desc.set_absolute_size(font_size_px * pango::SCALE as f64);
     layout.set_font_description(Some(&font_desc));
     layout.set_text(text);
     layout.set_width(width as i32 * pango::SCALE);
