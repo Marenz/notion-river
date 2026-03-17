@@ -76,6 +76,8 @@ pub enum InputMode {
 #[derive(Debug)]
 pub struct WindowManager {
     pub config: Config,
+    /// Pre-parsed ARGB8888 decoration colors.
+    pub colors: crate::config::Colors,
     pub workspaces: WorkspaceManager,
     pub windows: Vec<ManagedWindow>,
     pub seats: HashMap<ObjectId, Seat>,
@@ -227,8 +229,10 @@ impl WindowManager {
             std::collections::HashMap::new()
         };
 
+        let colors = config.appearance.colors();
         Self {
             config,
+            colors,
             workspaces,
             windows: Vec::new(),
             seats: HashMap::new(),
@@ -285,7 +289,7 @@ impl WindowManager {
         }
 
         // Update waybar workspace display via FIFO
-        self.ipc.update(&self.workspaces);
+        self.ipc.update(&self.workspaces, &self.config.appearance);
         self.control
             .update_snapshot(crate::control::build_snapshot(self));
 

@@ -24,10 +24,29 @@ launcher = ["rofi", "-show", "combi"]
 active_profile = "i3_neo"
 
 [appearance]
-active_border = "#4c7899"
-inactive_border = "#333333"
-empty_border = "#555555"
-urgent_border = "#900000"
+# Window border colors (sent to River compositor)
+active_border = "#9b8ec4"
+inactive_border = "#2a2636"
+empty_border = "#5e5775"
+urgent_border = "#c45b84"
+
+# Tab bar colors
+tab_active = "#7c6f9b"             # active tab bg (unfocused frame)
+tab_focused_active = "#9b8ec4"     # active tab bg (focused frame)
+tab_inactive = "#1e1b26"           # inactive tab bg
+tab_separator = "#5e5775"          # separator between tabs
+tab_underline_focused = "#cdb4ff"  # active tab underline (focused)
+tab_underline_unfocused = "#7c6f9b" # active tab underline (unfocused)
+tab_text_active = "#ede8f5"        # active tab text
+tab_text_inactive = "#8a8399"      # inactive tab text
+
+# Empty frame indicator colors
+empty_focused = "#7c6f9b"
+empty_unfocused = "#332e42"
+
+# Waybar workspace indicator colors (per-monitor, cycles if >4 monitors)
+monitor_colors = ["#b4a0e5", "#a6c9a1", "#e5cfa6", "#d68ba8"]
+waybar_focused_bg = "#2a2636"
 
 # ── Workspaces ──────────────────────────────────────────────────────────
 # Each workspace has a name, optional preferred output, and optional initial layout.

@@ -117,6 +117,7 @@ pub struct BindingConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct AppearanceConfig {
+    // ── Window border colors (sent to River) ──
     /// Active frame border color (hex).
     pub active_border: String,
     /// Inactive frame border color (hex).
@@ -125,6 +126,90 @@ pub struct AppearanceConfig {
     pub empty_border: String,
     /// Urgent frame border color (hex).
     pub urgent_border: String,
+
+    // ── Tab bar colors ──
+    /// Active tab background in unfocused frame (hex).
+    pub tab_active: String,
+    /// Active tab background in focused frame (hex).
+    pub tab_focused_active: String,
+    /// Inactive tab background (hex).
+    pub tab_inactive: String,
+    /// Separator between tabs (hex).
+    pub tab_separator: String,
+    /// Active tab underline in focused frame (hex).
+    pub tab_underline_focused: String,
+    /// Active tab underline in unfocused frame (hex).
+    pub tab_underline_unfocused: String,
+    /// Active tab text color (hex).
+    pub tab_text_active: String,
+    /// Inactive tab text color (hex).
+    pub tab_text_inactive: String,
+
+    // ── Empty frame indicator colors ──
+    /// Focused empty frame border (hex).
+    pub empty_focused: String,
+    /// Unfocused empty frame border (hex).
+    pub empty_unfocused: String,
+
+    // ── Waybar workspace colors (per-monitor) ──
+    /// Colors for workspace indicators per monitor (hex, up to 4).
+    pub monitor_colors: Vec<String>,
+    /// Background color for focused workspace in waybar (hex).
+    pub waybar_focused_bg: String,
+}
+
+/// Pre-parsed ARGB8888 colors for use in pixel rendering.
+#[derive(Debug, Clone)]
+pub struct Colors {
+    pub tab_active: u32,
+    pub tab_focused_active: u32,
+    pub tab_inactive: u32,
+    pub tab_separator: u32,
+    pub tab_underline_focused: u32,
+    pub tab_underline_unfocused: u32,
+    pub tab_text_active: u32,
+    pub tab_text_inactive: u32,
+    pub empty_focused: u32,
+    pub empty_unfocused: u32,
+}
+
+/// Parse a hex color string (#RRGGBB or #RRGGBBAA) to ARGB8888 u32.
+pub fn hex_to_argb(hex: &str) -> u32 {
+    let hex = hex.trim_start_matches('#');
+    match hex.len() {
+        6 => {
+            let v = u32::from_str_radix(hex, 16).unwrap_or(0x333333);
+            0xFF000000 | v
+        }
+        8 => {
+            let v = u32::from_str_radix(hex, 16).unwrap_or(0xFF333333);
+            // Input is RRGGBBAA, convert to AARRGGBB
+            let r = (v >> 24) & 0xFF;
+            let g = (v >> 16) & 0xFF;
+            let b = (v >> 8) & 0xFF;
+            let a = v & 0xFF;
+            (a << 24) | (r << 16) | (g << 8) | b
+        }
+        _ => 0xFF333333,
+    }
+}
+
+impl AppearanceConfig {
+    /// Parse all hex color strings into ARGB8888 values.
+    pub fn colors(&self) -> Colors {
+        Colors {
+            tab_active: hex_to_argb(&self.tab_active),
+            tab_focused_active: hex_to_argb(&self.tab_focused_active),
+            tab_inactive: hex_to_argb(&self.tab_inactive),
+            tab_separator: hex_to_argb(&self.tab_separator),
+            tab_underline_focused: hex_to_argb(&self.tab_underline_focused),
+            tab_underline_unfocused: hex_to_argb(&self.tab_underline_unfocused),
+            tab_text_active: hex_to_argb(&self.tab_text_active),
+            tab_text_inactive: hex_to_argb(&self.tab_text_inactive),
+            empty_focused: hex_to_argb(&self.empty_focused),
+            empty_unfocused: hex_to_argb(&self.empty_unfocused),
+        }
+    }
 }
 
 // ── Defaults ──────────────────────────────────────────────────────────────
@@ -169,10 +254,30 @@ impl Default for CommandsConfig {
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
-            active_border: "#4c7899".to_string(),
-            inactive_border: "#333333".to_string(),
-            empty_border: "#555555".to_string(),
-            urgent_border: "#900000".to_string(),
+            active_border: "#9b8ec4".to_string(),
+            inactive_border: "#2a2636".to_string(),
+            empty_border: "#5e5775".to_string(),
+            urgent_border: "#c45b84".to_string(),
+
+            tab_active: "#7c6f9b".to_string(),
+            tab_focused_active: "#9b8ec4".to_string(),
+            tab_inactive: "#1e1b26".to_string(),
+            tab_separator: "#5e5775".to_string(),
+            tab_underline_focused: "#cdb4ff".to_string(),
+            tab_underline_unfocused: "#7c6f9b".to_string(),
+            tab_text_active: "#ede8f5".to_string(),
+            tab_text_inactive: "#8a8399".to_string(),
+
+            empty_focused: "#7c6f9b".to_string(),
+            empty_unfocused: "#332e42".to_string(),
+
+            monitor_colors: vec![
+                "#b4a0e5".to_string(),
+                "#a6c9a1".to_string(),
+                "#e5cfa6".to_string(),
+                "#d68ba8".to_string(),
+            ],
+            waybar_focused_bg: "#2a2636".to_string(),
         }
     }
 }

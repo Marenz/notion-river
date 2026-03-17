@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use crate::config::AppearanceConfig;
 use crate::workspace::WorkspaceManager;
 
 fn ipc_path() -> PathBuf {
@@ -30,8 +31,8 @@ impl IpcState {
     }
 
     /// Write workspace state if changed.
-    pub fn update(&mut self, workspaces: &WorkspaceManager) {
-        let json = workspace_json(workspaces);
+    pub fn update(&mut self, workspaces: &WorkspaceManager, appearance: &AppearanceConfig) {
+        let json = workspace_json(workspaces, appearance);
         if json == self.last_json {
             return;
         }
@@ -40,11 +41,11 @@ impl IpcState {
     }
 }
 
-/// Monitor colors for workspace grouping in waybar.
-const MONITOR_COLORS: &[&str] = &["#89b4fa", "#a6e3a1", "#f9e2af", "#f38ba8"];
+/// Fallback monitor colors if none configured.
+const DEFAULT_MONITOR_COLORS: &[&str] = &["#b4a0e5", "#a6c9a1", "#e5cfa6", "#d68ba8"];
 
 /// Generate waybar JSON grouped by monitor with Pango markup.
-pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
+pub fn workspace_json(workspaces: &WorkspaceManager, appearance: &AppearanceConfig) -> String {
     // Collect outputs in order
     let mut output_names: Vec<String> = Vec::new();
     for ws in &workspaces.workspaces {
@@ -56,8 +57,19 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
 
     let mut groups = Vec::new();
 
+    let monitor_colors: Vec<&str> = if appearance.monitor_colors.is_empty() {
+        DEFAULT_MONITOR_COLORS.to_vec()
+    } else {
+        appearance
+            .monitor_colors
+            .iter()
+            .map(|s| s.as_str())
+            .collect()
+    };
+    let focused_bg = &appearance.waybar_focused_bg;
+
     for (i, output_name) in output_names.iter().enumerate() {
-        let color = MONITOR_COLORS[i % MONITOR_COLORS.len()];
+        let color = monitor_colors[i % monitor_colors.len()];
 
         let mut parts = Vec::new();
         for ws in &workspaces.workspaces {
@@ -75,7 +87,7 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
 
             let ws_text = if is_focused {
                 format!(
-                    "<span color='{color}' background='#333333' bgalpha='80%'><b> {} </b></span>",
+                    "<span color='{color}' background='{focused_bg}' bgalpha='80%'><b> {} </b></span>",
                     ws.name
                 )
             } else if has_windows {
