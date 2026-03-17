@@ -996,7 +996,7 @@ impl WindowManager {
         });
 
         if has_h_neighbor && has_v_neighbor {
-            // Both axes have neighbors — only allow both near a corner,
+            // Both axes have neighbors — allow both near corners (25% from edge),
             // otherwise pick the nearest boundary axis
             let dist_h = (px - my_rect.x)
                 .abs()
@@ -1004,14 +1004,16 @@ impl WindowManager {
             let dist_v = (py - my_rect.y)
                 .abs()
                 .min(((my_rect.y + my_rect.height) - py).abs());
-            let near_h_edge = dist_h < corner_threshold;
-            let near_v_edge = dist_v < corner_threshold;
+            let corner_h = my_rect.width / 4;
+            let corner_v = my_rect.height / 4;
 
-            if near_h_edge && near_v_edge {
+            if dist_h < corner_h && dist_v < corner_v {
                 (true, true) // corner — both axes
             } else {
-                // Pick the axis with the closer boundary
-                (dist_h < dist_v, dist_v <= dist_h)
+                // Pick the axis with the closer boundary (proportionally)
+                let rel_h = dist_h as f32 / my_rect.width.max(1) as f32;
+                let rel_v = dist_v as f32 / my_rect.height.max(1) as f32;
+                (rel_h < rel_v, rel_v <= rel_h)
             }
         } else {
             (has_h_neighbor, has_v_neighbor)
