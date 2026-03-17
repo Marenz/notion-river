@@ -219,7 +219,8 @@ impl WorkspaceManager {
         }
     }
 
-    /// Switch the active workspace on the output that currently has focus.
+    /// Switch to a workspace. The workspace appears on its preferred output
+    /// if it has one, otherwise on the currently focused output.
     pub fn switch_workspace(&mut self, target_name: &str) {
         let target_ws = match self.workspaces.iter().find(|w| w.name == target_name) {
             Some(ws) => ws.id,
@@ -229,35 +230,41 @@ impl WorkspaceManager {
             }
         };
 
-        // Find the output of the currently focused workspace
-        let current_ws = &self.workspaces[self.focused_workspace.0];
-        let current_output = current_ws.active_output;
-
-        if let Some(output_id) = current_output {
-            // If target workspace is already on another output, just focus it
-            if let Some(target_ws_data) = self.workspaces.iter().find(|w| w.id == target_ws) {
-                if let Some(other_output) = target_ws_data.active_output {
-                    if other_output != output_id {
-                        // Just switch focus to that output's workspace
-                        self.focused_workspace = target_ws;
-                        return;
-                    }
-                }
-            }
-
-            // Unassign current workspace from this output
-            if let Some(ws) = self
-                .workspaces
-                .iter_mut()
-                .find(|w| w.id == self.focused_workspace)
-            {
-                ws.active_output = None;
-            }
-
-            // Assign target workspace to this output
-            self.assign_workspace_to_output(target_ws, output_id);
+        // If target is already visible on some output, just focus it
+        if self.workspaces[target_ws.0].active_output.is_some() {
+            self.focused_workspace = target_ws;
+            return;
         }
 
+        // Determine which output to show this workspace on:
+        // 1. Use the workspace's preferred output if it has one and the output exists
+        // 2. Otherwise use the currently focused output
+        let preferred_output = self.workspaces[target_ws.0]
+            .preferred_output
+            .as_ref()
+            .and_then(|name| {
+                self.outputs
+                    .iter()
+                    .find(|o| o.name.as_deref() == Some(name.as_str()))
+                    .map(|o| o.id)
+            });
+
+        let target_output = preferred_output.unwrap_or_else(|| {
+            self.workspaces[self.focused_workspace.0]
+                .active_output
+                .unwrap_or(OutputId(0))
+        });
+
+        // Unassign whatever workspace is currently on that output
+        let displaced_ws: Option<WorkspaceId> = self.output_workspace.get(&target_output).copied();
+        if let Some(old_ws_id) = displaced_ws {
+            if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws_id) {
+                ws.active_output = None;
+            }
+        }
+
+        // Assign target workspace to that output
+        self.assign_workspace_to_output(target_ws, target_output);
         self.focused_workspace = target_ws;
     }
 
