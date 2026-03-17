@@ -503,15 +503,15 @@ fn draw_tab_bar_pixels(
     }
 }
 
-// ── Font rendering via fontdue ────────────────────────────────────────────
+// ── Font rendering via FreeType ───────────────────────────────────────────
 
 use std::sync::OnceLock;
 
-static FONT: OnceLock<fontdue::Font> = OnceLock::new();
+static FREETYPE_LIB: OnceLock<freetype::Library> = OnceLock::new();
+static FONT_PATH: OnceLock<String> = OnceLock::new();
 
-fn get_font() -> &'static fontdue::Font {
-    FONT.get_or_init(|| {
-        // Try system fonts in preference order
+fn get_font_path() -> &'static str {
+    FONT_PATH.get_or_init(|| {
         let paths = [
             "/usr/share/fonts/truetype/NotoSans-Regular.ttf",
             "/usr/share/fonts/truetype/LiberationSans-Regular.ttf",
@@ -519,64 +519,109 @@ fn get_font() -> &'static fontdue::Font {
             "/usr/share/fonts/truetype/LiberationMono-Regular.ttf",
         ];
         for path in &paths {
-            if let Ok(data) = std::fs::read(path) {
-                if let Ok(font) = fontdue::Font::from_bytes(data, fontdue::FontSettings::default())
-                {
-                    log::info!("Loaded font: {path}");
-                    return font;
-                }
+            if std::path::Path::new(path).exists() {
+                log::info!("Using font: {path}");
+                return path.to_string();
             }
         }
-        log::warn!("No system font found, using built-in fallback");
-        // Fallback: embed a minimal font (fontdue requires TTF data)
-        // Use the first available or panic
-        panic!("No font available for tab bar rendering");
+        panic!("No system font found for tab bar rendering");
     })
 }
 
-/// Render text using fontdue's Layout API for proper glyph positioning.
+fn get_freetype_lib() -> &'static freetype::Library {
+    FREETYPE_LIB.get_or_init(|| freetype::Library::init().expect("Failed to init FreeType"))
+}
+
+/// Render text using FreeType with proper hinting and kerning.
 fn draw_text(
     pixels: &mut [u32],
     stride: usize,
     height: usize,
     x0: usize,
-    y0: usize,
+    _y0: usize,
     text: &str,
     color: u32,
     x_max: usize,
 ) {
-    let font = get_font();
-    let font_size = (height as f32 * 0.65).max(12.0);
+    let lib = get_freetype_lib();
+    let font_path = get_font_path();
+    let face = match lib.new_face(font_path, 0) {
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("Failed to load font face: {e}");
+            return;
+        }
+    };
+
+    let font_size_px = (height as f64 * 0.6).max(10.0) as u32;
+    let _ = face.set_pixel_sizes(0, font_size_px);
 
     let color_r = ((color >> 16) & 0xFF) as f32;
     let color_g = ((color >> 8) & 0xFF) as f32;
     let color_b = (color & 0xFF) as f32;
 
-    // Use fontdue's Layout for proper kerning and positioning
-    use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle, VerticalAlign};
-    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings {
-        x: x0 as f32,
-        y: 0.0,
-        max_width: Some((x_max - x0) as f32),
-        max_height: Some(height as f32),
-        vertical_align: VerticalAlign::Middle,
-        ..LayoutSettings::default()
-    });
-    layout.append(&[font], &TextStyle::new(text, font_size, 0));
+    // Compute baseline: vertically center the text
+    let ascender = face.ascender() as f64 * font_size_px as f64 / face.em_size() as f64;
+    let descender = face.descender() as f64 * font_size_px as f64 / face.em_size() as f64;
+    let text_height = ascender - descender;
+    let baseline_y = ((height as f64 - text_height) / 2.0 + ascender) as i32;
 
-    for glyph in layout.glyphs() {
-        let (metrics, bitmap) = font.rasterize_config(glyph.key);
+    let mut pen_x = (x0 as i64) << 6; // 26.6 fixed point
+    let mut prev_glyph_idx = None;
 
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let alpha = bitmap[row * metrics.width + col] as f32 / 255.0;
+    for ch in text.chars() {
+        if (pen_x >> 6) as usize >= x_max {
+            break;
+        }
+
+        let glyph_idx = match face.get_char_index(ch as usize) {
+            Some(idx) => idx,
+            None => {
+                // Unknown glyph — try load_char for spaces etc.
+                let _ = face.load_char(ch as usize, freetype::face::LoadFlag::RENDER);
+                pen_x += face.glyph().advance().x as i64;
+                continue;
+            }
+        };
+
+        // Kerning
+        if let Some(prev) = prev_glyph_idx {
+            if let Ok(delta) =
+                face.get_kerning(prev, glyph_idx, freetype::face::KerningMode::KerningDefault)
+            {
+                pen_x += delta.x as i64;
+            }
+        }
+        prev_glyph_idx = Some(glyph_idx);
+
+        if face
+            .load_glyph(glyph_idx, freetype::face::LoadFlag::RENDER)
+            .is_err()
+        {
+            continue;
+        }
+        let glyph = face.glyph();
+        let bitmap = glyph.bitmap();
+        let bmp_left = glyph.bitmap_left();
+        let bmp_top = glyph.bitmap_top();
+
+        let gx = (pen_x >> 6) as i32 + bmp_left;
+        let gy = baseline_y - bmp_top;
+
+        let bmp_width = bitmap.width() as usize;
+        let bmp_rows = bitmap.rows() as usize;
+        let bmp_pitch = bitmap.pitch().unsigned_abs() as usize;
+        let buffer = bitmap.buffer();
+
+        for row in 0..bmp_rows {
+            for col in 0..bmp_width {
+                let alpha = buffer[row * bmp_pitch + col] as f32 / 255.0;
                 if alpha < 0.01 {
                     continue;
                 }
 
-                let px = glyph.x as usize + col;
-                let py = glyph.y as usize + row;
+                let px = (gx as usize) + col;
+                let py = (gy as usize) + row;
 
                 if px >= x_max || px >= stride || py >= pixels.len() / stride {
                     continue;
@@ -594,6 +639,8 @@ fn draw_text(
                 pixels[py * stride + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
+
+        pen_x += glyph.advance().x as i64;
     }
 }
 
