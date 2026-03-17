@@ -87,6 +87,8 @@ pub struct WindowManager {
     pub empty_frames: EmptyFrameManager,
     /// Saved state for window matching on restart.
     pub saved_state: Option<crate::state::SavedState>,
+    /// Suppress WindowInteraction for one manage cycle (after tab click).
+    pub suppress_interaction: bool,
 }
 
 /// A window tracked by the WM.
@@ -219,6 +221,7 @@ impl WindowManager {
             decorations: DecorationManager::new(),
             empty_frames: EmptyFrameManager::new(),
             saved_state,
+            suppress_interaction: false,
         }
     }
 
@@ -526,7 +529,13 @@ impl WindowManager {
         let has_keyboard_action = actions.iter().any(|(a, _)| !matches!(a, Action::None));
 
         // Handle window interactions (click-to-focus, tab switching)
+        // Skip if a tab click was just processed (would override the tab switch)
+        let suppress = self.suppress_interaction;
+        self.suppress_interaction = false;
         for (_, interacted_id) in &actions {
+            if suppress {
+                break;
+            }
             if let Some(wid) = interacted_id {
                 // Find which frame this window is in and make it the active tab
                 for ws in &mut self.workspaces.workspaces {

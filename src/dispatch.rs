@@ -116,6 +116,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                         ws.focused_frame = frame_id;
                         state.wm.workspaces.focused_workspace = ws.id;
                     }
+                    // Suppress WindowInteraction for this manage cycle
+                    // so it doesn't override the tab switch
+                    state.wm.suppress_interaction = true;
                 }
 
                 let river_xkb = state
