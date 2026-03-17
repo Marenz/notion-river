@@ -60,8 +60,13 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     state.river_xkb = Some(xkb);
                 }
                 "wl_output" => {
-                    // Bind wl_output to get the name/description events
                     let _output = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, name);
+                }
+                "wl_seat" => {
+                    use wayland_client::protocol::wl_seat::WlSeat;
+                    let seat = registry.bind::<WlSeat, _, _>(name, version.min(8), qh, ());
+                    // Get a wl_pointer to receive pointer events on shell surfaces
+                    let _pointer = seat.get_pointer(qh, ());
                 }
                 "wl_compositor" => {
                     let comp = registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ());
@@ -270,7 +275,10 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
         };
         match event {
             Event::Removed => seat.removed = true,
-            Event::WlSeat { .. } => {}
+            Event::WlSeat { name } => {
+                log::info!("Seat wl_seat global name: {name}");
+                state.wl_seat_name = Some(name);
+            }
             Event::PointerEnter { window } => {
                 log::debug!("PointerEnter window {:?}", window.id());
                 seat.hovered = Some(window);
@@ -503,6 +511,53 @@ impl Dispatch<WlOutput, u32> for AppData {
                         output.name = Some(name);
                     }
                     state.wm.workspaces.reassign_outputs();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// ── WlSeat ───────────────────────────────────────────────────────────────
+
+wayland_client::delegate_noop!(AppData: ignore wayland_client::protocol::wl_seat::WlSeat);
+
+// ── WlPointer (for focus-follows-mouse on shell surfaces) ────────────────
+
+impl Dispatch<wayland_client::protocol::wl_pointer::WlPointer, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        _proxy: &wayland_client::protocol::wl_pointer::WlPointer,
+        event: <wayland_client::protocol::wl_pointer::WlPointer as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use wayland_client::protocol::wl_pointer::Event;
+        match event {
+            Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                // wl_pointer.motion fires on shell surfaces (empty frames).
+                // Record the position and request a manage cycle so our
+                // focus-follows-mouse logic can run.
+                // Note: surface_x/y are relative to the surface, but we need
+                // global coordinates. We get those from pointer_position in the
+                // manage cycle. Just triggering manage_dirty is enough.
+                if let Some(wm_proxy) = &state.river_wm {
+                    wm_proxy.manage_dirty();
+                }
+            }
+            Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                // Pointer entered a shell surface — trigger manage cycle
+                if let Some(wm_proxy) = &state.river_wm {
+                    wm_proxy.manage_dirty();
                 }
             }
             _ => {}

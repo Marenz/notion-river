@@ -33,6 +33,8 @@ pub struct AppData {
     pub wl_output_map: std::collections::HashMap<u32, OutputId>,
     /// Map from wl_output global name (u32) to connector name string.
     pub wl_output_names: std::collections::HashMap<u32, String>,
+    /// wl_seat global name (for binding wl_pointer).
+    pub wl_seat_name: Option<u32>,
     pub wm: WindowManager,
 }
 
@@ -45,6 +47,7 @@ impl Default for AppData {
             wl_shm: None,
             wl_output_map: std::collections::HashMap::new(),
             wl_output_names: std::collections::HashMap::new(),
+            wl_seat_name: None,
             wm: WindowManager::new(Config::load()),
         }
     }
@@ -773,6 +776,11 @@ impl WindowManager {
 
             Action::Exit => {
                 wm_proxy.exit_session();
+            }
+
+            Action::Restart => {
+                log::info!("Restarting WM (clean exit)");
+                std::process::exit(0);
             }
 
             Action::ReloadConfig => {

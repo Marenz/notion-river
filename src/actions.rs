@@ -59,8 +59,10 @@ pub enum Action {
     Spawn(Vec<String>),
 
     // ── Session ──
-    /// Exit the window manager.
+    /// Exit the window manager (kills session).
     Exit,
+    /// Restart the WM (clean exit, init loop restarts it).
+    Restart,
     /// Reload configuration.
     ReloadConfig,
 
@@ -142,6 +144,7 @@ impl Action {
             }
 
             "exit" | "exit_session" => Action::Exit,
+            "restart" => Action::Restart,
             "reload" | "reload_config" => Action::ReloadConfig,
 
             other => {

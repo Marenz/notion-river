@@ -193,6 +193,7 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
 
     // ── Session ──
     bind(&mut b, "super+shift", "c", "reload_config", &[]);
+    bind(&mut b, "super+shift", "r", "restart", &[]);
 
     b
 }
