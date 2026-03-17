@@ -514,36 +514,9 @@ fn draw_tab_bar_pixels(
     }
 }
 
-// ── Font rendering via FreeType ───────────────────────────────────────────
+// ── Font rendering via Cairo + Pango (same stack as waybar/GTK) ──────────
 
-use std::sync::OnceLock;
-
-static FREETYPE_LIB: OnceLock<freetype::Library> = OnceLock::new();
-static FONT_PATH: OnceLock<String> = OnceLock::new();
-
-fn get_font_path() -> &'static str {
-    FONT_PATH.get_or_init(|| {
-        let paths = [
-            "/usr/share/fonts/truetype/NotoSans-Medium.ttf",
-            "/usr/share/fonts/truetype/NotoSans-Regular.ttf",
-            "/usr/share/fonts/truetype/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/DejaVuSans.ttf",
-        ];
-        for path in &paths {
-            if std::path::Path::new(path).exists() {
-                log::info!("Using font: {path}");
-                return path.to_string();
-            }
-        }
-        panic!("No system font found for tab bar rendering");
-    })
-}
-
-fn get_freetype_lib() -> &'static freetype::Library {
-    FREETYPE_LIB.get_or_init(|| freetype::Library::init().expect("Failed to init FreeType"))
-}
-
-/// Render text using FreeType with proper hinting and kerning.
+/// Render text using cairo+pango for identical quality to waybar.
 fn draw_text(
     pixels: &mut [u32],
     stride: usize,
@@ -554,108 +527,91 @@ fn draw_text(
     color: u32,
     x_max: usize,
 ) {
-    let lib = get_freetype_lib();
-    let font_path = get_font_path();
-    let face = match lib.new_face(font_path, 0) {
-        Ok(f) => f,
-        Err(e) => {
-            log::error!("Failed to load font face: {e}");
-            return;
-        }
+    let width = x_max - x0;
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let color_r = ((color >> 16) & 0xFF) as f64 / 255.0;
+    let color_g = ((color >> 8) & 0xFF) as f64 / 255.0;
+    let color_b = (color & 0xFF) as f64 / 255.0;
+
+    // Create a cairo image surface backed by our pixel buffer region
+    // We render into a temporary buffer then copy to the right position
+    let mut surface =
+        match cairo::ImageSurface::create(cairo::Format::ARgb32, width as i32, height as i32) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+    let cairo_stride = surface.stride() as usize;
+
+    let cr = match cairo::Context::new(&surface) {
+        Ok(c) => c,
+        Err(_) => return,
     };
 
-    let font_size_px = (height as f64 * 0.58).max(10.0) as u32;
-    let _ = face.set_pixel_sizes(0, font_size_px);
+    // Set up pango layout
+    let layout = pangocairo::functions::create_layout(&cr);
+    let font_size_pt = (height as f64 * 0.45).max(8.0);
+    let font_desc = pango::FontDescription::from_string(&format!("Sans {font_size_pt}"));
+    layout.set_font_description(Some(&font_desc));
+    layout.set_text(text);
+    layout.set_width(width as i32 * pango::SCALE);
+    layout.set_ellipsize(pango::EllipsizeMode::End);
+    layout.set_single_paragraph_mode(true);
 
-    let color_r = ((color >> 16) & 0xFF) as f32;
-    let color_g = ((color >> 8) & 0xFF) as f32;
-    let color_b = (color & 0xFF) as f32;
+    // Vertically center
+    let (_, text_height) = layout.pixel_size();
+    let y_offset = ((height as i32 - text_height) / 2).max(0) as f64;
 
-    // Compute baseline: vertically center the text
-    let ascender = face.ascender() as f64 * font_size_px as f64 / face.em_size() as f64;
-    let descender = face.descender() as f64 * font_size_px as f64 / face.em_size() as f64;
-    let text_height = ascender - descender;
-    let baseline_y = ((height as f64 - text_height) / 2.0 + ascender) as i32;
+    cr.move_to(0.0, y_offset);
+    cr.set_source_rgb(color_r, color_g, color_b);
+    pangocairo::functions::show_layout(&cr, &layout);
 
-    let mut pen_x = (x0 as i64) << 6; // 26.6 fixed point
-    let mut prev_glyph_idx = None;
+    drop(cr);
 
-    for ch in text.chars() {
-        if (pen_x >> 6) as usize >= x_max {
-            break;
-        }
+    // Copy cairo buffer to our pixel buffer
+    let surface_data = match surface.data() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
 
-        let glyph_idx = match face.get_char_index(ch as usize) {
-            Some(idx) => idx,
-            None => {
-                // Unknown glyph — try load_char for spaces etc.
-                let _ = face.load_char(ch as usize, freetype::face::LoadFlag::RENDER);
-                pen_x += face.glyph().advance().x as i64;
+    for row in 0..height {
+        for col in 0..width {
+            let src_offset = row * cairo_stride as usize + col * 4;
+            if src_offset + 3 >= surface_data.len() {
                 continue;
             }
-        };
+            // Cairo uses native-endian ARGB (on little-endian: BGRA in memory)
+            let b = surface_data[src_offset] as u32;
+            let g = surface_data[src_offset + 1] as u32;
+            let r = surface_data[src_offset + 2] as u32;
+            let a = surface_data[src_offset + 3] as u32;
 
-        // Kerning
-        if let Some(prev) = prev_glyph_idx {
-            if let Ok(delta) =
-                face.get_kerning(prev, glyph_idx, freetype::face::KerningMode::KerningDefault)
-            {
-                pen_x += delta.x as i64;
+            if a == 0 {
+                continue;
             }
-        }
-        prev_glyph_idx = Some(glyph_idx);
 
-        // Use light hinting for clean rendering at HiDPI
-        if face
-            .load_glyph(
-                glyph_idx,
-                freetype::face::LoadFlag::RENDER | freetype::face::LoadFlag::TARGET_LIGHT,
-            )
-            .is_err()
-        {
-            continue;
-        }
-        let glyph = face.glyph();
-        let bitmap = glyph.bitmap();
-        let bmp_left = glyph.bitmap_left();
-        let bmp_top = glyph.bitmap_top();
-
-        let gx = (pen_x >> 6) as i32 + bmp_left;
-        let gy = baseline_y - bmp_top;
-
-        let bmp_width = bitmap.width() as usize;
-        let bmp_rows = bitmap.rows() as usize;
-        let bmp_pitch = bitmap.pitch().unsigned_abs() as usize;
-        let buffer = bitmap.buffer();
-
-        for row in 0..bmp_rows {
-            for col in 0..bmp_width {
-                let alpha = buffer[row * bmp_pitch + col] as f32 / 255.0;
-                if alpha < 0.01 {
-                    continue;
-                }
-
-                let px = (gx as usize) + col;
-                let py = (gy as usize) + row;
-
-                if px >= x_max || px >= stride || py >= pixels.len() / stride {
-                    continue;
-                }
-
-                let bg = pixels[py * stride + px];
-                let bg_r = ((bg >> 16) & 0xFF) as f32;
-                let bg_g = ((bg >> 8) & 0xFF) as f32;
-                let bg_b = (bg & 0xFF) as f32;
-
-                let r = (color_r * alpha + bg_r * (1.0 - alpha)) as u32;
-                let g = (color_g * alpha + bg_g * (1.0 - alpha)) as u32;
-                let b = (color_b * alpha + bg_b * (1.0 - alpha)) as u32;
-
-                pixels[py * stride + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            let dst_x = x0 + col;
+            let dst_y = row;
+            if dst_x >= stride || dst_y >= pixels.len() / stride {
+                continue;
             }
-        }
 
-        pen_x += glyph.advance().x as i64;
+            // Alpha blend onto existing background
+            let alpha = a as f32 / 255.0;
+            let bg = pixels[dst_y * stride + dst_x];
+            let bg_r = ((bg >> 16) & 0xFF) as f32;
+            let bg_g = ((bg >> 8) & 0xFF) as f32;
+            let bg_b = (bg & 0xFF) as f32;
+
+            let out_r = (r as f32 * alpha / alpha.max(0.01) * alpha + bg_r * (1.0 - alpha)) as u32;
+            let out_g = (g as f32 * alpha / alpha.max(0.01) * alpha + bg_g * (1.0 - alpha)) as u32;
+            let out_b = (b as f32 * alpha / alpha.max(0.01) * alpha + bg_b * (1.0 - alpha)) as u32;
+
+            pixels[dst_y * stride + dst_x] =
+                0xFF000000 | (out_r.min(255) << 16) | (out_g.min(255) << 8) | out_b.min(255);
+        }
     }
 }
 
