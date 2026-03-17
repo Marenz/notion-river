@@ -203,7 +203,10 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             Event::MinimizeRequested => {}
             Event::UnreliablePid { .. } => {}
             Event::PresentationHint { .. } => {}
-            Event::Identifier { .. } => {}
+            Event::Identifier { identifier } => {
+                log::info!("Window {} identifier: {identifier}", window.id);
+                window.identifier = Some(identifier);
+            }
         }
     }
 }

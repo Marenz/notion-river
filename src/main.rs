@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         if SHUTDOWN.load(Ordering::Relaxed) {
             log::info!("Signal received, saving state and exiting");
-            crate::state::save_state(&app_data.wm.workspaces);
+            crate::state::save_state(&app_data.wm.workspaces, &app_data.wm.windows);
             std::process::exit(0);
         }
         event_queue.blocking_dispatch(&mut app_data)?;

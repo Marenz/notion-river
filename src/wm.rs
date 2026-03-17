@@ -90,6 +90,8 @@ pub struct ManagedWindow {
     pub id: u64,
     pub app_id: String,
     pub title: String,
+    /// Stable identifier from River (persists across WM reconnects).
+    pub identifier: Option<String>,
     pub width: i32,
     pub height: i32,
     pub new: bool,
@@ -335,12 +337,13 @@ impl WindowManager {
     fn init_new_windows(&mut self) {
         for window in self.windows.iter_mut().filter(|w| w.new) {
             // Try to restore window to its saved position
-            let restored = self.saved_state.as_ref().and_then(|state| {
+            let restored = self.saved_state.as_mut().and_then(|state| {
                 crate::state::match_window_to_saved_frame(
                     &self.workspaces,
                     state,
                     &window.app_id,
                     &window.title,
+                    window.identifier.as_deref(),
                 )
             });
 
@@ -376,6 +379,14 @@ impl WindowManager {
                 .proxy
                 .set_tiled(Edges::Left | Edges::Right | Edges::Top | Edges::Bottom);
             window.new = false;
+        }
+
+        // Clear saved state once all saved slots have been consumed
+        if let Some(ref state) = self.saved_state {
+            if !crate::state::has_remaining_matches(state) {
+                log::info!("All saved windows restored, clearing saved state");
+                self.saved_state = None;
+            }
         }
     }
 
@@ -835,7 +846,7 @@ impl WindowManager {
 
             Action::Restart => {
                 log::info!("Restarting WM — saving state");
-                crate::state::save_state(&self.workspaces);
+                crate::state::save_state(&self.workspaces, &self.windows);
                 std::process::exit(0);
             }
 
@@ -955,7 +966,7 @@ impl WindowManager {
 
     pub fn detect_resize_axes(&self, frame_id: FrameId, px: i32, py: i32) -> (bool, bool) {
         let gap = self.config.general.gap as i32;
-        let threshold = gap + 20; // pixels from frame edge to activate resize
+        let corner_threshold = gap + 60; // pixels from edge to count as "near corner"
 
         let ws = self.workspaces.focused_workspace();
         let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid)) {
@@ -970,37 +981,41 @@ impl WindowManager {
             None => return (true, true),
         };
 
-        // Check if pointer is near the left/right edges of this frame
-        let near_left = (px - my_rect.x).abs() < threshold;
-        let near_right = ((my_rect.x + my_rect.width) - px).abs() < threshold;
-        let near_h = near_left || near_right;
-
-        // Check if pointer is near the top/bottom edges
-        let near_top = (py - my_rect.y).abs() < threshold;
-        let near_bottom = ((my_rect.y + my_rect.height) - py).abs() < threshold;
-        let near_v = near_top || near_bottom;
-
-        // But only if there's actually a split boundary on that edge
-        // (not at the screen edge). Check if a neighbor exists in that direction.
+        // Check which axes have split neighbors at all
         let has_h_neighbor = layouts.iter().any(|(id, rect)| {
             *id != frame_id
                 && crate::layout::vertical_overlap(my_rect, *rect) > 0
-                && ((near_left && rect.x + rect.width <= my_rect.x)
-                    || (near_right && rect.x >= my_rect.x + my_rect.width))
+                && (rect.x + rect.width <= my_rect.x + gap
+                    || rect.x >= my_rect.x + my_rect.width - gap)
         });
-
         let has_v_neighbor = layouts.iter().any(|(id, rect)| {
             *id != frame_id
                 && crate::layout::horizontal_overlap(my_rect, *rect) > 0
-                && ((near_top && rect.y + rect.height <= my_rect.y)
-                    || (near_bottom && rect.y >= my_rect.y + my_rect.height))
+                && (rect.y + rect.height <= my_rect.y + gap
+                    || rect.y >= my_rect.y + my_rect.height - gap)
         });
 
-        let resize_h = near_h && has_h_neighbor;
-        let resize_v = near_v && has_v_neighbor;
+        if has_h_neighbor && has_v_neighbor {
+            // Both axes have neighbors — only allow both near a corner,
+            // otherwise pick the nearest boundary axis
+            let dist_h = (px - my_rect.x)
+                .abs()
+                .min(((my_rect.x + my_rect.width) - px).abs());
+            let dist_v = (py - my_rect.y)
+                .abs()
+                .min(((my_rect.y + my_rect.height) - py).abs());
+            let near_h_edge = dist_h < corner_threshold;
+            let near_v_edge = dist_v < corner_threshold;
 
-        // If not near any specific edge with a neighbor, don't resize
-        (resize_h, resize_v)
+            if near_h_edge && near_v_edge {
+                (true, true) // corner — both axes
+            } else {
+                // Pick the axis with the closer boundary
+                (dist_h < dist_v, dist_v <= dist_h)
+            }
+        } else {
+            (has_h_neighbor, has_v_neighbor)
+        }
     }
 
     fn warp_cursor_to_frame(&self, frame_id: FrameId) {
@@ -1492,6 +1507,7 @@ impl ManagedWindow {
             id,
             app_id: String::new(),
             title: String::new(),
+            identifier: None,
             width: 0,
             height: 0,
             new: true,

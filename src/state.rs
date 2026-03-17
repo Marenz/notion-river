@@ -48,11 +48,14 @@ pub enum SavedNode {
 pub struct SavedWindow {
     pub app_id: String,
     pub title: String,
+    /// Stable River window identifier (persists across WM reconnects).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
 }
 
 // ── Save ─────────────────────────────────────────────────────────────────
 
-pub fn save_state(workspaces: &WorkspaceManager) {
+pub fn save_state(workspaces: &WorkspaceManager, windows: &[crate::wm::ManagedWindow]) {
     let state = SavedState {
         workspaces: workspaces
             .workspaces
@@ -65,7 +68,7 @@ pub fn save_state(workspaces: &WorkspaceManager) {
                     .unwrap_or(0);
                 SavedWorkspace {
                     name: ws.name.clone(),
-                    root: save_node(&ws.root),
+                    root: save_node(&ws.root, windows),
                     focused_frame_index: focused_index,
                 }
             })
@@ -90,15 +93,23 @@ pub fn save_state(workspaces: &WorkspaceManager) {
     }
 }
 
-fn save_node(node: &SplitNode) -> SavedNode {
+fn save_node(node: &SplitNode, windows: &[crate::wm::ManagedWindow]) -> SavedNode {
     match node {
         SplitNode::Leaf(frame) => SavedNode::Leaf {
             windows: frame
                 .windows
                 .iter()
-                .map(|w| SavedWindow {
-                    app_id: w.app_id.clone(),
-                    title: w.title.clone(),
+                .map(|w| {
+                    // Look up the stable identifier from ManagedWindow
+                    let identifier = windows
+                        .iter()
+                        .find(|mw| mw.id == w.window_id)
+                        .and_then(|mw| mw.identifier.clone());
+                    SavedWindow {
+                        app_id: w.app_id.clone(),
+                        title: w.title.clone(),
+                        identifier,
+                    }
                 })
                 .collect(),
             active_tab: frame.active_tab,
@@ -114,8 +125,8 @@ fn save_node(node: &SplitNode) -> SavedNode {
                 Orientation::Vertical => "v".to_string(),
             },
             ratio: *ratio,
-            first: Box::new(save_node(first)),
-            second: Box::new(save_node(second)),
+            first: Box::new(save_node(first, windows)),
+            second: Box::new(save_node(second, windows)),
         },
     }
 }
@@ -193,19 +204,27 @@ fn restore_node(saved: &SavedNode) -> SplitNode {
 }
 
 /// Try to place a new window into the frame that previously held a window
-/// with the same app_id. Returns the target FrameId if a match is found.
+/// with the same app_id. Consumes the matched slot so the same saved
+/// position isn't used twice. Returns the target (WorkspaceId, FrameId).
 pub fn match_window_to_saved_frame(
     workspaces: &WorkspaceManager,
-    state: &SavedState,
+    state: &mut SavedState,
     app_id: &str,
     title: &str,
+    identifier: Option<&str>,
 ) -> Option<(WorkspaceId, FrameId)> {
-    for saved_ws in &state.workspaces {
-        let ws = workspaces
+    for saved_ws in &mut state.workspaces {
+        let ws = match workspaces
             .workspaces
             .iter()
-            .find(|w| w.name == saved_ws.name)?;
-        if let Some(frame_index) = find_matching_frame(&saved_ws.root, app_id, title, 0) {
+            .find(|w| w.name == saved_ws.name)
+        {
+            Some(ws) => ws,
+            None => continue,
+        };
+        if let Some(frame_index) =
+            find_and_consume_match(&mut saved_ws.root, app_id, title, identifier, 0)
+        {
             let all_ids = ws.root.all_frame_ids();
             if frame_index < all_ids.len() {
                 return Some((ws.id, all_ids[frame_index]));
@@ -215,17 +234,32 @@ pub fn match_window_to_saved_frame(
     None
 }
 
-/// Find the leaf index in tree order that contained a window with matching app_id.
-fn find_matching_frame(
-    node: &SavedNode,
+/// Find the leaf index matching app_id and remove the matched window entry
+/// so it won't match again.
+fn find_and_consume_match(
+    node: &mut SavedNode,
     app_id: &str,
     title: &str,
+    identifier: Option<&str>,
     base_index: usize,
 ) -> Option<usize> {
     match node {
         SavedNode::Leaf { windows, .. } => {
-            // Check if any saved window matches
-            if windows.iter().any(|w| w.app_id == app_id) {
+            // Priority: 1) identifier match, 2) app_id+title, 3) app_id only
+            let pos = identifier
+                .and_then(|id| {
+                    windows
+                        .iter()
+                        .position(|w| w.identifier.as_deref() == Some(id))
+                })
+                .or_else(|| {
+                    windows
+                        .iter()
+                        .position(|w| w.app_id == app_id && w.title == title)
+                })
+                .or_else(|| windows.iter().position(|w| w.app_id == app_id));
+            if let Some(pos) = pos {
+                windows.remove(pos); // consume the slot
                 Some(base_index)
             } else {
                 None
@@ -233,8 +267,23 @@ fn find_matching_frame(
         }
         SavedNode::Split { first, second, .. } => {
             let first_count = count_leaves(first);
-            find_matching_frame(first, app_id, title, base_index)
-                .or_else(|| find_matching_frame(second, app_id, title, base_index + first_count))
+            find_and_consume_match(first, app_id, title, identifier, base_index).or_else(|| {
+                find_and_consume_match(second, app_id, title, identifier, base_index + first_count)
+            })
+        }
+    }
+}
+
+/// Check if the saved state has any remaining window entries to match.
+pub fn has_remaining_matches(state: &SavedState) -> bool {
+    state.workspaces.iter().any(|ws| node_has_windows(&ws.root))
+}
+
+fn node_has_windows(node: &SavedNode) -> bool {
+    match node {
+        SavedNode::Leaf { windows, .. } => !windows.is_empty(),
+        SavedNode::Split { first, second, .. } => {
+            node_has_windows(first) || node_has_windows(second)
         }
     }
 }
