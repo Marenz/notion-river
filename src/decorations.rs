@@ -587,16 +587,17 @@ fn draw_text(
                 continue;
             }
 
-            // Alpha blend onto existing background
+            // Cairo ARGB is premultiplied alpha — R/G/B already scaled by A.
+            // Standard premultiplied-over: out = src + dst * (1 - src_alpha)
             let alpha = a as f32 / 255.0;
             let bg = pixels[dst_y * stride + dst_x];
             let bg_r = ((bg >> 16) & 0xFF) as f32;
             let bg_g = ((bg >> 8) & 0xFF) as f32;
             let bg_b = (bg & 0xFF) as f32;
 
-            let out_r = (r as f32 * alpha / alpha.max(0.01) * alpha + bg_r * (1.0 - alpha)) as u32;
-            let out_g = (g as f32 * alpha / alpha.max(0.01) * alpha + bg_g * (1.0 - alpha)) as u32;
-            let out_b = (b as f32 * alpha / alpha.max(0.01) * alpha + bg_b * (1.0 - alpha)) as u32;
+            let out_r = (r as f32 + bg_r * (1.0 - alpha)) as u32;
+            let out_g = (g as f32 + bg_g * (1.0 - alpha)) as u32;
+            let out_b = (b as f32 + bg_b * (1.0 - alpha)) as u32;
 
             pixels[dst_y * stride + dst_x] =
                 0xFF000000 | (out_r.min(255) << 16) | (out_g.min(255) << 8) | out_b.min(255);
