@@ -1,0 +1,247 @@
+//! State persistence: save and restore layout + window placement across restarts.
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+use crate::layout::{Frame, FrameId, Orientation, SplitNode, WindowRef};
+use crate::workspace::{WorkspaceId, WorkspaceManager};
+
+const STATE_FILE: &str = "notion-river-state.json";
+
+fn state_path() -> PathBuf {
+    std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .join(STATE_FILE)
+}
+
+// ── Serializable state ───────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SavedState {
+    pub workspaces: Vec<SavedWorkspace>,
+    pub focused_workspace: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SavedWorkspace {
+    pub name: String,
+    pub root: SavedNode,
+    pub focused_frame_index: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum SavedNode {
+    Leaf {
+        windows: Vec<SavedWindow>,
+        active_tab: usize,
+    },
+    Split {
+        orientation: String, // "h" or "v"
+        ratio: f32,
+        first: Box<SavedNode>,
+        second: Box<SavedNode>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SavedWindow {
+    pub app_id: String,
+    pub title: String,
+}
+
+// ── Save ─────────────────────────────────────────────────────────────────
+
+pub fn save_state(workspaces: &WorkspaceManager) {
+    let state = SavedState {
+        workspaces: workspaces
+            .workspaces
+            .iter()
+            .map(|ws| {
+                let all_ids = ws.root.all_frame_ids();
+                let focused_index = all_ids
+                    .iter()
+                    .position(|id| *id == ws.focused_frame)
+                    .unwrap_or(0);
+                SavedWorkspace {
+                    name: ws.name.clone(),
+                    root: save_node(&ws.root),
+                    focused_frame_index: focused_index,
+                }
+            })
+            .collect(),
+        focused_workspace: workspaces
+            .workspaces
+            .get(workspaces.focused_workspace.0)
+            .map(|ws| ws.name.clone())
+            .unwrap_or_default(),
+    };
+
+    let path = state_path();
+    match serde_json::to_string_pretty(&state) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                log::error!("Failed to save state to {}: {e}", path.display());
+            } else {
+                log::info!("Saved state to {}", path.display());
+            }
+        }
+        Err(e) => log::error!("Failed to serialize state: {e}"),
+    }
+}
+
+fn save_node(node: &SplitNode) -> SavedNode {
+    match node {
+        SplitNode::Leaf(frame) => SavedNode::Leaf {
+            windows: frame
+                .windows
+                .iter()
+                .map(|w| SavedWindow {
+                    app_id: w.app_id.clone(),
+                    title: w.title.clone(),
+                })
+                .collect(),
+            active_tab: frame.active_tab,
+        },
+        SplitNode::Split {
+            orientation,
+            ratio,
+            first,
+            second,
+        } => SavedNode::Split {
+            orientation: match orientation {
+                Orientation::Horizontal => "h".to_string(),
+                Orientation::Vertical => "v".to_string(),
+            },
+            ratio: *ratio,
+            first: Box::new(save_node(first)),
+            second: Box::new(save_node(second)),
+        },
+    }
+}
+
+// ── Restore ──────────────────────────────────────────────────────────────
+
+/// Load saved state from disk. Returns None if no state file or parse error.
+pub fn load_state() -> Option<SavedState> {
+    let path = state_path();
+    let json = std::fs::read_to_string(&path).ok()?;
+    match serde_json::from_str(&json) {
+        Ok(state) => {
+            log::info!("Loaded saved state from {}", path.display());
+            // Delete the state file after loading (one-shot restore)
+            let _ = std::fs::remove_file(&path);
+            Some(state)
+        }
+        Err(e) => {
+            log::error!("Failed to parse state file {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Restore layout trees from saved state into the workspace manager.
+/// Only restores the tree structure, not window placement (windows haven't
+/// connected yet at restore time).
+pub fn restore_layout(workspaces: &mut WorkspaceManager, state: &SavedState) {
+    for saved_ws in &state.workspaces {
+        if let Some(ws) = workspaces
+            .workspaces
+            .iter_mut()
+            .find(|w| w.name == saved_ws.name)
+        {
+            ws.root = restore_node(&saved_ws.root);
+            // Restore focused frame
+            let all_ids = ws.root.all_frame_ids();
+            if saved_ws.focused_frame_index < all_ids.len() {
+                ws.focused_frame = all_ids[saved_ws.focused_frame_index];
+            }
+            log::info!("Restored layout for workspace '{}'", saved_ws.name);
+        }
+    }
+    // Restore focused workspace
+    if let Some(ws) = workspaces
+        .workspaces
+        .iter()
+        .find(|w| w.name == state.focused_workspace)
+    {
+        workspaces.focused_workspace = ws.id;
+    }
+}
+
+fn restore_node(saved: &SavedNode) -> SplitNode {
+    match saved {
+        SavedNode::Leaf { .. } => {
+            // Restore as empty frame — windows will be matched later
+            SplitNode::Leaf(Frame::new())
+        }
+        SavedNode::Split {
+            orientation,
+            ratio,
+            first,
+            second,
+        } => SplitNode::Split {
+            orientation: match orientation.as_str() {
+                "h" => Orientation::Horizontal,
+                _ => Orientation::Vertical,
+            },
+            ratio: *ratio,
+            first: Box::new(restore_node(first)),
+            second: Box::new(restore_node(second)),
+        },
+    }
+}
+
+/// Try to place a new window into the frame that previously held a window
+/// with the same app_id. Returns the target FrameId if a match is found.
+pub fn match_window_to_saved_frame(
+    workspaces: &WorkspaceManager,
+    state: &SavedState,
+    app_id: &str,
+    title: &str,
+) -> Option<(WorkspaceId, FrameId)> {
+    for saved_ws in &state.workspaces {
+        let ws = workspaces
+            .workspaces
+            .iter()
+            .find(|w| w.name == saved_ws.name)?;
+        if let Some(frame_index) = find_matching_frame(&saved_ws.root, app_id, title, 0) {
+            let all_ids = ws.root.all_frame_ids();
+            if frame_index < all_ids.len() {
+                return Some((ws.id, all_ids[frame_index]));
+            }
+        }
+    }
+    None
+}
+
+/// Find the leaf index in tree order that contained a window with matching app_id.
+fn find_matching_frame(
+    node: &SavedNode,
+    app_id: &str,
+    title: &str,
+    base_index: usize,
+) -> Option<usize> {
+    match node {
+        SavedNode::Leaf { windows, .. } => {
+            // Check if any saved window matches
+            if windows.iter().any(|w| w.app_id == app_id) {
+                Some(base_index)
+            } else {
+                None
+            }
+        }
+        SavedNode::Split { first, second, .. } => {
+            let first_count = count_leaves(first);
+            find_matching_frame(first, app_id, title, base_index)
+                .or_else(|| find_matching_frame(second, app_id, title, base_index + first_count))
+        }
+    }
+}
+
+fn count_leaves(node: &SavedNode) -> usize {
+    match node {
+        SavedNode::Leaf { .. } => 1,
+        SavedNode::Split { first, second, .. } => count_leaves(first) + count_leaves(second),
+    }
+}

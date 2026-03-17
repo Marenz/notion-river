@@ -77,6 +77,8 @@ pub struct WindowManager {
     pub decorations: DecorationManager,
     /// Empty frame indicator manager.
     pub empty_frames: EmptyFrameManager,
+    /// Saved state for window matching on restart.
+    pub saved_state: Option<crate::state::SavedState>,
 }
 
 /// A window tracked by the WM.
@@ -187,8 +189,14 @@ impl WindowManager {
         let normal_bindings = parse_all_bindings(&normal_cfgs, physical, layout_idx);
         let resize_bindings = parse_all_bindings(&resize_cfgs, physical, layout_idx);
 
-        let workspaces =
+        let mut workspaces =
             WorkspaceManager::new(&config.workspaces, config.general.default_split_ratio);
+
+        // Try to restore saved state (from previous restart)
+        let saved_state = crate::state::load_state();
+        if let Some(ref state) = saved_state {
+            crate::state::restore_layout(&mut workspaces, state);
+        }
 
         Self {
             config,
@@ -200,6 +208,7 @@ impl WindowManager {
             resize_bindings,
             decorations: DecorationManager::new(),
             empty_frames: EmptyFrameManager::new(),
+            saved_state,
         }
     }
 
@@ -325,11 +334,34 @@ impl WindowManager {
 
     fn init_new_windows(&mut self) {
         for window in self.windows.iter_mut().filter(|w| w.new) {
-            // Place window into the focused frame of the focused workspace
-            let ws = &mut self.workspaces.workspaces[self.workspaces.focused_workspace.0];
-            let frame_id = ws.focused_frame;
+            // Try to restore window to its saved position
+            let restored = self.saved_state.as_ref().and_then(|state| {
+                crate::state::match_window_to_saved_frame(
+                    &self.workspaces,
+                    state,
+                    &window.app_id,
+                    &window.title,
+                )
+            });
 
-            if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+            let (target_ws_idx, frame_id) = if let Some((ws_id, fid)) = restored {
+                log::info!(
+                    "Restoring window '{}' to workspace '{}' frame {:?}",
+                    window.app_id,
+                    self.workspaces.workspaces[ws_id.0].name,
+                    fid
+                );
+                (ws_id.0, fid)
+            } else {
+                // Default: place in focused frame of focused workspace
+                let ws_idx = self.workspaces.focused_workspace.0;
+                (ws_idx, self.workspaces.workspaces[ws_idx].focused_frame)
+            };
+
+            if let Some(frame) = self.workspaces.workspaces[target_ws_idx]
+                .root
+                .find_frame_mut(frame_id)
+            {
                 frame.add_window(WindowRef {
                     window_id: window.id,
                     app_id: window.app_id.clone(),
@@ -595,7 +627,8 @@ impl WindowManager {
             }
 
             Action::FocusDirection(dir) => {
-                let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+                let ws_idx = self.workspaces.focused_workspace.0;
+                let ws = &self.workspaces.workspaces[ws_idx];
                 let frame_id = ws.focused_frame;
                 let gap = self.config.general.gap as i32;
 
@@ -603,18 +636,40 @@ impl WindowManager {
                     if let Some(output) = self.workspaces.output(output_id) {
                         let area = output.usable_rect();
                         if let Some(neighbor) = ws.root.find_neighbor(frame_id, dir, area, gap) {
+                            // Neighbor within same workspace
                             log::info!("FocusDirection {dir:?}: {frame_id:?} -> {neighbor:?}");
-                            let ws_mut = &mut self.workspaces.workspaces
-                                [self.workspaces.focused_workspace.0];
+                            let ws_mut = &mut self.workspaces.workspaces[ws_idx];
                             ws_mut.focused_frame = neighbor;
                         } else {
-                            log::info!("FocusDirection {dir:?}: no neighbor from {frame_id:?} (area={area:?})");
+                            // No neighbor in this workspace — try adjacent monitor
+                            // Find the current frame's rect to match position
+                            let frame_rect = ws
+                                .root
+                                .calculate_layout(area, gap)
+                                .into_iter()
+                                .find(|(id, _)| *id == frame_id)
+                                .map(|(_, r)| r);
+
+                            if let Some(src_rect) = frame_rect {
+                                // Find a visible workspace on an adjacent output
+                                let target =
+                                    self.find_cross_monitor_target(output_id, dir, src_rect, gap);
+                                if let Some((target_ws_id, target_frame_id)) = target {
+                                    log::info!(
+                                        "FocusDirection {dir:?}: cross-monitor to ws {} frame {target_frame_id:?}",
+                                        self.workspaces.workspaces[target_ws_id.0].name
+                                    );
+                                    self.workspaces.workspaces[target_ws_id.0].focused_frame =
+                                        target_frame_id;
+                                    self.workspaces.focused_workspace = target_ws_id;
+                                } else {
+                                    log::info!(
+                                        "FocusDirection {dir:?}: no neighbor or adjacent monitor"
+                                    );
+                                }
+                            }
                         }
-                    } else {
-                        log::info!("FocusDirection: no output found");
                     }
-                } else {
-                    log::info!("FocusDirection: workspace has no active output");
                 }
             }
 
@@ -779,7 +834,8 @@ impl WindowManager {
             }
 
             Action::Restart => {
-                log::info!("Restarting WM (clean exit)");
+                log::info!("Restarting WM — saving state");
+                crate::state::save_state(&self.workspaces);
                 std::process::exit(0);
             }
 
@@ -793,6 +849,110 @@ impl WindowManager {
 
     /// Determine which resize axes are active based on pointer proximity
     /// to split boundaries. Returns (resize_h, resize_v).
+    /// Find the best frame on an adjacent monitor when focus crosses a monitor boundary.
+    /// Returns (WorkspaceId, FrameId) of the target, matching the source position.
+    fn find_cross_monitor_target(
+        &self,
+        current_output: OutputId,
+        dir: crate::layout::Direction,
+        src_rect: crate::layout::Rect,
+        gap: i32,
+    ) -> Option<(crate::workspace::WorkspaceId, FrameId)> {
+        use crate::layout::Direction;
+
+        let cur = self.workspaces.output(current_output)?;
+        let cur_rect = cur.usable_rect();
+
+        // Find the adjacent output in the given direction
+        let target_output = self.workspaces.outputs.iter().find(|o| {
+            if o.id == current_output || o.removed {
+                return false;
+            }
+            let r = o.usable_rect();
+            match dir {
+                Direction::Right => {
+                    r.x >= cur_rect.x + cur_rect.width - gap
+                        && crate::layout::vertical_overlap(cur_rect, r) > 0
+                }
+                Direction::Left => {
+                    r.x + r.width <= cur_rect.x + gap
+                        && crate::layout::vertical_overlap(cur_rect, r) > 0
+                }
+                Direction::Down => {
+                    r.y >= cur_rect.y + cur_rect.height - gap
+                        && crate::layout::horizontal_overlap(cur_rect, r) > 0
+                }
+                Direction::Up => {
+                    r.y + r.height <= cur_rect.y + gap
+                        && crate::layout::horizontal_overlap(cur_rect, r) > 0
+                }
+            }
+        })?;
+
+        let target_oid = target_output.id;
+        let target_area = target_output.usable_rect();
+
+        // Find the visible workspace on that output
+        let target_ws = self
+            .workspaces
+            .workspaces
+            .iter()
+            .find(|ws| ws.active_output == Some(target_oid))?;
+
+        // Calculate frame layouts on the target workspace
+        let layouts = target_ws.root.calculate_layout(target_area, gap);
+
+        // Find the frame on the entry edge that best matches our vertical/horizontal position
+        // Use the center of the source frame to find the closest match
+        let src_center_x = src_rect.x + src_rect.width / 2;
+        let src_center_y = src_rect.y + src_rect.height / 2;
+
+        let best_frame = match dir {
+            Direction::Right => {
+                // Entering from the left edge of target — find leftmost frame matching Y
+                layouts
+                    .iter()
+                    .filter(|(_, r)| r.x <= target_area.x + gap)
+                    .min_by_key(|(_, r)| {
+                        let frame_center_y = r.y + r.height / 2;
+                        (frame_center_y - src_center_y).abs()
+                    })
+            }
+            Direction::Left => {
+                // Entering from the right edge — find rightmost frame matching Y
+                layouts
+                    .iter()
+                    .filter(|(_, r)| r.x + r.width >= target_area.x + target_area.width - gap)
+                    .min_by_key(|(_, r)| {
+                        let frame_center_y = r.y + r.height / 2;
+                        (frame_center_y - src_center_y).abs()
+                    })
+            }
+            Direction::Down => {
+                // Entering from the top — find topmost frame matching X
+                layouts
+                    .iter()
+                    .filter(|(_, r)| r.y <= target_area.y + gap)
+                    .min_by_key(|(_, r)| {
+                        let frame_center_x = r.x + r.width / 2;
+                        (frame_center_x - src_center_x).abs()
+                    })
+            }
+            Direction::Up => {
+                // Entering from the bottom — find bottommost frame matching X
+                layouts
+                    .iter()
+                    .filter(|(_, r)| r.y + r.height >= target_area.y + target_area.height - gap)
+                    .min_by_key(|(_, r)| {
+                        let frame_center_x = r.x + r.width / 2;
+                        (frame_center_x - src_center_x).abs()
+                    })
+            }
+        };
+
+        best_frame.map(|(fid, _)| (target_ws.id, *fid))
+    }
+
     pub fn detect_resize_axes(&self, frame_id: FrameId, px: i32, py: i32) -> (bool, bool) {
         let gap = self.config.general.gap as i32;
         let threshold = gap + 20; // pixels from frame edge to activate resize

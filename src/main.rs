@@ -13,6 +13,7 @@ mod dispatch;
 mod focus;
 mod layout;
 mod protocol;
+mod state;
 mod wm;
 mod workspace;
 
@@ -76,8 +77,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app_data.wm.config.general.physical_keys
     );
 
+    // Set up signal handler for clean shutdown with state save
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+    unsafe {
+        libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
+    }
+    extern "C" fn signal_handler(_sig: libc::c_int) {
+        SHUTDOWN.store(true, Ordering::Relaxed);
+    }
+
     // Main event loop.
     loop {
+        if SHUTDOWN.load(Ordering::Relaxed) {
+            log::info!("Signal received, saving state and exiting");
+            crate::state::save_state(&app_data.wm.workspaces);
+            std::process::exit(0);
+        }
         event_queue.blocking_dispatch(&mut app_data)?;
     }
 }
