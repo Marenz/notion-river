@@ -49,11 +49,7 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
     // Collect outputs in order
     let mut output_names: Vec<String> = Vec::new();
     for ws in &workspaces.workspaces {
-        let name = ws
-            .preferred_output
-            .as_deref()
-            .unwrap_or("none")
-            .to_string();
+        let name = ws.preferred_output.as_deref().unwrap_or("none").to_string();
         if !output_names.contains(&name) {
             output_names.push(name);
         }
@@ -87,32 +83,29 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
                 .any(|fid| ws.root.find_frame(*fid).is_some_and(|f| !f.is_empty()));
 
             let ws_text = if is_focused {
-                format!("<b>{}</b>", ws.name)
+                format!(
+                    "<span color='{color}' background='#333333' bgalpha='80%'><b> {} </b></span>",
+                    ws.name
+                )
             } else if has_windows {
-                ws.name.clone()
+                format!("<span alpha='70%' color='{color}'>{}</span>", ws.name)
             } else {
-                format!("<span alpha='50%'>{}</span>", ws.name)
+                format!("<span alpha='35%' color='{color}'>{}</span>", ws.name)
             };
 
             let marker = if is_focused {
-                "▶"
-            } else if is_visible {
-                "●"
+                String::new() // no marker needed, the box highlights it
             } else if has_windows {
-                "○"
+                format!("<span alpha='70%' color='{color}'>○ </span>")
             } else {
-                "·"
+                format!("<span alpha='35%' color='{color}'>· </span>")
             };
 
             parts.push(format!("{marker} {ws_text}"));
         }
 
         let group_text = parts.join("  ");
-        if is_focused_output {
-            groups.push(format!("<span color='{color}'><b>[{group_text}]</b></span>"));
-        } else {
-            groups.push(format!("<span color='{color}'>{group_text}</span>"));
-        }
+        groups.push(group_text);
     }
 
     let text = groups.join("  ");
@@ -124,23 +117,6 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
 
     // Escape for JSON
     let text = text.replace('"', "&quot;");
-
-    format!(
-        r#"{{"text": "{text}", "tooltip": "Focused: {focused_name}", "class": "workspaces"}}"#
-    )
-}
-
-    let text = output_groups
-        .values()
-        .map(|group| group.join("  "))
-        .collect::<Vec<_>>()
-        .join("  │  ");
-
-    let focused_name = workspaces
-        .workspaces
-        .get(workspaces.focused_workspace.0)
-        .map(|ws| ws.name.as_str())
-        .unwrap_or("");
 
     format!(r#"{{"text": "{text}", "tooltip": "Focused: {focused_name}", "class": "workspaces"}}"#)
 }

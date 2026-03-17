@@ -17,3 +17,4 @@ xkbcommon = { version = "0.8", features = ["wayland"] }
 dirs = "6"
 libc = "0.2"
 serde_json = "1"
+fontdue = "0.9"
