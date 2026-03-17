@@ -25,7 +25,10 @@ This gives you a predictable, stable workspace layout that doesn't rearrange its
 - **Multi-monitor** with per-output workspace assignment
 - **Layer-shell support** — waybar, notifications, rofi overlays
 - **Waybar integration** — workspace indicators with per-monitor grouping
-- **IPC control socket** — `notion-ctl` can list/focus windows and switch workspaces
+- **IPC control socket** — `notion-ctl` can list/focus windows (including on hidden workspaces) and switch workspaces
+- **Window switcher** — rofi integration with combined drun+run+windows mode via `notion-ctl`
+- **HiDPI / fractional scaling** — wp_viewporter protocol, DPI at scale 2.0 via kanshi
+- **Cairo+Pango font rendering** — crisp tab bar labels
 - **Media keys** — volume, brightness, playback controls
 - **Physical key bindings** — work across keyboard layouts (Neo, Dvorak, etc.)
 - **Two built-in keybinding profiles** — `i3_neo` (Neo layout) and `notion` (Vim-style)
@@ -70,8 +73,9 @@ kanshi &  # monitor configuration
     nm-applet --indicator &
 ) &
 
-# Restart loop: WM restarts on clean exit (Super+Shift+R)
-while notion-river; do
+# Restart loop: WM always restarts (Super+Shift+R or crash)
+while true; do
+    notion-river
     sleep 0.5
 done
 ```
@@ -164,14 +168,13 @@ Volume up/down/mute, mic mute, play/pause, next/prev, brightness up/down.
 
 ## Status
 
-Early development. Usable as a daily driver. Waybar shows workspaces, CPU, memory, disk, volume, network, and system tray.
+Usable as a daily driver. IPC control socket enables external tooling (rofi window switcher, clickable waybar workspaces). Tab bars use Cairo+Pango for crisp font rendering at any scale. HiDPI works at scale 2.0 via kanshi + wp_viewporter.
 
 ### Planned
 
 - Drag-and-drop with visual split preview
 - Clickable waybar workspaces via IPC commands
 - Window rules (winprops) for auto-placement
-- Better font rendering in tab bars
 
 ## IPC
 
@@ -182,11 +185,11 @@ Commands:
 ```sh
 notion-ctl list-windows
 notion-ctl list-workspaces
-notion-ctl focus-window <id>
+notion-ctl focus-window <id>    # switches to hidden workspace if needed
 notion-ctl switch-workspace <name>
 ```
 
-Window switcher helper:
+Window switcher helper (rofi with combined drun+run+windows mode):
 
 ```sh
 notion-rofi-windows

@@ -30,7 +30,7 @@ lightdm is configured with a "Notion River" session (`/usr/share/wayland-session
 
 The `start-river` script sets XKB layout (de/neo), Wayland env vars, and execs River.
 
-The init script (`~/.config/river/init`) starts kanshi, waybar, nm-applet, keepassxc, and runs notion-river in a restart loop.
+The init script (`~/.config/river/init`) starts kanshi, waybar, nm-applet, keepassxc, and runs notion-river in a restart loop (always restarts, not just on exit 0). kanshi sets DPI at scale 2.0 for HiDPI; wp_viewporter protocol handles fractional scaling.
 
 ### Nested testing (inside X11)
 
@@ -46,9 +46,14 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `src/main.rs` — entry point, Wayland connection, event loop, signal handler, log file setup
 - `src/protocol.rs` — wayland-scanner generated bindings (river-window-management-v1, river-xkb-bindings-v1, river-layer-shell-v1)
 - `src/dispatch.rs` — Wayland `Dispatch` impls for all protocol interfaces (WM, output, seat, window, pointer, layer-shell, decorations)
-- `src/wm.rs` — core WM state, manage/render cycle, action execution, pointer ops, focus logic integration
+- `src/wm.rs` — core WM state, manage/render cycle, focus logic integration
+- `src/window_actions.rs` — action execution: perform_action, perform_split, perform_unsplit, cross-monitor moves, command spawning
+- `src/rendering.rs` — layout application: window dimensions, focus, visibility, position/border/decoration drawing
+- `src/pointer_ops.rs` — pointer operation handling: move-drop, seat ops (resize), resize axis detection, cursor warping
 - `src/layout.rs` — static split tree (binary tree of frames), geometry calculation, neighbor finding, ratio adjustment
-- `src/decorations.rs` — tab bar rendering (per-window decoration surfaces) + empty frame indicators (shell surfaces), bitmap font
+- `src/decorations.rs` — tab bar rendering (per-window decoration surfaces via Cairo+Pango) + empty frame indicators (shell surfaces)
+- `src/control.rs` — IPC control socket server: accepts commands on `$XDG_RUNTIME_DIR/notion-river.sock`
+- `src/bin/notion-ctl.rs` — CLI client for the control socket
 - `src/workspace.rs` — workspace manager, output assignment, multi-monitor, saved visible workspace restore
 - `src/bindings.rs` — keybinding parsing, built-in profiles (i3_neo, notion), media keys, modifier constants
 - `src/actions.rs` — action enum and config string parsing
@@ -72,7 +77,8 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Layer-shell**: river-layer-shell-v1 for waybar/rofi/notifications. non_exclusive_area adjusts tiling area.
 - **State persistence**: layout tree + window-to-frame mapping + visible workspaces saved to JSON on restart/signal. Windows matched by River's stable identifier, then app_id+title.
 - **Title sync**: WindowRef titles updated from ManagedWindow every manage cycle for live tab bar updates.
-- **Control IPC**: `$XDG_RUNTIME_DIR/notion-river.sock` accepts `list-windows`, `list-workspaces`, `focus-window <id>`, `switch-workspace <name>` for `notion-ctl` and rofi integration.
+- **Control IPC**: `$XDG_RUNTIME_DIR/notion-river.sock` accepts `list-windows`, `list-workspaces`, `focus-window <id>`, `switch-workspace <name>` for `notion-ctl` and rofi integration. `focus-window` switches to hidden workspaces if the target window is on one.
+- **wp_viewporter**: Wayland protocol for fractional scaling support with HiDPI (scale 2.0 via kanshi).
 
 ## Built-in Keybinding Profiles
 
@@ -99,6 +105,8 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - Electron apps need `ELECTRON_OZONE_PLATFORM_HINT=wayland` env var (set in init script).
 - `env_logger` output goes to `/tmp/notion-river.log` via LineFlush wrapper.
 - Stale wayland socket locks after crashes: `rm -f /run/user/$(id -u)/wayland-*`
+- The init restart loop always restarts notion-river (not conditional on exit code). This means crashes also trigger a restart.
+- Contour terminal works under Wayland — no special flags needed.
 
 ## Dependencies
 
@@ -109,4 +117,6 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `log` / `env_logger` — logging (to file)
 - `dirs` — XDG config directory lookup
 - `libc` — memfd_create, mmap for shared memory buffers (decoration rendering)
-- `fontdue` — TTF font rendering for tab bars (planned)
+- `cairo-rs` (with freetype feature) — 2D rendering for tab bars and decoration surfaces
+- `pangocairo` — Cairo integration for Pango text layout
+- `pango` — font rendering and text shaping for tab bar labels

@@ -14,8 +14,11 @@ mod dispatch;
 mod focus;
 mod ipc;
 mod layout;
+mod pointer_ops;
 mod protocol;
+mod rendering;
 mod state;
+mod window_actions;
 mod wm;
 mod workspace;
 
