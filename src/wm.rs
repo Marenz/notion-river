@@ -254,6 +254,7 @@ impl WindowManager {
         self.remove_closed_outputs();
         self.remove_closed_windows();
         self.remove_closed_seats();
+        self.sync_window_titles();
         self.init_new_windows();
         self.init_new_seats(river_xkb, qh);
 
@@ -344,6 +345,24 @@ impl WindowManager {
             .collect();
         for id in removed {
             self.workspaces.remove_output(id);
+        }
+    }
+
+    fn sync_window_titles(&mut self) {
+        for win in &self.windows {
+            for ws in &mut self.workspaces.workspaces {
+                if let Some(frame_id) = ws.root.find_frame_with_window(win.id) {
+                    if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                        if let Some(wref) = frame.windows.iter_mut().find(|w| w.window_id == win.id)
+                        {
+                            if wref.title != win.title || wref.app_id != win.app_id {
+                                wref.title = win.title.clone();
+                                wref.app_id = win.app_id.clone();
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
