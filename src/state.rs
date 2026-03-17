@@ -152,9 +152,13 @@ pub fn load_state() -> Option<SavedState> {
 }
 
 /// Restore layout trees from saved state into the workspace manager.
-/// Only restores the tree structure, not window placement (windows haven't
-/// connected yet at restore time).
-pub fn restore_layout(workspaces: &mut WorkspaceManager, state: &SavedState) {
+/// Returns a map of FrameId → saved active_tab index for later application.
+pub fn restore_layout(
+    workspaces: &mut WorkspaceManager,
+    state: &SavedState,
+) -> std::collections::HashMap<crate::layout::FrameId, usize> {
+    let mut active_tabs = std::collections::HashMap::new();
+
     for saved_ws in &state.workspaces {
         if let Some(ws) = workspaces
             .workspaces
@@ -162,8 +166,10 @@ pub fn restore_layout(workspaces: &mut WorkspaceManager, state: &SavedState) {
             .find(|w| w.name == saved_ws.name)
         {
             ws.root = restore_node(&saved_ws.root);
-            // Restore focused frame
+            // Collect active_tab for each frame
             let all_ids = ws.root.all_frame_ids();
+            collect_active_tabs(&saved_ws.root, &all_ids, 0, &mut active_tabs);
+            // Restore focused frame
             if saved_ws.focused_frame_index < all_ids.len() {
                 ws.focused_frame = all_ids[saved_ws.focused_frame_index];
             }
@@ -177,6 +183,32 @@ pub fn restore_layout(workspaces: &mut WorkspaceManager, state: &SavedState) {
         .find(|w| w.name == state.focused_workspace)
     {
         workspaces.focused_workspace = ws.id;
+    }
+
+    active_tabs
+}
+
+fn collect_active_tabs(
+    node: &SavedNode,
+    frame_ids: &[crate::layout::FrameId],
+    base_index: usize,
+    out: &mut std::collections::HashMap<crate::layout::FrameId, usize>,
+) {
+    match node {
+        SavedNode::Leaf {
+            active_tab,
+            windows,
+            ..
+        } => {
+            if base_index < frame_ids.len() && !windows.is_empty() {
+                out.insert(frame_ids[base_index], *active_tab);
+            }
+        }
+        SavedNode::Split { first, second, .. } => {
+            let first_count = count_leaves(first);
+            collect_active_tabs(first, frame_ids, base_index, out);
+            collect_active_tabs(second, frame_ids, base_index + first_count, out);
+        }
     }
 }
 

@@ -89,6 +89,8 @@ pub struct WindowManager {
     pub empty_frames: EmptyFrameManager,
     /// Saved state for window matching on restart.
     pub saved_state: Option<crate::state::SavedState>,
+    /// Saved active tab indices to apply after window restore.
+    pub saved_active_tabs: std::collections::HashMap<FrameId, usize>,
     /// Suppress WindowInteraction for one manage cycle (after tab click).
     pub suppress_interaction: bool,
     /// Whether a layer-shell surface (e.g. rofi overlay) has keyboard focus.
@@ -212,9 +214,11 @@ impl WindowManager {
 
         // Try to restore saved state (from previous restart)
         let saved_state = crate::state::load_state();
-        if let Some(ref state) = saved_state {
-            crate::state::restore_layout(&mut workspaces, state);
-        }
+        let saved_active_tabs = if let Some(ref state) = saved_state {
+            crate::state::restore_layout(&mut workspaces, state)
+        } else {
+            std::collections::HashMap::new()
+        };
 
         Self {
             config,
@@ -227,6 +231,7 @@ impl WindowManager {
             decorations: DecorationManager::new(),
             empty_frames: EmptyFrameManager::new(),
             saved_state,
+            saved_active_tabs,
             suppress_interaction: false,
             layer_shell_has_focus: false,
             ipc: crate::ipc::IpcState::new(),
@@ -408,6 +413,16 @@ impl WindowManager {
             if !crate::state::has_remaining_matches(state) {
                 log::info!("All saved windows restored, clearing saved state");
                 self.saved_state = None;
+                // Apply saved active tab indices
+                for (frame_id, active_tab) in self.saved_active_tabs.drain() {
+                    for ws in &mut self.workspaces.workspaces {
+                        if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                            if active_tab < frame.windows.len() {
+                                frame.active_tab = active_tab;
+                            }
+                        }
+                    }
+                }
             }
         }
     }

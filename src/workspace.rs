@@ -142,7 +142,11 @@ impl WorkspaceManager {
                 .find(|w| w.id == ws)
                 .is_some_and(|w| w.active_output == Some(output_id))
         }) {
-            // First, try to find a workspace that prefers this output
+            // If output name is known, try preferred match
+            // If name is not known yet, wait for reassign_outputs() after wl_output.name
+            if output_name.is_none() {
+                return;
+            }
             let preferred = self.workspaces.iter().find(|ws| {
                 ws.active_output.is_none()
                     && ws.preferred_output.as_deref() == output_name.as_deref()
