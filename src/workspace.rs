@@ -88,6 +88,8 @@ pub struct WorkspaceManager {
     pub output_workspace: std::collections::HashMap<OutputId, WorkspaceId>,
     /// The globally focused workspace.
     pub focused_workspace: WorkspaceId,
+    /// Saved visible workspaces from state restore: (output_name, workspace_name)
+    pub saved_visible: Vec<(String, String)>,
 }
 
 impl WorkspaceManager {
@@ -120,6 +122,7 @@ impl WorkspaceManager {
             outputs: Vec::new(),
             output_workspace: std::collections::HashMap::new(),
             focused_workspace,
+            saved_visible: Vec::new(),
         }
     }
 
@@ -178,7 +181,7 @@ impl WorkspaceManager {
     }
 
     /// Assign a workspace to an output.
-    fn assign_workspace_to_output(&mut self, ws_id: WorkspaceId, output_id: OutputId) {
+    pub fn assign_workspace_to_output(&mut self, ws_id: WorkspaceId, output_id: OutputId) {
         if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == ws_id) {
             ws.active_output = Some(output_id);
         }
@@ -196,15 +199,28 @@ impl WorkspaceManager {
             .collect();
 
         for (output_id, output_name) in &outputs {
-            // Find the first workspace that prefers this output and isn't visible yet
-            let ws_id = self
-                .workspaces
+            // Prefer the saved visible workspace for this output (from state restore)
+            let saved_ws = self
+                .saved_visible
                 .iter()
-                .find(|ws| {
-                    ws.preferred_output.as_deref() == Some(output_name.as_str())
-                        && ws.active_output.is_none()
-                })
-                .map(|ws| ws.id);
+                .find(|(oname, _)| oname == output_name)
+                .and_then(|(_, ws_name)| {
+                    self.workspaces
+                        .iter()
+                        .find(|ws| ws.name == *ws_name && ws.active_output.is_none())
+                        .map(|ws| ws.id)
+                });
+
+            // Fall back to first preferred workspace for this output
+            let ws_id = saved_ws.or_else(|| {
+                self.workspaces
+                    .iter()
+                    .find(|ws| {
+                        ws.preferred_output.as_deref() == Some(output_name.as_str())
+                            && ws.active_output.is_none()
+                    })
+                    .map(|ws| ws.id)
+            });
 
             if let Some(ws_id) = ws_id {
                 // Unassign whatever was on this output before

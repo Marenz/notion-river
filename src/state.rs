@@ -21,6 +21,9 @@ fn state_path() -> PathBuf {
 pub struct SavedState {
     pub workspaces: Vec<SavedWorkspace>,
     pub focused_workspace: String,
+    /// Which workspace was visible on each output: (output_name, workspace_name)
+    #[serde(default)]
+    pub visible_workspaces: Vec<(String, String)>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -78,6 +81,15 @@ pub fn save_state(workspaces: &WorkspaceManager, windows: &[crate::wm::ManagedWi
             .get(workspaces.focused_workspace.0)
             .map(|ws| ws.name.clone())
             .unwrap_or_default(),
+        visible_workspaces: workspaces
+            .workspaces
+            .iter()
+            .filter_map(|ws| {
+                let output_id = ws.active_output?;
+                let output_name = workspaces.output(output_id)?.name.as_ref()?.clone();
+                Some((output_name, ws.name.clone()))
+            })
+            .collect(),
     };
 
     let path = state_path();
@@ -186,6 +198,48 @@ pub fn restore_layout(
     }
 
     active_tabs
+}
+
+/// Restore which workspaces were visible on each output.
+/// Called after output names are known (from reassign_outputs).
+pub fn restore_visible_workspaces(workspaces: &mut WorkspaceManager, state: &SavedState) {
+    for (output_name, ws_name) in &state.visible_workspaces {
+        let output_id = match workspaces
+            .outputs
+            .iter()
+            .find(|o| o.name.as_deref() == Some(output_name.as_str()))
+        {
+            Some(o) => o.id,
+            None => continue,
+        };
+
+        let ws_id = match workspaces.workspaces.iter().find(|w| w.name == *ws_name) {
+            Some(ws) => ws.id,
+            None => continue,
+        };
+
+        // Unassign whatever is on this output
+        if let Some(&old_ws) = workspaces.output_workspace.get(&output_id) {
+            if let Some(ws) = workspaces.workspaces.iter_mut().find(|w| w.id == old_ws) {
+                ws.active_output = None;
+            }
+        }
+        workspaces.assign_workspace_to_output(ws_id, output_id);
+        log::info!(
+            "Restored workspace '{}' on output '{}'",
+            ws_name,
+            output_name
+        );
+    }
+
+    // Restore focused workspace
+    if let Some(ws) = workspaces
+        .workspaces
+        .iter()
+        .find(|w| w.name == state.focused_workspace)
+    {
+        workspaces.focused_workspace = ws.id;
+    }
 }
 
 fn collect_active_tabs(

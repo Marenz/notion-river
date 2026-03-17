@@ -215,7 +215,10 @@ impl WindowManager {
         // Try to restore saved state (from previous restart)
         let saved_state = crate::state::load_state();
         let saved_active_tabs = if let Some(ref state) = saved_state {
-            crate::state::restore_layout(&mut workspaces, state)
+            let tabs = crate::state::restore_layout(&mut workspaces, state);
+            // Store visible workspace preferences for later (after output names arrive)
+            workspaces.saved_visible = state.visible_workspaces.iter().cloned().collect();
+            tabs
         } else {
             std::collections::HashMap::new()
         };
