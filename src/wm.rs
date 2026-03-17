@@ -93,6 +93,8 @@ pub struct WindowManager {
     pub suppress_interaction: bool,
     /// Whether a layer-shell surface (e.g. rofi overlay) has keyboard focus.
     pub layer_shell_has_focus: bool,
+    /// IPC state for waybar workspace display.
+    pub ipc: crate::ipc::IpcState,
 }
 
 /// A window tracked by the WM.
@@ -227,6 +229,7 @@ impl WindowManager {
             saved_state,
             suppress_interaction: false,
             layer_shell_has_focus: false,
+            ipc: crate::ipc::IpcState::new(),
         }
     }
 
@@ -266,8 +269,8 @@ impl WindowManager {
             self.warp_cursor_to_frame(new_focused_frame);
         }
 
-        // Update waybar workspace display
-        crate::ipc::update_workspace_status(&self.workspaces);
+        // Update waybar workspace display via FIFO
+        self.ipc.update(&self.workspaces);
 
         proxy.manage_finish();
     }
