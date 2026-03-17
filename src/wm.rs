@@ -747,8 +747,8 @@ impl WindowManager {
                 let frame_id = self.workspaces.workspaces[ws_idx].focused_frame;
                 let gap = self.config.general.gap as i32;
 
-                // Compute neighbor without holding a mutable borrow
-                let neighbor = {
+                // Try same-workspace neighbor first
+                let same_ws_neighbor = {
                     let ws = &self.workspaces.workspaces[ws_idx];
                     ws.active_output.and_then(|oid| {
                         self.workspaces.output(oid).and_then(|output| {
@@ -758,26 +758,83 @@ impl WindowManager {
                     })
                 };
 
-                if let Some(target_frame_id) = neighbor {
-                    // Move the active window from current frame to target frame
+                if let Some(target_frame_id) = same_ws_neighbor {
+                    // Move within same workspace
                     let ws = &mut self.workspaces.workspaces[ws_idx];
                     if let Some(frame) = ws.root.find_frame(frame_id) {
                         if let Some(win_ref) = frame.active_window().cloned() {
                             let wid = win_ref.window_id;
-                            // Remove from source frame
                             if let Some(src) = ws.root.find_frame_mut(frame_id) {
                                 src.remove_window(wid);
                             }
-                            // Add to target frame
                             if let Some(dst) = ws.root.find_frame_mut(target_frame_id) {
                                 dst.add_window(win_ref);
                             }
-                            // Update window's frame_id
+                            if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                                win.frame_id = Some(target_frame_id);
+                            }
+                            self.workspaces.workspaces[ws_idx].focused_frame = target_frame_id;
+                        }
+                    }
+                } else {
+                    // Try cross-monitor move
+                    let cross = {
+                        let ws = &self.workspaces.workspaces[ws_idx];
+                        let output_id = match ws.active_output {
+                            Some(oid) => oid,
+                            None => return,
+                        };
+                        let output = match self.workspaces.output(output_id) {
+                            Some(o) => o,
+                            None => return,
+                        };
+                        let area = output.usable_rect();
+                        let frame_rect = ws
+                            .root
+                            .calculate_layout(area, gap)
+                            .into_iter()
+                            .find(|(id, _)| *id == frame_id)
+                            .map(|(_, r)| r);
+                        frame_rect.and_then(|src_rect| {
+                            self.find_cross_monitor_target(output_id, dir, src_rect, gap)
+                        })
+                    };
+
+                    if let Some((target_ws_id, target_frame_id)) = cross {
+                        // Get the window ref from source
+                        let win_ref = self.workspaces.workspaces[ws_idx]
+                            .root
+                            .find_frame(frame_id)
+                            .and_then(|f| f.active_window().cloned());
+
+                        if let Some(win_ref) = win_ref {
+                            let wid = win_ref.window_id;
+                            // Remove from source
+                            if let Some(src) = self.workspaces.workspaces[ws_idx]
+                                .root
+                                .find_frame_mut(frame_id)
+                            {
+                                src.remove_window(wid);
+                            }
+                            // Add to target on other monitor
+                            if let Some(dst) = self.workspaces.workspaces[target_ws_id.0]
+                                .root
+                                .find_frame_mut(target_frame_id)
+                            {
+                                dst.add_window(win_ref);
+                            }
                             if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
                                 win.frame_id = Some(target_frame_id);
                             }
                             // Focus follows the window
-                            self.workspaces.workspaces[ws_idx].focused_frame = target_frame_id;
+                            self.workspaces.workspaces[target_ws_id.0].focused_frame =
+                                target_frame_id;
+                            self.workspaces.focused_workspace = target_ws_id;
+                            log::info!(
+                                "Cross-monitor move to ws '{}' frame {:?}",
+                                self.workspaces.workspaces[target_ws_id.0].name,
+                                target_frame_id
+                            );
                         }
                     }
                 }

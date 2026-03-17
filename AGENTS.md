@@ -27,8 +27,7 @@ weston --backend=x11-backend.so --width=1920 --height=1080 --shell=kiosk-shell.s
 WAYLAND_DISPLAY=wayland-1 \
 XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=neo XKB_DEFAULT_MODEL=pc105 \
 ~/repos/river/zig-out/bin/river \
-  -c ~/Projects/notion-river/target/release/notion-river \
-  -no-xwayland &
+  -c ~/Projects/notion-river/target/release/notion-river &
 
 # Launch apps inside River
 WAYLAND_DISPLAY=wayland-2 foot &
@@ -42,9 +41,27 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 ### Native (from TTY / login manager)
 
+River is built from source at `~/repos/river` and **must be built with XWayland support**:
+
 ```sh
-river -c notion-river
+cd ~/repos/river && zig build -Dxwayland=true
 ```
+
+The resulting binary is `~/repos/river/zig-out/bin/river`. XWayland is required for X11 apps like Steam to work.
+
+lightdm is configured to autologin into a `river-custom` session (`/usr/share/wayland-sessions/river-custom.desktop`) which runs:
+
+```sh
+~/repos/river/zig-out/bin/river -c ~/.config/river/init
+```
+
+To start manually from TTY:
+
+```sh
+~/repos/river/zig-out/bin/river -c ~/.config/river/init
+```
+
+XWayland spawns automatically on `:1` (`DISPLAY=:1`). Steam and other X11 apps work without any extra env vars when launched from within the River session.
 
 ## Architecture
 
