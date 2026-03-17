@@ -146,6 +146,8 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     // ── Tabbing ──
     bind(&mut b, "super", "w", "next_tab", &[]);
     bind(&mut b, "super", "q", "prev_tab", &[]);
+    bind(&mut b, "super", "n", "next_tab", &[]);
+    bind(&mut b, "super", "p", "prev_tab", &[]);
 
     // ── Workspaces (Super+1..4 on primary, Alt+1..3 on secondary) ──
     bind(&mut b, "super", "1", "workspace", &["main"]);

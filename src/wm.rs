@@ -526,7 +526,7 @@ impl WindowManager {
     /// Apply focus-follows-mouse logic. Extracted for testability.
     pub fn apply_focus_follows_mouse(&mut self, inputs: &[crate::focus::FocusInput]) {
         let gap = self.config.general.gap as i32;
-        let margin = gap + 2;
+        let margin = 0; // no margin — focus changes at the exact frame boundary
 
         for input in inputs {
             if let Some(result) = crate::focus::compute_focus(input, &self.workspaces, gap, margin)
