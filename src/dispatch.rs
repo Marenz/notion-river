@@ -82,6 +82,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let shm = registry.bind::<WlShm, _, _>(name, version.min(1), qh, ());
                     state.wl_shm = Some(shm);
                 }
+                "wp_viewporter" => {
+                    use crate::protocol::wp_viewporter::WpViewporter;
+                    let vp = registry.bind::<WpViewporter, _, _>(name, version.min(1), qh, ());
+                    state.wp_viewporter = Some(vp);
+                }
                 _ => {}
             }
         }
@@ -138,6 +143,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                     proxy,
                     state.wl_shm.as_ref(),
                     state.wl_compositor.as_ref(),
+                    state.wp_viewporter.as_ref(),
                     qh,
                 );
             }
@@ -731,4 +737,6 @@ wayland_client::delegate_noop!(AppData: ignore WlCompositor);
 wayland_client::delegate_noop!(AppData: ignore WlShm);
 wayland_client::delegate_noop!(AppData: ignore WlShmPool);
 wayland_client::delegate_noop!(AppData: ignore WlSurface);
+wayland_client::delegate_noop!(AppData: ignore crate::protocol::wp_viewporter::WpViewporter);
+wayland_client::delegate_noop!(AppData: ignore crate::protocol::wp_viewport::WpViewport);
 wayland_client::delegate_noop!(AppData: ignore WlBuffer);

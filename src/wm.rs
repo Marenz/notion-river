@@ -30,6 +30,7 @@ pub struct AppData {
     pub river_layer_shell: Option<crate::protocol::river_layer_shell_v1::RiverLayerShellV1>,
     pub wl_compositor: Option<WlCompositor>,
     pub wl_shm: Option<WlShm>,
+    pub wp_viewporter: Option<crate::protocol::wp_viewporter::WpViewporter>,
     /// Map from wl_output global name (u32) to river OutputId.
     pub wl_output_map: std::collections::HashMap<u32, OutputId>,
     /// Map from wl_output global name (u32) to connector name string.
@@ -52,6 +53,7 @@ impl Default for AppData {
             river_layer_shell: None,
             wl_compositor: None,
             wl_shm: None,
+            wp_viewporter: None,
             wl_output_map: std::collections::HashMap::new(),
             wl_output_names: std::collections::HashMap::new(),
             wl_seat_name: None,
@@ -289,9 +291,10 @@ impl WindowManager {
         proxy: &RiverWindowManagerV1,
         shm: Option<&WlShm>,
         compositor: Option<&WlCompositor>,
+        viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
         qh: &QueueHandle<AppData>,
     ) {
-        self.apply_layout_positions(proxy, shm, compositor, qh);
+        self.apply_layout_positions(proxy, shm, compositor, viewporter, qh);
         self.handle_seat_ops();
         proxy.render_finish();
     }
@@ -1337,6 +1340,7 @@ impl WindowManager {
         wm_proxy: &RiverWindowManagerV1,
         shm: Option<&WlShm>,
         compositor: Option<&WlCompositor>,
+        viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
         qh: &QueueHandle<AppData>,
     ) {
         let gap = self.config.general.gap as i32;
@@ -1477,6 +1481,7 @@ impl WindowManager {
                         cmd.fractional_scale,
                         shm,
                         compositor,
+                        viewporter,
                         qh,
                     );
                 }

@@ -37,6 +37,7 @@ const COLOR_SEPARATOR: u32 = 0xFF888888;
 pub struct WindowDecoration {
     pub surface: WlSurface,
     pub decoration: RiverDecorationV1,
+    pub viewport: Option<crate::protocol::wp_viewport::WpViewport>,
     pub buffer: Option<WlBuffer>,
     pub pool: Option<WlShmPool>,
     /// Last drawn width (to avoid unnecessary redraws).
@@ -82,6 +83,7 @@ impl DecorationManager {
         fractional_scale: f64,
         shm: &WlShm,
         compositor: &WlCompositor,
+        viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
         qh: &QueueHandle<AppData>,
     ) {
         let scale = fractional_scale.max(1.0);
@@ -102,9 +104,11 @@ impl DecorationManager {
             let surface = compositor.create_surface(qh, ());
             surface_to_window.insert(surface.id().protocol_id(), window_id);
             let decoration = window_proxy.get_decoration_above(&surface, qh, ());
+            let viewport = viewporter.map(|vp| vp.get_viewport(&surface, qh, ()));
             WindowDecoration {
                 surface,
                 decoration,
+                viewport,
                 buffer: None,
                 pool: None,
                 last_width: 0,
@@ -112,8 +116,15 @@ impl DecorationManager {
             }
         });
 
-        // Set buffer scale for HiDPI rendering
-        dec.surface.set_buffer_scale(buffer_scale);
+        // Use viewport for pixel-perfect fractional scaling:
+        // buffer_scale=1, render at exact physical resolution,
+        // viewport sets the logical destination size
+        if let Some(ref vp) = dec.viewport {
+            dec.surface.set_buffer_scale(1);
+            vp.set_destination(frame_width, TAB_BAR_HEIGHT);
+        } else {
+            dec.surface.set_buffer_scale(buffer_scale);
+        }
 
         // Position above the window
         dec.decoration.set_offset(0, -TAB_BAR_HEIGHT);
@@ -513,10 +524,10 @@ static FONT_PATH: OnceLock<String> = OnceLock::new();
 fn get_font_path() -> &'static str {
     FONT_PATH.get_or_init(|| {
         let paths = [
+            "/usr/share/fonts/truetype/NotoSans-Medium.ttf",
             "/usr/share/fonts/truetype/NotoSans-Regular.ttf",
             "/usr/share/fonts/truetype/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/LiberationMono-Regular.ttf",
         ];
         for path in &paths {
             if std::path::Path::new(path).exists() {
@@ -553,7 +564,7 @@ fn draw_text(
         }
     };
 
-    let font_size_px = (height as f64 * 0.6).max(10.0) as u32;
+    let font_size_px = (height as f64 * 0.58).max(10.0) as u32;
     let _ = face.set_pixel_sizes(0, font_size_px);
 
     let color_r = ((color >> 16) & 0xFF) as f32;
@@ -594,11 +605,11 @@ fn draw_text(
         }
         prev_glyph_idx = Some(glyph_idx);
 
-        // Use LCD subpixel rendering for maximum sharpness
+        // Use light hinting for clean rendering at HiDPI
         if face
             .load_glyph(
                 glyph_idx,
-                freetype::face::LoadFlag::RENDER | freetype::face::LoadFlag::TARGET_LCD,
+                freetype::face::LoadFlag::RENDER | freetype::face::LoadFlag::TARGET_LIGHT,
             )
             .is_err()
         {
@@ -612,20 +623,15 @@ fn draw_text(
         let gx = (pen_x >> 6) as i32 + bmp_left;
         let gy = baseline_y - bmp_top;
 
+        let bmp_width = bitmap.width() as usize;
         let bmp_rows = bitmap.rows() as usize;
         let bmp_pitch = bitmap.pitch().unsigned_abs() as usize;
         let buffer = bitmap.buffer();
 
-        // LCD rendering: bitmap width is 3x the pixel width (R, G, B subpixels)
-        let bmp_pixel_width = bitmap.width() as usize / 3;
-
         for row in 0..bmp_rows {
-            for col in 0..bmp_pixel_width {
-                let r_alpha = buffer[row * bmp_pitch + col * 3] as f32 / 255.0;
-                let g_alpha = buffer[row * bmp_pitch + col * 3 + 1] as f32 / 255.0;
-                let b_alpha = buffer[row * bmp_pitch + col * 3 + 2] as f32 / 255.0;
-
-                if r_alpha < 0.01 && g_alpha < 0.01 && b_alpha < 0.01 {
+            for col in 0..bmp_width {
+                let alpha = buffer[row * bmp_pitch + col] as f32 / 255.0;
+                if alpha < 0.01 {
                     continue;
                 }
 
@@ -641,10 +647,9 @@ fn draw_text(
                 let bg_g = ((bg >> 8) & 0xFF) as f32;
                 let bg_b = (bg & 0xFF) as f32;
 
-                // Blend each channel independently for subpixel rendering
-                let r = (color_r * r_alpha + bg_r * (1.0 - r_alpha)) as u32;
-                let g = (color_g * g_alpha + bg_g * (1.0 - g_alpha)) as u32;
-                let b = (color_b * b_alpha + bg_b * (1.0 - b_alpha)) as u32;
+                let r = (color_r * alpha + bg_r * (1.0 - alpha)) as u32;
+                let g = (color_g * alpha + bg_g * (1.0 - alpha)) as u32;
+                let b = (color_b * alpha + bg_b * (1.0 - alpha)) as u32;
 
                 pixels[py * stride + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
