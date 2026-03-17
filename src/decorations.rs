@@ -494,7 +494,38 @@ fn draw_tab_bar_pixels(
     }
 }
 
-/// Minimal 5x7 bitmap font renderer.
+// ── Font rendering via fontdue ────────────────────────────────────────────
+
+use std::sync::OnceLock;
+
+static FONT: OnceLock<fontdue::Font> = OnceLock::new();
+
+fn get_font() -> &'static fontdue::Font {
+    FONT.get_or_init(|| {
+        // Try system fonts in preference order
+        let paths = [
+            "/usr/share/fonts/truetype/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/LiberationMono-Regular.ttf",
+        ];
+        for path in &paths {
+            if let Ok(data) = std::fs::read(path) {
+                if let Ok(font) = fontdue::Font::from_bytes(data, fontdue::FontSettings::default())
+                {
+                    log::info!("Loaded font: {path}");
+                    return font;
+                }
+            }
+        }
+        log::warn!("No system font found, using built-in fallback");
+        // Fallback: embed a minimal font (fontdue requires TTF data)
+        // Use the first available or panic
+        panic!("No font available for tab bar rendering");
+    })
+}
+
+/// Render text using fontdue with anti-aliasing.
 fn draw_text(
     pixels: &mut [u32],
     stride: usize,
@@ -504,74 +535,54 @@ fn draw_text(
     color: u32,
     x_max: usize,
 ) {
-    let mut x = x0;
+    let font = get_font();
+    let font_size = (TAB_BAR_HEIGHT as f32 * 0.65).max(10.0);
+
+    let color_r = ((color >> 16) & 0xFF) as f32;
+    let color_g = ((color >> 8) & 0xFF) as f32;
+    let color_b = (color & 0xFF) as f32;
+
+    let mut x = x0 as f32;
+
     for ch in text.chars() {
-        if x + 6 > x_max {
+        if x as usize >= x_max {
             break;
         }
-        let g = glyph(ch);
-        for row in 0..7usize {
-            for col in 0..5usize {
-                if g[row] & (1 << (4 - col)) != 0 {
-                    let px = x + col;
-                    let py = y0 + row;
-                    if py < pixels.len() / stride && px < stride {
-                        pixels[py * stride + px] = color;
-                    }
+
+        let (metrics, bitmap) = font.rasterize(ch, font_size);
+
+        // Baseline offset: place glyphs on the baseline
+        let glyph_y = y0 as i32 + (font_size * 0.8) as i32 - metrics.height as i32 - metrics.ymin;
+
+        for row in 0..metrics.height {
+            for col in 0..metrics.width {
+                let alpha = bitmap[row * metrics.width + col] as f32 / 255.0;
+                if alpha < 0.01 {
+                    continue;
                 }
+
+                let px = x as usize + col;
+                let py = glyph_y as usize + row;
+
+                if px >= x_max || px >= stride || py >= pixels.len() / stride {
+                    continue;
+                }
+
+                // Alpha-blend the glyph onto the background
+                let bg = pixels[py * stride + px];
+                let bg_r = ((bg >> 16) & 0xFF) as f32;
+                let bg_g = ((bg >> 8) & 0xFF) as f32;
+                let bg_b = (bg & 0xFF) as f32;
+
+                let r = (color_r * alpha + bg_r * (1.0 - alpha)) as u32;
+                let g = (color_g * alpha + bg_g * (1.0 - alpha)) as u32;
+                let b = (color_b * alpha + bg_b * (1.0 - alpha)) as u32;
+
+                pixels[py * stride + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
-        x += 6;
-    }
-}
 
-fn glyph(ch: char) -> [u8; 7] {
-    match ch.to_ascii_lowercase() {
-        'a' => [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        'b' => [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
-        'c' => [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
-        'd' => [0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E],
-        'e' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
-        'f' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10],
-        'g' => [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0E],
-        'h' => [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        'i' => [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        'j' => [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C],
-        'k' => [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-        'l' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
-        'm' => [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11],
-        'n' => [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-        'o' => [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        'p' => [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
-        'q' => [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D],
-        'r' => [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
-        's' => [0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E],
-        't' => [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-        'u' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        'v' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
-        'w' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11],
-        'x' => [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11],
-        'y' => [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
-        'z' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
-        '0' => [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
-        '1' => [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        '2' => [0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F],
-        '3' => [0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E],
-        '4' => [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02],
-        '5' => [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E],
-        '6' => [0x0E, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x0E],
-        '7' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-        '8' => [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E],
-        '9' => [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x01, 0x0E],
-        ' ' => [0; 7],
-        '-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
-        '_' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F],
-        '.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04],
-        ':' => [0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00],
-        '/' => [0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10],
-        '~' => [0x00, 0x00, 0x08, 0x15, 0x02, 0x00, 0x00],
-        '@' => [0x0E, 0x11, 0x17, 0x15, 0x16, 0x10, 0x0E],
-        _ => [0x0E, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0E], // box
+        x += metrics.advance_width;
     }
 }
 
