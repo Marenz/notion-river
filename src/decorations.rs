@@ -553,13 +553,14 @@ fn draw_text(
     let color_b = (color & 0xFF) as f32;
 
     // Use fontdue's Layout for proper kerning and positioning
-    use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
+    use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle, VerticalAlign};
     let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
     layout.reset(&LayoutSettings {
         x: x0 as f32,
-        y: y0 as f32,
+        y: 0.0,
         max_width: Some((x_max - x0) as f32),
         max_height: Some(height as f32),
+        vertical_align: VerticalAlign::Middle,
         ..LayoutSettings::default()
     });
     layout.append(&[font], &TextStyle::new(text, font_size, 0));
