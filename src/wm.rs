@@ -266,6 +266,9 @@ impl WindowManager {
             self.warp_cursor_to_frame(new_focused_frame);
         }
 
+        // Update waybar workspace display
+        crate::ipc::update_workspace_status(&self.workspaces);
+
         proxy.manage_finish();
     }
 
@@ -871,24 +874,11 @@ impl WindowManager {
             }
 
             Action::SplitHorizontal => {
-                let ratio = self.config.general.default_split_ratio;
-                let ws = &mut self.workspaces.workspaces[self.workspaces.focused_workspace.0];
-                let frame_id = ws.focused_frame;
-                if let Some(new_id) = ws
-                    .root
-                    .split_frame(frame_id, Orientation::Horizontal, ratio)
-                {
-                    log::info!("Split frame {frame_id:?} horizontally, new frame {new_id:?}");
-                }
+                self.perform_split(Orientation::Horizontal);
             }
 
             Action::SplitVertical => {
-                let ratio = self.config.general.default_split_ratio;
-                let ws = &mut self.workspaces.workspaces[self.workspaces.focused_workspace.0];
-                let frame_id = ws.focused_frame;
-                if let Some(new_id) = ws.root.split_frame(frame_id, Orientation::Vertical, ratio) {
-                    log::info!("Split frame {frame_id:?} vertically, new frame {new_id:?}");
-                }
+                self.perform_split(Orientation::Vertical);
             }
 
             Action::Unsplit => {
@@ -1133,6 +1123,59 @@ impl WindowManager {
                 for seat in self.seats.values() {
                     seat.proxy.pointer_warp(cx, cy);
                 }
+            }
+        }
+    }
+
+    fn perform_split(&mut self, orientation: Orientation) {
+        let ratio = self.config.general.default_split_ratio;
+        let ws_idx = self.workspaces.focused_workspace.0;
+        let frame_id = self.workspaces.workspaces[ws_idx].focused_frame;
+
+        // Check if the frame has multiple windows — if so, move active window to new frame
+        let active_win = self.workspaces.workspaces[ws_idx]
+            .root
+            .find_frame(frame_id)
+            .and_then(|f| {
+                if f.windows.len() > 1 {
+                    f.active_window().cloned()
+                } else {
+                    None
+                }
+            });
+
+        if let Some(new_id) =
+            self.workspaces.workspaces[ws_idx]
+                .root
+                .split_frame(frame_id, orientation, ratio)
+        {
+            let dir = if orientation == Orientation::Horizontal {
+                "horizontally"
+            } else {
+                "vertically"
+            };
+            log::info!("Split frame {frame_id:?} {dir}, new frame {new_id:?}");
+
+            // Move active window to the new frame
+            if let Some(win_ref) = active_win {
+                let wid = win_ref.window_id;
+                if let Some(src) = self.workspaces.workspaces[ws_idx]
+                    .root
+                    .find_frame_mut(frame_id)
+                {
+                    src.remove_window(wid);
+                }
+                if let Some(dst) = self.workspaces.workspaces[ws_idx]
+                    .root
+                    .find_frame_mut(new_id)
+                {
+                    dst.add_window(win_ref);
+                }
+                if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                    win.frame_id = Some(new_id);
+                }
+                // Focus follows the window to the new frame
+                self.workspaces.workspaces[ws_idx].focused_frame = new_id;
             }
         }
     }

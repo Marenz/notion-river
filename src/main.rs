@@ -11,6 +11,7 @@ mod config;
 mod decorations;
 mod dispatch;
 mod focus;
+mod ipc;
 mod layout;
 mod protocol;
 mod state;
