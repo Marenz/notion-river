@@ -531,6 +531,13 @@ fn draw_text(
         Err(_) => return,
     };
 
+    // Apply system font rendering settings (hinting, antialias, subpixel order)
+    let mut font_options = cairo::FontOptions::new().unwrap();
+    font_options.set_antialias(cairo::Antialias::Subpixel);
+    font_options.set_hint_style(cairo::HintStyle::Slight);
+    font_options.set_subpixel_order(cairo::SubpixelOrder::Rgb);
+    cr.set_font_options(&font_options);
+
     // Set up pango layout with font size in pixels (not points)
     let layout = pangocairo::functions::create_layout(&cr);
     let font_size_px = (height as f64 * 0.58).max(10.0);
