@@ -10,6 +10,7 @@ mod bindings;
 mod config;
 mod decorations;
 mod dispatch;
+mod focus;
 mod layout;
 mod protocol;
 mod wm;

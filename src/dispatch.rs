@@ -271,8 +271,14 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
         match event {
             Event::Removed => seat.removed = true,
             Event::WlSeat { .. } => {}
-            Event::PointerEnter { window } => seat.hovered = Some(window),
-            Event::PointerLeave => seat.hovered = None,
+            Event::PointerEnter { window } => {
+                log::debug!("PointerEnter window {:?}", window.id());
+                seat.hovered = Some(window);
+            }
+            Event::PointerLeave => {
+                log::debug!("PointerLeave");
+                seat.hovered = None;
+            }
             Event::WindowInteraction { window } => seat.interacted = Some(window),
             Event::ShellSurfaceInteraction { .. } => {}
             Event::OpDelta { dx, dy } => {
@@ -281,6 +287,7 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
             }
             Event::OpRelease => seat.op_release = true,
             Event::PointerPosition { x, y } => {
+                log::debug!("PointerPosition ({x}, {y})");
                 seat.pointer_x = x;
                 seat.pointer_y = y;
             }

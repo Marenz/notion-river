@@ -471,48 +471,18 @@ impl WindowManager {
 
         let has_keyboard_action = actions.iter().any(|a| !matches!(a, Action::None));
 
-        // Focus-follows-mouse: only when no keyboard action is pending,
-        // otherwise the keyboard focus change would be immediately overridden
+        // Focus-follows-mouse
         if self.config.general.focus_follows_mouse && !has_keyboard_action {
-            let pointer_positions: Vec<(i32, i32)> = self
+            let inputs: Vec<crate::focus::FocusInput> = self
                 .seats
                 .values()
-                .map(|seat| (seat.pointer_x, seat.pointer_y))
+                .map(|seat| crate::focus::FocusInput {
+                    hovered_window_id: seat.hovered.as_ref().map(|w| w.id().protocol_id() as u64),
+                    pointer_x: seat.pointer_x,
+                    pointer_y: seat.pointer_y,
+                })
                 .collect();
-
-            let gap = self.config.general.gap as i32;
-            // Inset from frame edges to avoid bouncing on boundaries
-            let margin = gap + 2;
-
-            for (px, py) in pointer_positions {
-                for ws in &self.workspaces.workspaces {
-                    let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid))
-                    {
-                        Some(o) => o,
-                        None => continue,
-                    };
-                    let area = output.usable_rect();
-                    let layouts = ws.root.calculate_layout(area, gap);
-
-                    // Use inset rects to require the pointer to be clearly
-                    // inside a frame, not just on the gap boundary
-                    if let Some((frame_id, _)) = layouts.iter().find(|(_, rect)| {
-                        px >= rect.x + margin
-                            && px < rect.x + rect.width - margin
-                            && py >= rect.y + margin
-                            && py < rect.y + rect.height - margin
-                    }) {
-                        if ws.focused_frame != *frame_id {
-                            let ws_id = ws.id;
-                            let frame_id = *frame_id;
-                            let ws_mut = &mut self.workspaces.workspaces[ws_id.0];
-                            ws_mut.focused_frame = frame_id;
-                            self.workspaces.focused_workspace = ws_id;
-                        }
-                        break;
-                    }
-                }
-            }
+            self.apply_focus_follows_mouse(&inputs);
         }
 
         for action in actions {
@@ -549,6 +519,20 @@ impl WindowManager {
                 seat.proxy.op_end();
                 seat.op = SeatOp::None;
                 seat.op_release = false;
+            }
+        }
+    }
+
+    /// Apply focus-follows-mouse logic. Extracted for testability.
+    pub fn apply_focus_follows_mouse(&mut self, inputs: &[crate::focus::FocusInput]) {
+        let gap = self.config.general.gap as i32;
+        let margin = gap + 2;
+
+        for input in inputs {
+            if let Some(result) = crate::focus::compute_focus(input, &self.workspaces, gap, margin)
+            {
+                self.workspaces.workspaces[result.workspace.0].focused_frame = result.frame;
+                self.workspaces.focused_workspace = result.workspace;
             }
         }
     }
