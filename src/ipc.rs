@@ -92,8 +92,11 @@ impl Drop for IpcState {
 }
 
 /// Generate waybar JSON for workspace state.
+/// Groups workspaces by output with a │ separator between monitors.
 pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
-    let mut parts = Vec::new();
+    // Group workspaces by their preferred output
+    let mut output_groups: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
 
     for ws in &workspaces.workspaces {
         let is_focused = ws.id == workspaces.focused_workspace;
@@ -114,8 +117,33 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
             "·"
         };
 
-        parts.push(format!("{marker} {}", ws.name));
+        let output_name = ws
+            .preferred_output
+            .as_deref()
+            .unwrap_or("none")
+            .to_string();
+        output_groups
+            .entry(output_name)
+            .or_default()
+            .push(format!("{marker} {}", ws.name));
     }
+
+    let text = output_groups
+        .values()
+        .map(|group| group.join("  "))
+        .collect::<Vec<_>>()
+        .join("  │  ");
+
+    let focused_name = workspaces
+        .workspaces
+        .get(workspaces.focused_workspace.0)
+        .map(|ws| ws.name.as_str())
+        .unwrap_or("");
+
+    format!(
+        r#"{{"text": "{text}", "tooltip": "Focused: {focused_name}", "class": "workspaces"}}"#
+    )
+}
 
     let text = parts.join("  ");
     let focused_name = workspaces
