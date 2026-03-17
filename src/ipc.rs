@@ -117,11 +117,7 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
             "·"
         };
 
-        let output_name = ws
-            .preferred_output
-            .as_deref()
-            .unwrap_or("none")
-            .to_string();
+        let output_name = ws.preferred_output.as_deref().unwrap_or("none").to_string();
         output_groups
             .entry(output_name)
             .or_default()
@@ -134,18 +130,6 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
         .collect::<Vec<_>>()
         .join("  │  ");
 
-    let focused_name = workspaces
-        .workspaces
-        .get(workspaces.focused_workspace.0)
-        .map(|ws| ws.name.as_str())
-        .unwrap_or("");
-
-    format!(
-        r#"{{"text": "{text}", "tooltip": "Focused: {focused_name}", "class": "workspaces"}}"#
-    )
-}
-
-    let text = parts.join("  ");
     let focused_name = workspaces
         .workspaces
         .get(workspaces.focused_workspace.0)
