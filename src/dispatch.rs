@@ -225,8 +225,15 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
             }
             Event::WlOutput { name: global_name } => {
                 log::info!("Output {oid:?} wl_output global name: {global_name}");
-                // Store the mapping so we can associate wl_output events with our OutputId
                 state.wl_output_map.insert(global_name, oid);
+                // Check if wl_output.name already arrived for this global
+                if let Some(connector_name) = state.wl_output_names.get(&global_name).cloned() {
+                    log::info!("Output {oid:?} applying stored connector name: {connector_name}");
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.name = Some(connector_name);
+                    }
+                }
+                state.wm.workspaces.reassign_outputs();
             }
             Event::Position { x, y } => {
                 if let Some(output) = state.wm.workspaces.output_mut(oid) {
@@ -481,12 +488,13 @@ impl Dispatch<WlOutput, u32> for AppData {
         match event {
             Event::Name { name } => {
                 log::info!("wl_output global {} connector name: {name}", data);
-                // Find the OutputId for this wl_output global name
+                // Store the name keyed by global name
+                state.wl_output_names.insert(*data, name.clone());
+                // If we already have the mapping, apply it now
                 if let Some(&oid) = state.wl_output_map.get(data) {
                     if let Some(output) = state.wm.workspaces.output_mut(oid) {
                         output.name = Some(name);
                     }
-                    // Re-check workspace assignment now that we have the name
                     state.wm.workspaces.reassign_outputs();
                 }
             }
