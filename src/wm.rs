@@ -307,17 +307,30 @@ impl WindowManager {
     }
 
     fn focus_window_by_id(&mut self, id: u64) {
-        for ws in &mut self.workspaces.workspaces {
-            if let Some(frame_id) = ws.root.find_frame_with_window(id) {
+        for idx in 0..self.workspaces.workspaces.len() {
+            let (ws_id, ws_name, frame_id, was_visible) = {
+                let ws = &self.workspaces.workspaces[idx];
+                let Some(frame_id) = ws.root.find_frame_with_window(id) else {
+                    continue;
+                };
+                (ws.id, ws.name.clone(), frame_id, ws.active_output.is_some())
+            };
+
+            if !was_visible {
+                self.workspaces.switch_workspace(&ws_name);
+            }
+
+            if let Some(ws) = self.workspaces.workspaces.get_mut(ws_id.0) {
                 if let Some(frame) = ws.root.find_frame_mut(frame_id) {
                     if let Some(tab_idx) = frame.windows.iter().position(|w| w.window_id == id) {
                         frame.active_tab = tab_idx;
                     }
                 }
                 ws.focused_frame = frame_id;
-                self.workspaces.focused_workspace = ws.id;
-                return;
             }
+
+            self.workspaces.focused_workspace = ws_id;
+            return;
         }
     }
 
