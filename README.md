@@ -25,6 +25,7 @@ This gives you a predictable, stable workspace layout that doesn't rearrange its
 - **Multi-monitor** with per-output workspace assignment
 - **Layer-shell support** — waybar, notifications, rofi overlays
 - **Waybar integration** — workspace indicators with per-monitor grouping
+- **IPC control socket** — `notion-ctl` can list/focus windows and switch workspaces
 - **Media keys** — volume, brightness, playback controls
 - **Physical key bindings** — work across keyboard layouts (Neo, Dvorak, etc.)
 - **Two built-in keybinding profiles** — `i3_neo` (Neo layout) and `notion` (Vim-style)
@@ -121,6 +122,7 @@ river -c ~/.config/river/init
 |---|---|
 | `Super+Return` | Terminal |
 | `Super+p` | Launcher |
+| `Super+Shift+p` | Window switcher |
 | `Super+c` | Close window / unsplit empty frame |
 | `Super+h/j/k/l` | Focus left/down/up/right |
 | `Super+Shift+h/j/k/l` | Move window (across monitors too) |
@@ -138,6 +140,7 @@ river -c ~/.config/river/init
 |---|---|
 | `Super+Space` | Terminal |
 | `Super+o` | Launcher |
+| `Super+Shift+o` | Window switcher |
 | `Super+c` | Close / unsplit |
 | `Super+i/a/l/e` | Focus (Neo directions) |
 | `Super+Shift+i/a/l/e` | Move window |
@@ -166,9 +169,30 @@ Early development. Usable as a daily driver. Waybar shows workspaces, CPU, memor
 ### Planned
 
 - Drag-and-drop with visual split preview
-- IPC command socket for scripting / clickable waybar
+- Clickable waybar workspaces via IPC commands
 - Window rules (winprops) for auto-placement
 - Better font rendering in tab bars
+
+## IPC
+
+The WM exposes a Unix socket at `$XDG_RUNTIME_DIR/notion-river.sock`.
+
+Commands:
+
+```sh
+notion-ctl list-windows
+notion-ctl list-workspaces
+notion-ctl focus-window <id>
+notion-ctl switch-workspace <name>
+```
+
+Window switcher helper:
+
+```sh
+notion-rofi-windows
+```
+
+This is bound to `Super+Shift+o` (`i3_neo`) and `Super+Shift+p` (`notion`).
 
 ## License
 

@@ -8,6 +8,7 @@
 mod actions;
 mod bindings;
 mod config;
+mod control;
 mod decorations;
 mod dispatch;
 mod focus;
@@ -82,8 +83,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::{AtomicBool, Ordering};
     static SHUTDOWN: AtomicBool = AtomicBool::new(false);
     unsafe {
-        libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = signal_handler as *const () as usize;
+        action.sa_flags = 0;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
     }
     extern "C" fn signal_handler(_sig: libc::c_int) {
         SHUTDOWN.store(true, Ordering::Relaxed);

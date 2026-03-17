@@ -99,6 +99,8 @@ pub struct WindowManager {
     pub layer_shell_has_focus: bool,
     /// IPC state for waybar workspace display.
     pub ipc: crate::ipc::IpcState,
+    /// Control socket state for window/workspace switching.
+    pub control: crate::control::ControlState,
 }
 
 /// A window tracked by the WM.
@@ -240,6 +242,7 @@ impl WindowManager {
             suppress_interaction: false,
             layer_shell_has_focus: false,
             ipc: crate::ipc::IpcState::new(),
+            control: crate::control::ControlState::new(),
         }
     }
 
@@ -267,6 +270,7 @@ impl WindowManager {
             .any(|s| !matches!(s.pending_action, Action::None));
 
         self.handle_pending_actions(proxy);
+        self.handle_control_requests();
         self.apply_window_management(proxy);
         self.update_binding_modes();
 
@@ -282,8 +286,39 @@ impl WindowManager {
 
         // Update waybar workspace display via FIFO
         self.ipc.update(&self.workspaces);
+        self.control
+            .update_snapshot(crate::control::build_snapshot(self));
 
         proxy.manage_finish();
+    }
+
+    fn handle_control_requests(&mut self) {
+        let requests = self.control.take_pending();
+        for req in requests {
+            match req {
+                crate::control::ControlRequest::FocusWindow(id) => {
+                    self.focus_window_by_id(id);
+                }
+                crate::control::ControlRequest::SwitchWorkspace(name) => {
+                    self.workspaces.switch_workspace(&name);
+                }
+            }
+        }
+    }
+
+    fn focus_window_by_id(&mut self, id: u64) {
+        for ws in &mut self.workspaces.workspaces {
+            if let Some(frame_id) = ws.root.find_frame_with_window(id) {
+                if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                    if let Some(tab_idx) = frame.windows.iter().position(|w| w.window_id == id) {
+                        frame.active_tab = tab_idx;
+                    }
+                }
+                ws.focused_frame = frame_id;
+                self.workspaces.focused_workspace = ws.id;
+                return;
+            }
+        }
     }
 
     pub fn handle_render_start(
@@ -1099,8 +1134,6 @@ impl WindowManager {
 
     pub fn detect_resize_axes(&self, frame_id: FrameId, px: i32, py: i32) -> (bool, bool) {
         let gap = self.config.general.gap as i32;
-        let corner_threshold = gap + 60; // pixels from edge to count as "near corner"
-
         let ws = self.workspaces.focused_workspace();
         let output = match ws.active_output.and_then(|oid| self.workspaces.output(oid)) {
             Some(o) => o,

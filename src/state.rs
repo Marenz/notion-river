@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::layout::{Frame, FrameId, Orientation, SplitNode, WindowRef};
+use crate::layout::{Frame, FrameId, Orientation, SplitNode};
 use crate::workspace::{WorkspaceId, WorkspaceManager};
 
 const STATE_FILE: &str = "notion-river-state.json";
@@ -200,48 +200,9 @@ pub fn restore_layout(
     active_tabs
 }
 
+#[allow(dead_code)]
 /// Restore which workspaces were visible on each output.
 /// Called after output names are known (from reassign_outputs).
-pub fn restore_visible_workspaces(workspaces: &mut WorkspaceManager, state: &SavedState) {
-    for (output_name, ws_name) in &state.visible_workspaces {
-        let output_id = match workspaces
-            .outputs
-            .iter()
-            .find(|o| o.name.as_deref() == Some(output_name.as_str()))
-        {
-            Some(o) => o.id,
-            None => continue,
-        };
-
-        let ws_id = match workspaces.workspaces.iter().find(|w| w.name == *ws_name) {
-            Some(ws) => ws.id,
-            None => continue,
-        };
-
-        // Unassign whatever is on this output
-        if let Some(&old_ws) = workspaces.output_workspace.get(&output_id) {
-            if let Some(ws) = workspaces.workspaces.iter_mut().find(|w| w.id == old_ws) {
-                ws.active_output = None;
-            }
-        }
-        workspaces.assign_workspace_to_output(ws_id, output_id);
-        log::info!(
-            "Restored workspace '{}' on output '{}'",
-            ws_name,
-            output_name
-        );
-    }
-
-    // Restore focused workspace
-    if let Some(ws) = workspaces
-        .workspaces
-        .iter()
-        .find(|w| w.name == state.focused_workspace)
-    {
-        workspaces.focused_workspace = ws.id;
-    }
-}
-
 fn collect_active_tabs(
     node: &SavedNode,
     frame_ids: &[crate::layout::FrameId],

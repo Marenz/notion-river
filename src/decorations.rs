@@ -200,25 +200,6 @@ impl DecorationManager {
         dec.surface.commit();
     }
 
-    /// Given a surface protocol id and click x coordinate, return
-    /// (window_id, tab_index) if this is a tab bar click.
-    pub fn tab_click(
-        &self,
-        surface_id: u32,
-        surface_x: f64,
-        num_tabs: usize,
-        frame_width: i32,
-    ) -> Option<(u64, usize)> {
-        let window_id = self.surface_to_window.get(&surface_id)?;
-        if num_tabs == 0 || frame_width <= 0 {
-            return None;
-        }
-        let tab_width = frame_width as f64 / num_tabs as f64;
-        let tab_index = (surface_x / tab_width) as usize;
-        let tab_index = tab_index.min(num_tabs - 1);
-        Some((*window_id, tab_index))
-    }
-
     /// Remove decoration for a window that's gone.
     #[allow(dead_code)]
     pub fn remove(&mut self, window_id: u64) {

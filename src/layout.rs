@@ -755,7 +755,6 @@ mod tests {
         // Vertical split: top frame (first) and bottom frame (second)
         let mut tree = SplitNode::vsplit(0.5);
         let ids = tree.all_frame_ids();
-        let top = ids[0];
         let bottom = ids[1];
 
         // Dragging up from bottom frame (negative dy) should shrink top (decrease ratio)

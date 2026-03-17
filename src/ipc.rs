@@ -3,7 +3,6 @@
 //! Writes JSON to $XDG_RUNTIME_DIR/notion-river-workspaces on every state change.
 //! Waybar reads this via a custom module with short polling interval.
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use crate::workspace::WorkspaceManager;
@@ -55,17 +54,10 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
         }
     }
 
-    let focused_output = workspaces
-        .workspaces
-        .get(workspaces.focused_workspace.0)
-        .and_then(|ws| ws.preferred_output.as_deref())
-        .unwrap_or("");
-
     let mut groups = Vec::new();
 
     for (i, output_name) in output_names.iter().enumerate() {
         let color = MONITOR_COLORS[i % MONITOR_COLORS.len()];
-        let is_focused_output = output_name == focused_output;
 
         let mut parts = Vec::new();
         for ws in &workspaces.workspaces {
@@ -75,7 +67,6 @@ pub fn workspace_json(workspaces: &WorkspaceManager) -> String {
             }
 
             let is_focused = ws.id == workspaces.focused_workspace;
-            let is_visible = ws.active_output.is_some();
             let has_windows = ws
                 .root
                 .all_frame_ids()

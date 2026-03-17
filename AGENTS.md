@@ -72,11 +72,12 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Layer-shell**: river-layer-shell-v1 for waybar/rofi/notifications. non_exclusive_area adjusts tiling area.
 - **State persistence**: layout tree + window-to-frame mapping + visible workspaces saved to JSON on restart/signal. Windows matched by River's stable identifier, then app_id+title.
 - **Title sync**: WindowRef titles updated from ManagedWindow every manage cycle for live tab bar updates.
+- **Control IPC**: `$XDG_RUNTIME_DIR/notion-river.sock` accepts `list-windows`, `list-workspaces`, `focus-window <id>`, `switch-workspace <name>` for `notion-ctl` and rofi integration.
 
 ## Built-in Keybinding Profiles
 
-- `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher, Super+b/v split, Super+n/p tabs
-- `notion`: Vim-style (h/j/k/l), Super+Return terminal, Super+p launcher, Super+s/v split, Super+Tab tabs
+- `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher, Super+Shift+o window switcher, Super+b/v split, Super+n/p tabs
+- `notion`: Vim-style (h/j/k/l), Super+Return terminal, Super+p launcher, Super+Shift+p window switcher, Super+s/v split, Super+Tab tabs
 - Both: media keys (XF86Audio*, XF86MonBrightness*), Super+Shift+R restart, Super+t toggle split
 
 ## Config Files
@@ -87,6 +88,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `~/.config/kanshi/config` — Monitor layout (position, scale, transform)
 - `~/.config/waybar/config.jsonc` — Waybar modules (custom/workspaces with Pango markup, CPU, MEM, DSK, VOL, NET, tray)
 - `~/.config/waybar/style.css` — Waybar styling (Catppuccin-inspired)
+- `~/.local/bin/notion-rofi-windows` — rofi window switcher using `notion-ctl`
 - `/usr/share/wayland-sessions/river-custom.desktop` — lightdm session entry
 
 ## Common Pitfalls
