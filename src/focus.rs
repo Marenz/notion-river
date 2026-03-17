@@ -63,11 +63,14 @@ pub fn compute_focus(
         let area = output.usable_rect();
         let layouts = ws.root.calculate_layout(area, gap);
 
+        // Expand hit-test rects by half_gap so the gap between frames
+        // is claimed by both neighbors (nearest frame wins).
+        let half_gap = gap / 2 + 1;
         if let Some((frame_id, _)) = layouts.iter().find(|(_, rect)| {
-            px >= rect.x + margin
-                && px < rect.x + rect.width - margin
-                && py >= rect.y + margin
-                && py < rect.y + rect.height - margin
+            px >= rect.x - half_gap + margin
+                && px < rect.x + rect.width + half_gap - margin
+                && py >= rect.y - half_gap + margin
+                && py < rect.y + rect.height + half_gap - margin
         }) {
             if ws.focused_frame != *frame_id || workspaces.focused_workspace != ws.id {
                 return Some(FocusResult {

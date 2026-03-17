@@ -749,4 +749,68 @@ mod tests {
         let neighbor = tree.find_neighbor(ids[0], Direction::Up, area, 4);
         assert_eq!(neighbor, None);
     }
+
+    #[test]
+    fn test_adjust_ratio_vsplit_from_second_child() {
+        // Vertical split: top frame (first) and bottom frame (second)
+        let mut tree = SplitNode::vsplit(0.5);
+        let ids = tree.all_frame_ids();
+        let top = ids[0];
+        let bottom = ids[1];
+
+        // Dragging up from bottom frame (negative dy) should shrink top (decrease ratio)
+        let initial_ratio = 0.5;
+        tree.adjust_ratio(bottom, 0.0, -0.1);
+        match &tree {
+            SplitNode::Split { ratio, .. } => {
+                assert!(
+                    *ratio < initial_ratio,
+                    "Dragging up from bottom should decrease ratio (shrink top), got {}",
+                    ratio
+                );
+            }
+            _ => panic!("Expected split"),
+        }
+    }
+
+    #[test]
+    fn test_adjust_ratio_vsplit_from_first_child() {
+        // Dragging down from top frame (positive dy) should grow top (increase ratio)
+        let mut tree = SplitNode::vsplit(0.5);
+        let ids = tree.all_frame_ids();
+        let top = ids[0];
+
+        tree.adjust_ratio(top, 0.0, 0.1);
+        match &tree {
+            SplitNode::Split { ratio, .. } => {
+                assert!(
+                    *ratio > 0.5,
+                    "Dragging down from top should increase ratio (grow top), got {}",
+                    ratio
+                );
+            }
+            _ => panic!("Expected split"),
+        }
+    }
+
+    #[test]
+    fn test_adjust_ratio_hsplit_from_second_child() {
+        // Horizontal split: left (first) and right (second)
+        // Dragging left from right frame (negative dx) should shrink left (decrease ratio)
+        let mut tree = SplitNode::hsplit(0.5);
+        let ids = tree.all_frame_ids();
+        let right = ids[1];
+
+        tree.adjust_ratio(right, -0.1, 0.0);
+        match &tree {
+            SplitNode::Split { ratio, .. } => {
+                assert!(
+                    *ratio < 0.5,
+                    "Dragging left from right should decrease ratio (shrink left), got {}",
+                    ratio
+                );
+            }
+            _ => panic!("Expected split"),
+        }
+    }
 }

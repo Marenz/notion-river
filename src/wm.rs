@@ -831,18 +831,7 @@ impl WindowManager {
         let resize_h = near_h && has_h_neighbor;
         let resize_v = near_v && has_v_neighbor;
 
-        // If not near any edge, default to the axis of the nearest boundary
-        if !resize_h && !resize_v {
-            // Fall back: allow the axis that has a neighbor at all
-            let any_h = layouts.iter().any(|(id, rect)| {
-                *id != frame_id && crate::layout::vertical_overlap(my_rect, *rect) > 0
-            });
-            let any_v = layouts.iter().any(|(id, rect)| {
-                *id != frame_id && crate::layout::horizontal_overlap(my_rect, *rect) > 0
-            });
-            return (any_h, any_v);
-        }
-
+        // If not near any specific edge with a neighbor, don't resize
         (resize_h, resize_v)
     }
 

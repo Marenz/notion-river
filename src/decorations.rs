@@ -314,20 +314,24 @@ impl EmptyFrameManager {
                 std::slice::from_raw_parts_mut(map as *mut u32, (width * height) as usize)
             };
 
-            // Draw a thin border rectangle, transparent inside
+            // Draw border with a barely-visible interior fill.
+            // The fill must be non-transparent (alpha > 0) so the surface
+            // receives pointer input events (Wayland ignores fully transparent areas).
             let border_w = 2usize;
             let color = if is_focused {
                 COLOR_EMPTY_FOCUSED
             } else {
                 COLOR_EMPTY_UNFOCUSED
             };
+            // 0x01000000 = alpha=1 (out of 255), practically invisible but receives input
+            let fill = 0x01000000u32;
             let w = width as usize;
             let h = height as usize;
             for y in 0..h {
                 for x in 0..w {
                     let on_border =
                         y < border_w || y >= h - border_w || x < border_w || x >= w - border_w;
-                    pixels[y * w + x] = if on_border { color } else { 0x00000000 };
+                    pixels[y * w + x] = if on_border { color } else { fill };
                 }
             }
 
