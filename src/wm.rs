@@ -503,19 +503,40 @@ impl WindowManager {
     fn handle_pending_actions(&mut self, wm_proxy: &RiverWindowManagerV1) {
         // Collect actions from all seats first — we need to know if there's
         // a keyboard action before applying focus-follows-mouse
-        let actions: Vec<Action> = self
+        let actions: Vec<(Action, Option<u64>)> = self
             .seats
             .values_mut()
             .map(|seat| {
                 let action = std::mem::replace(&mut seat.pending_action, Action::None);
-                if let Some(window_proxy) = seat.interacted.take() {
-                    let _ = window_proxy;
-                }
-                action
+                (
+                    action,
+                    seat.interacted.take().map(|w| w.id().protocol_id() as u64),
+                )
             })
             .collect();
 
-        let has_keyboard_action = actions.iter().any(|a| !matches!(a, Action::None));
+        let has_keyboard_action = actions.iter().any(|(a, _)| !matches!(a, Action::None));
+
+        // Handle window interactions (click-to-focus, tab switching)
+        for (_, interacted_id) in &actions {
+            if let Some(wid) = interacted_id {
+                // Find which frame this window is in and make it the active tab
+                for ws in &mut self.workspaces.workspaces {
+                    if let Some(frame_id) = ws.root.find_frame_with_window(*wid) {
+                        if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                            if let Some(tab_idx) =
+                                frame.windows.iter().position(|w| w.window_id == *wid)
+                            {
+                                frame.active_tab = tab_idx;
+                            }
+                        }
+                        ws.focused_frame = frame_id;
+                        self.workspaces.focused_workspace = ws.id;
+                        break;
+                    }
+                }
+            }
+        }
 
         // Focus-follows-mouse
         if self.config.general.focus_follows_mouse && !has_keyboard_action {
@@ -531,7 +552,7 @@ impl WindowManager {
             self.apply_focus_follows_mouse(&inputs);
         }
 
-        for action in actions {
+        for (action, _) in actions {
             self.perform_action(action, wm_proxy);
         }
 
