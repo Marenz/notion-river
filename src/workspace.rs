@@ -162,6 +162,44 @@ impl WorkspaceManager {
         self.output_workspace.insert(output_id, ws_id);
     }
 
+    /// Re-assign workspaces to outputs based on preferred_output names.
+    /// Called when output names become known (after wl_output.name event).
+    pub fn reassign_outputs(&mut self) {
+        // Collect (output_id, output_name) pairs
+        let outputs: Vec<(OutputId, String)> = self
+            .outputs
+            .iter()
+            .filter_map(|o| o.name.as_ref().map(|n| (o.id, n.clone())))
+            .collect();
+
+        for (output_id, output_name) in &outputs {
+            // Find the first workspace that prefers this output and isn't visible yet
+            let ws_id = self
+                .workspaces
+                .iter()
+                .find(|ws| {
+                    ws.preferred_output.as_deref() == Some(output_name.as_str())
+                        && ws.active_output.is_none()
+                })
+                .map(|ws| ws.id);
+
+            if let Some(ws_id) = ws_id {
+                // Unassign whatever was on this output before
+                if let Some(&old_ws) = self.output_workspace.get(output_id) {
+                    if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws) {
+                        ws.active_output = None;
+                    }
+                }
+                self.assign_workspace_to_output(ws_id, *output_id);
+                log::info!(
+                    "Assigned workspace '{}' to output '{}'",
+                    self.workspaces[ws_id.0].name,
+                    output_name
+                );
+            }
+        }
+    }
+
     /// Switch the active workspace on the output that currently has focus.
     pub fn switch_workspace(&mut self, target_name: &str) {
         let target_ws = match self.workspaces.iter().find(|w| w.name == target_name) {

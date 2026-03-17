@@ -29,6 +29,8 @@ pub struct AppData {
     pub river_xkb: Option<RiverXkbBindingsV1>,
     pub wl_compositor: Option<WlCompositor>,
     pub wl_shm: Option<WlShm>,
+    /// Map from wl_output global name (u32) to river OutputId.
+    pub wl_output_map: std::collections::HashMap<u32, OutputId>,
     pub wm: WindowManager,
 }
 
@@ -39,6 +41,7 @@ impl Default for AppData {
             river_xkb: None,
             wl_compositor: None,
             wl_shm: None,
+            wl_output_map: std::collections::HashMap::new(),
             wm: WindowManager::new(Config::load()),
         }
     }

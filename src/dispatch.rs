@@ -6,8 +6,8 @@
 use wayland_backend::client::ObjectId;
 use wayland_client::{
     protocol::{
-        wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_registry, wl_shm::WlShm,
-        wl_shm_pool::WlShmPool, wl_surface::WlSurface,
+        wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output::WlOutput, wl_registry,
+        wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface,
     },
     Connection, Dispatch, Proxy, QueueHandle,
 };
@@ -58,6 +58,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     }
                     let xkb = registry.bind::<RiverXkbBindingsV1, _, _>(name, XKB_VERSION, qh, ());
                     state.river_xkb = Some(xkb);
+                }
+                "wl_output" => {
+                    // Bind wl_output to get the name/description events
+                    let _output = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, name);
                 }
                 "wl_compositor" => {
                     let comp = registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ());
@@ -219,16 +223,10 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
                     output.removed = true;
                 }
             }
-            Event::WlOutput { name } => {
-                log::info!("Output {oid:?} wl_output name: {name}");
-                // The WlOutput event gives us the wl_output global name (u32),
-                // not the output name string. Output name comes from the
-                // wl_output description/name which we'd need to bind separately.
-                // For now, we'll set the name when we get it from elsewhere.
-                let _ = name;
-                // if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                //     output.name = Some(...);
-                // }
+            Event::WlOutput { name: global_name } => {
+                log::info!("Output {oid:?} wl_output global name: {global_name}");
+                // Store the mapping so we can associate wl_output events with our OutputId
+                state.wl_output_map.insert(global_name, oid);
             }
             Event::Position { x, y } => {
                 if let Some(output) = state.wm.workspaces.output_mut(oid) {
@@ -464,6 +462,35 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                 }
             }
             Event::Released => {}
+        }
+    }
+}
+
+// ── WlOutput (for connector name) ────────────────────────────────────────
+
+impl Dispatch<WlOutput, u32> for AppData {
+    fn event(
+        state: &mut Self,
+        _proxy: &WlOutput,
+        event: <WlOutput as Proxy>::Event,
+        data: &u32,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use wayland_client::protocol::wl_output::Event;
+        match event {
+            Event::Name { name } => {
+                log::info!("wl_output global {} connector name: {name}", data);
+                // Find the OutputId for this wl_output global name
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.name = Some(name);
+                    }
+                    // Re-check workspace assignment now that we have the name
+                    state.wm.workspaces.reassign_outputs();
+                }
+            }
+            _ => {}
         }
     }
 }
