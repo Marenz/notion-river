@@ -539,14 +539,20 @@ impl Dispatch<WlOutput, u32> for AppData {
         match event {
             Event::Name { name } => {
                 log::info!("wl_output global {} connector name: {name}", data);
-                // Store the name keyed by global name
                 state.wl_output_names.insert(*data, name.clone());
-                // If we already have the mapping, apply it now
                 if let Some(&oid) = state.wl_output_map.get(data) {
                     if let Some(output) = state.wm.workspaces.output_mut(oid) {
                         output.name = Some(name);
                     }
                     state.wm.workspaces.reassign_outputs();
+                }
+            }
+            Event::Scale { factor } => {
+                log::info!("wl_output global {} scale: {factor}", data);
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.scale = factor;
+                    }
                 }
             }
             _ => {}

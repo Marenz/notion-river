@@ -41,6 +41,8 @@ pub struct Output {
     pub usable_width: i32,
     pub usable_height: i32,
     pub has_exclusive_zone: bool,
+    /// Output scale factor (from wl_output.scale event).
+    pub scale: i32,
     /// Whether the output has been removed.
     pub removed: bool,
 }
@@ -59,6 +61,7 @@ impl Output {
             usable_width: 0,
             usable_height: 0,
             has_exclusive_zone: false,
+            scale: 1,
             removed: false,
         }
     }

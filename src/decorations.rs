@@ -25,7 +25,7 @@ use crate::protocol::river_window_v1::RiverWindowV1;
 use crate::wm::AppData;
 
 /// Height of the tab bar in pixels.
-pub const TAB_BAR_HEIGHT: i32 = 20;
+pub const TAB_BAR_HEIGHT: i32 = 24;
 
 /// ARGB8888 colors (premultiplied alpha).
 const COLOR_TAB_ACTIVE: u32 = 0xFF4c7899;
@@ -79,19 +79,22 @@ impl DecorationManager {
         frame: &Frame,
         frame_width: i32,
         is_focused_frame: bool,
+        scale: i32,
         shm: &WlShm,
         compositor: &WlCompositor,
         qh: &QueueHandle<AppData>,
     ) {
-        let width = frame_width;
-        let height = TAB_BAR_HEIGHT;
+        let scale = scale.max(1);
+        let width = frame_width * scale;
+        let height = TAB_BAR_HEIGHT * scale;
 
         if width <= 0 || height <= 0 {
             return;
         }
 
         // Compute a simple hash to avoid unnecessary redraws
-        let content_hash = compute_hash(frame, is_focused_frame, width);
+        let content_hash =
+            compute_hash(frame, is_focused_frame, width) ^ (scale as u64 * 0x9e3779b9);
 
         let surface_to_window = &mut self.surface_to_window;
         let dec = self.decorations.entry(window_id).or_insert_with(|| {
@@ -107,6 +110,9 @@ impl DecorationManager {
                 last_hash: 0,
             }
         });
+
+        // Set buffer scale for HiDPI rendering
+        dec.surface.set_buffer_scale(scale);
 
         // Position above the window
         dec.decoration.set_offset(0, -TAB_BAR_HEIGHT);
@@ -481,14 +487,16 @@ fn draw_tab_bar_pixels(
                 &win_ref.title
             };
             let text_color = if is_active { 0xFFFFFFFF } else { 0xFFAAAAAA };
+            let padding = 4 * height / TAB_BAR_HEIGHT as usize;
             draw_text(
                 pixels,
                 width,
-                x_start + 4,
-                4,
+                height,
+                x_start + padding,
+                padding,
                 title,
                 text_color,
-                x_end.saturating_sub(4),
+                x_end.saturating_sub(padding),
             );
         }
     }
@@ -529,6 +537,7 @@ fn get_font() -> &'static fontdue::Font {
 fn draw_text(
     pixels: &mut [u32],
     stride: usize,
+    height: usize,
     x0: usize,
     y0: usize,
     text: &str,
@@ -536,7 +545,7 @@ fn draw_text(
     x_max: usize,
 ) {
     let font = get_font();
-    let font_size = (TAB_BAR_HEIGHT as f32 * 0.65).max(10.0);
+    let font_size = (height as f32 * 0.65).max(12.0);
 
     let color_r = ((color >> 16) & 0xFF) as f32;
     let color_g = ((color >> 8) & 0xFF) as f32;
