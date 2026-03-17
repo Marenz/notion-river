@@ -41,8 +41,11 @@ pub struct Output {
     pub usable_width: i32,
     pub usable_height: i32,
     pub has_exclusive_zone: bool,
-    /// Output scale factor (from wl_output.scale event).
+    /// Output scale factor (integer from wl_output.scale).
     pub scale: i32,
+    /// Physical mode dimensions (from wl_output.mode event).
+    pub physical_width: i32,
+    pub physical_height: i32,
     /// Whether the output has been removed.
     pub removed: bool,
 }
@@ -62,7 +65,19 @@ impl Output {
             usable_height: 0,
             has_exclusive_zone: false,
             scale: 1,
+            physical_width: 0,
+            physical_height: 0,
             removed: false,
+        }
+    }
+
+    /// Compute the actual fractional scale from physical vs logical dimensions.
+    /// Falls back to the integer wl_output.scale if physical dims aren't known.
+    pub fn fractional_scale(&self) -> f64 {
+        if self.physical_width > 0 && self.width > 0 {
+            self.physical_width as f64 / self.width as f64
+        } else {
+            self.scale.max(1) as f64
         }
     }
 

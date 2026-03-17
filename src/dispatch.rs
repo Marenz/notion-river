@@ -555,6 +555,15 @@ impl Dispatch<WlOutput, u32> for AppData {
                     }
                 }
             }
+            Event::Mode { width, height, .. } => {
+                log::info!("wl_output global {} mode: {width}x{height}", data);
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.physical_width = width;
+                        output.physical_height = height;
+                    }
+                }
+            }
             _ => {}
         }
     }

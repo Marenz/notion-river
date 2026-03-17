@@ -1360,7 +1360,7 @@ impl WindowManager {
             rect_height: i32,
             is_focused: bool,
             border_color: (u32, u32, u32, u32),
-            scale: i32,
+            fractional_scale: f64,
         }
         let mut draw_cmds: Vec<DrawCmd> = Vec::new();
 
@@ -1399,7 +1399,7 @@ impl WindowManager {
                                 rect_height: rect.height,
                                 is_focused,
                                 border_color: color,
-                                scale: output.scale,
+                                fractional_scale: output.fractional_scale(),
                             });
                         }
                     }
@@ -1474,7 +1474,7 @@ impl WindowManager {
                         frame,
                         cmd.rect_width,
                         cmd.is_focused,
-                        cmd.scale,
+                        cmd.fractional_scale,
                         shm,
                         compositor,
                         qh,

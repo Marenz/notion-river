@@ -79,14 +79,15 @@ impl DecorationManager {
         frame: &Frame,
         frame_width: i32,
         is_focused_frame: bool,
-        scale: i32,
+        fractional_scale: f64,
         shm: &WlShm,
         compositor: &WlCompositor,
         qh: &QueueHandle<AppData>,
     ) {
-        let scale = scale.max(1);
-        let width = frame_width * scale;
-        let height = TAB_BAR_HEIGHT * scale;
+        let scale = fractional_scale.max(1.0);
+        let buffer_scale = scale.ceil() as i32;
+        let width = (frame_width as f64 * scale).round() as i32;
+        let height = (TAB_BAR_HEIGHT as f64 * scale).round() as i32;
 
         if width <= 0 || height <= 0 {
             return;
@@ -94,7 +95,7 @@ impl DecorationManager {
 
         // Compute a simple hash to avoid unnecessary redraws
         let content_hash =
-            compute_hash(frame, is_focused_frame, width) ^ (scale as u64 * 0x9e3779b9);
+            compute_hash(frame, is_focused_frame, width) ^ (buffer_scale as u64 * 0x9e3779b9);
 
         let surface_to_window = &mut self.surface_to_window;
         let dec = self.decorations.entry(window_id).or_insert_with(|| {
@@ -112,7 +113,7 @@ impl DecorationManager {
         });
 
         // Set buffer scale for HiDPI rendering
-        dec.surface.set_buffer_scale(scale);
+        dec.surface.set_buffer_scale(buffer_scale);
 
         // Position above the window
         dec.decoration.set_offset(0, -TAB_BAR_HEIGHT);
@@ -533,7 +534,7 @@ fn get_font() -> &'static fontdue::Font {
     })
 }
 
-/// Render text using fontdue with anti-aliasing.
+/// Render text using fontdue's Layout API for proper glyph positioning.
 fn draw_text(
     pixels: &mut [u32],
     stride: usize,
@@ -551,17 +552,20 @@ fn draw_text(
     let color_g = ((color >> 8) & 0xFF) as f32;
     let color_b = (color & 0xFF) as f32;
 
-    let mut x = x0 as f32;
+    // Use fontdue's Layout for proper kerning and positioning
+    use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
+    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
+    layout.reset(&LayoutSettings {
+        x: x0 as f32,
+        y: y0 as f32,
+        max_width: Some((x_max - x0) as f32),
+        max_height: Some(height as f32),
+        ..LayoutSettings::default()
+    });
+    layout.append(&[font], &TextStyle::new(text, font_size, 0));
 
-    for ch in text.chars() {
-        if x as usize >= x_max {
-            break;
-        }
-
-        let (metrics, bitmap) = font.rasterize(ch, font_size);
-
-        // Baseline offset: place glyphs on the baseline
-        let glyph_y = y0 as i32 + (font_size * 0.8) as i32 - metrics.height as i32 - metrics.ymin;
+    for glyph in layout.glyphs() {
+        let (metrics, bitmap) = font.rasterize_config(glyph.key);
 
         for row in 0..metrics.height {
             for col in 0..metrics.width {
@@ -570,14 +574,13 @@ fn draw_text(
                     continue;
                 }
 
-                let px = x as usize + col;
-                let py = glyph_y as usize + row;
+                let px = glyph.x as usize + col;
+                let py = glyph.y as usize + row;
 
                 if px >= x_max || px >= stride || py >= pixels.len() / stride {
                     continue;
                 }
 
-                // Alpha-blend the glyph onto the background
                 let bg = pixels[py * stride + px];
                 let bg_r = ((bg >> 16) & 0xFF) as f32;
                 let bg_g = ((bg >> 8) & 0xFF) as f32;
@@ -590,8 +593,6 @@ fn draw_text(
                 pixels[py * stride + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
-
-        x += metrics.advance_width;
     }
 }
 
