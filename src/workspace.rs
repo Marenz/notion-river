@@ -199,6 +199,11 @@ impl WorkspaceManager {
             .collect();
 
         for (output_id, output_name) in &outputs {
+            // If this output already has a workspace assigned, skip it
+            if self.output_workspace.contains_key(output_id) {
+                continue;
+            }
+
             // Prefer the saved visible workspace for this output (from state restore)
             let saved_ws = self
                 .saved_visible
