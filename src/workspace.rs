@@ -35,6 +35,12 @@ pub struct Output {
     /// Dimensions in logical pixels.
     pub width: i32,
     pub height: i32,
+    /// Usable area after layer-shell exclusive zones (bars, panels).
+    pub usable_x: i32,
+    pub usable_y: i32,
+    pub usable_width: i32,
+    pub usable_height: i32,
+    pub has_exclusive_zone: bool,
     /// Whether the output has been removed.
     pub removed: bool,
 }
@@ -48,14 +54,27 @@ impl Output {
             y: 0,
             width: 0,
             height: 0,
+            usable_x: 0,
+            usable_y: 0,
+            usable_width: 0,
+            usable_height: 0,
+            has_exclusive_zone: false,
             removed: false,
         }
     }
 
-    /// The usable area for tiling (full output for now; bars claim
-    /// space via layer-shell which River handles automatically).
+    /// The usable area for tiling, respecting layer-shell exclusive zones.
     pub fn usable_rect(&self) -> Rect {
-        Rect::new(self.x, self.y, self.width, self.height)
+        if self.has_exclusive_zone {
+            Rect::new(
+                self.usable_x,
+                self.usable_y,
+                self.usable_width,
+                self.usable_height,
+            )
+        } else {
+            Rect::new(self.x, self.y, self.width, self.height)
+        }
     }
 }
 

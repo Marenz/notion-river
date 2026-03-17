@@ -59,6 +59,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let xkb = registry.bind::<RiverXkbBindingsV1, _, _>(name, XKB_VERSION, qh, ());
                     state.river_xkb = Some(xkb);
                 }
+                "river_layer_shell_v1" => {
+                    use crate::protocol::river_layer_shell_v1::RiverLayerShellV1;
+                    let ls = registry.bind::<RiverLayerShellV1, _, _>(name, version.min(1), qh, ());
+                    log::info!("Bound river_layer_shell_v1");
+                    state.river_layer_shell = Some(ls);
+                }
                 "wl_output" => {
                     let _output = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, name);
                 }
@@ -151,9 +157,19 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 log::info!("New output: {oid:?}");
                 let output = Output::new(oid);
                 state.wm.workspaces.add_output(output);
+                // Register layer-shell output for exclusive zone tracking
+                if let Some(ref ls) = state.river_layer_shell {
+                    let _ls_output = ls.get_output(&id, qh, oid.0);
+                    log::info!("Registered layer-shell output for {oid:?}");
+                }
             }
             Event::Seat { id } => {
                 log::info!("New seat: {:?}", id.id());
+                // Register layer-shell seat for focus events
+                if let Some(ref ls) = state.river_layer_shell {
+                    let _ls_seat = ls.get_seat(&id, qh, ());
+                    log::info!("Registered layer-shell seat");
+                }
                 state.wm.seats.insert(id.id(), Seat::new(id));
             }
         }
@@ -534,6 +550,72 @@ impl Dispatch<WlOutput, u32> for AppData {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+// ── Layer Shell ──────────────────────────────────────────────────────────
+
+wayland_client::delegate_noop!(AppData: ignore crate::protocol::river_layer_shell_v1::RiverLayerShellV1);
+
+impl Dispatch<crate::protocol::river_layer_shell_output_v1::RiverLayerShellOutputV1, u64>
+    for AppData
+{
+    fn event(
+        state: &mut Self,
+        _proxy: &crate::protocol::river_layer_shell_output_v1::RiverLayerShellOutputV1,
+        event: <crate::protocol::river_layer_shell_output_v1::RiverLayerShellOutputV1 as Proxy>::Event,
+        data: &u64,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::river_layer_shell_output_v1::Event;
+        let oid = crate::workspace::OutputId(*data);
+        match event {
+            Event::NonExclusiveArea {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                log::info!(
+                    "Layer-shell non-exclusive area for {oid:?}: ({x},{y}) {width}x{height}"
+                );
+                if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                    output.usable_x = x;
+                    output.usable_y = y;
+                    output.usable_width = width;
+                    output.usable_height = height;
+                    output.has_exclusive_zone = true;
+                }
+            }
+        }
+    }
+}
+
+impl Dispatch<crate::protocol::river_layer_shell_seat_v1::RiverLayerShellSeatV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        _proxy: &crate::protocol::river_layer_shell_seat_v1::RiverLayerShellSeatV1,
+        event: <crate::protocol::river_layer_shell_seat_v1::RiverLayerShellSeatV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::river_layer_shell_seat_v1::Event;
+        match event {
+            Event::FocusExclusive => {
+                log::info!("Layer-shell: exclusive focus");
+                state.wm.layer_shell_has_focus = true;
+            }
+            Event::FocusNonExclusive => {
+                log::info!("Layer-shell: non-exclusive focus");
+                state.wm.layer_shell_has_focus = true;
+            }
+            Event::FocusNone => {
+                log::info!("Layer-shell: focus none");
+                state.wm.layer_shell_has_focus = false;
+            }
         }
     }
 }

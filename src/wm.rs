@@ -27,6 +27,7 @@ use crate::protocol::{
 pub struct AppData {
     pub river_wm: Option<RiverWindowManagerV1>,
     pub river_xkb: Option<RiverXkbBindingsV1>,
+    pub river_layer_shell: Option<crate::protocol::river_layer_shell_v1::RiverLayerShellV1>,
     pub wl_compositor: Option<WlCompositor>,
     pub wl_shm: Option<WlShm>,
     /// Map from wl_output global name (u32) to river OutputId.
@@ -48,6 +49,7 @@ impl Default for AppData {
         Self {
             river_wm: None,
             river_xkb: None,
+            river_layer_shell: None,
             wl_compositor: None,
             wl_shm: None,
             wl_output_map: std::collections::HashMap::new(),
@@ -89,6 +91,8 @@ pub struct WindowManager {
     pub saved_state: Option<crate::state::SavedState>,
     /// Suppress WindowInteraction for one manage cycle (after tab click).
     pub suppress_interaction: bool,
+    /// Whether a layer-shell surface (e.g. rofi overlay) has keyboard focus.
+    pub layer_shell_has_focus: bool,
 }
 
 /// A window tracked by the WM.
@@ -222,6 +226,7 @@ impl WindowManager {
             empty_frames: EmptyFrameManager::new(),
             saved_state,
             suppress_interaction: false,
+            layer_shell_has_focus: false,
         }
     }
 
