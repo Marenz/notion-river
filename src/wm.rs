@@ -35,6 +35,11 @@ pub struct AppData {
     pub wl_output_names: std::collections::HashMap<u32, String>,
     /// wl_seat global name (for binding wl_pointer).
     pub wl_seat_name: Option<u32>,
+    /// Pending tab click: (workspace_index, frame_id, tab_index) from decoration click
+    pub pending_tab_click: Option<(usize, FrameId, usize)>,
+    /// Current wl_pointer surface (protocol id) and surface-local x
+    pub wl_pointer_surface: Option<u32>,
+    pub wl_pointer_surface_x: f64,
     pub wm: WindowManager,
 }
 
@@ -48,6 +53,9 @@ impl Default for AppData {
             wl_output_map: std::collections::HashMap::new(),
             wl_output_names: std::collections::HashMap::new(),
             wl_seat_name: None,
+            pending_tab_click: None,
+            wl_pointer_surface: None,
+            wl_pointer_surface_x: 0.0,
             wm: WindowManager::new(Config::load()),
         }
     }

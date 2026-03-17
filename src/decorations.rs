@@ -13,6 +13,7 @@ use wayland_client::protocol::{
     wl_shm_pool::WlShmPool,
     wl_surface::WlSurface,
 };
+use wayland_client::Proxy;
 use wayland_client::QueueHandle;
 
 use crate::layout::{Frame, FrameId, Rect};
@@ -55,6 +56,8 @@ impl std::fmt::Debug for WindowDecoration {
 #[derive(Debug, Default)]
 pub struct DecorationManager {
     pub decorations: HashMap<u64, WindowDecoration>,
+    /// Reverse map: wl_surface protocol id → window_id (for click-to-tab)
+    pub surface_to_window: HashMap<u32, u64>,
 }
 
 impl DecorationManager {
@@ -90,8 +93,10 @@ impl DecorationManager {
         // Compute a simple hash to avoid unnecessary redraws
         let content_hash = compute_hash(frame, is_focused_frame, width);
 
+        let surface_to_window = &mut self.surface_to_window;
         let dec = self.decorations.entry(window_id).or_insert_with(|| {
             let surface = compositor.create_surface(qh, ());
+            surface_to_window.insert(surface.id().protocol_id(), window_id);
             let decoration = window_proxy.get_decoration_above(&surface, qh, ());
             WindowDecoration {
                 surface,
@@ -175,6 +180,25 @@ impl DecorationManager {
 
         dec.decoration.sync_next_commit();
         dec.surface.commit();
+    }
+
+    /// Given a surface protocol id and click x coordinate, return
+    /// (window_id, tab_index) if this is a tab bar click.
+    pub fn tab_click(
+        &self,
+        surface_id: u32,
+        surface_x: f64,
+        num_tabs: usize,
+        frame_width: i32,
+    ) -> Option<(u64, usize)> {
+        let window_id = self.surface_to_window.get(&surface_id)?;
+        if num_tabs == 0 || frame_width <= 0 {
+            return None;
+        }
+        let tab_width = frame_width as f64 / num_tabs as f64;
+        let tab_index = (surface_x / tab_width) as usize;
+        let tab_index = tab_index.min(num_tabs - 1);
+        Some((*window_id, tab_index))
     }
 
     /// Remove decoration for a window that's gone.

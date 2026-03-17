@@ -104,6 +104,20 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 std::process::exit(0);
             }
             Event::ManageStart => {
+                // Process pending tab click before manage
+                if let Some((ws_idx, frame_id, tab_index)) = state.pending_tab_click.take() {
+                    if let Some(ws) = state.wm.workspaces.workspaces.get_mut(ws_idx) {
+                        if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                            if tab_index < frame.windows.len() {
+                                log::info!("Tab click: frame {:?} tab {}", frame_id, tab_index);
+                                frame.active_tab = tab_index;
+                            }
+                        }
+                        ws.focused_frame = frame_id;
+                        state.wm.workspaces.focused_workspace = ws.id;
+                    }
+                }
+
                 let river_xkb = state
                     .river_xkb
                     .as_ref()
@@ -538,29 +552,68 @@ impl Dispatch<wayland_client::protocol::wl_pointer::WlPointer, ()> for AppData {
     ) {
         use wayland_client::protocol::wl_pointer::Event;
         match event {
-            Event::Motion {
-                surface_x,
-                surface_y,
-                ..
-            } => {
-                // wl_pointer.motion fires on shell surfaces (empty frames).
-                // Record the position and request a manage cycle so our
-                // focus-follows-mouse logic can run.
-                // Note: surface_x/y are relative to the surface, but we need
-                // global coordinates. We get those from pointer_position in the
-                // manage cycle. Just triggering manage_dirty is enough.
+            Event::Motion { surface_x, .. } => {
+                state.wl_pointer_surface_x = surface_x;
                 if let Some(wm_proxy) = &state.river_wm {
                     wm_proxy.manage_dirty();
                 }
             }
             Event::Enter {
-                surface_x,
-                surface_y,
-                ..
+                surface, surface_x, ..
             } => {
-                // Pointer entered a shell surface — trigger manage cycle
+                state.wl_pointer_surface = Some(surface.id().protocol_id());
+                state.wl_pointer_surface_x = surface_x;
                 if let Some(wm_proxy) = &state.river_wm {
                     wm_proxy.manage_dirty();
+                }
+            }
+            Event::Leave { .. } => {
+                state.wl_pointer_surface = None;
+            }
+            Event::Button {
+                button,
+                state: btn_state,
+                ..
+            } => {
+                use wayland_client::protocol::wl_pointer::ButtonState;
+                const BTN_LEFT: u32 = 0x110;
+                if button == BTN_LEFT
+                    && btn_state == wayland_client::WEnum::Value(ButtonState::Pressed)
+                {
+                    // Check if clicking a tab bar decoration
+                    if let Some(surface_id) = state.wl_pointer_surface {
+                        let surface_x = state.wl_pointer_surface_x;
+                        // Find the window and frame for this decoration surface
+                        if let Some(&window_id) =
+                            state.wm.decorations.surface_to_window.get(&surface_id)
+                        {
+                            // Find frame containing this window to get tab count and width
+                            let tab_info = state.wm.workspaces.workspaces.iter().find_map(|ws| {
+                                let frame_id = ws.root.find_frame_with_window(window_id)?;
+                                let frame = ws.root.find_frame(frame_id)?;
+                                let gap = state.wm.config.general.gap as i32;
+                                let output = ws
+                                    .active_output
+                                    .and_then(|oid| state.wm.workspaces.output(oid))?;
+                                let area = output.usable_rect();
+                                let layouts = ws.root.calculate_layout(area, gap);
+                                let (_, rect) = layouts.iter().find(|(id, _)| *id == frame_id)?;
+                                Some((ws.id, frame_id, frame.windows.len(), rect.width))
+                            });
+
+                            if let Some((ws_id, frame_id, num_tabs, frame_width)) = tab_info {
+                                if num_tabs > 0 {
+                                    let tab_width = frame_width as f64 / num_tabs as f64;
+                                    let tab_index = (surface_x / tab_width) as usize;
+                                    let tab_index = tab_index.min(num_tabs - 1);
+                                    state.pending_tab_click = Some((ws_id.0, frame_id, tab_index));
+                                    if let Some(wm_proxy) = &state.river_wm {
+                                        wm_proxy.manage_dirty();
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
