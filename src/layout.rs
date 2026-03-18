@@ -631,7 +631,8 @@ impl SplitNode {
         }
     }
 
-    /// Legacy: adjust ratio by frame id (for keyboard resize mode).
+    /// Adjust ratio by frame id (used in tests and keyboard resize).
+    #[cfg(test)]
     pub fn adjust_ratio(&mut self, target_id: FrameId, dx: f32, dy: f32) -> bool {
         self.adjust_ratio_axis(target_id, Orientation::Horizontal, dx)
             | self.adjust_ratio_axis(target_id, Orientation::Vertical, dy)
