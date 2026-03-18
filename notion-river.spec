@@ -41,7 +41,7 @@ Requires the River compositor (0.4.x+) to be installed separately.
 %autosetup
 
 %build
-cargo build --release --locked
+cargo build --release
 
 %install
 install -Dm755 target/release/notion-river %{buildroot}%{_bindir}/notion-river
@@ -60,5 +60,5 @@ install -Dm755 config-examples/notion-rofi-window-mode %{buildroot}%{_datadir}/n
 %{_datadir}/notion-river/
 
 %changelog
-* Tue Mar 18 2026 Marenz <marenz@users.noreply.github.com> - 0.1.0-1
+* Wed Mar 18 2026 Marenz <marenz@users.noreply.github.com> - 0.1.0-1
 - Initial package
