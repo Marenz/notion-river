@@ -223,6 +223,19 @@ impl WindowManager {
                     .find_map(|ws| ws.root.find_frame(cmd.frame_id));
 
                 if let Some(frame) = frame {
+                    // Check if this frame has an app binding
+                    let is_bound = self
+                        .workspaces
+                        .workspaces
+                        .iter()
+                        .find_map(|ws| {
+                            let ids = ws.root.all_frame_ids();
+                            ids.iter()
+                                .position(|id| *id == cmd.frame_id)
+                                .map(|fi| self.app_bindings.is_bound(&ws.name, fi))
+                        })
+                        .unwrap_or(false);
+
                     let win = &self.windows[cmd.win_idx];
                     self.decorations.draw_tab_bar(
                         cmd.window_id,
@@ -230,6 +243,7 @@ impl WindowManager {
                         frame,
                         cmd.rect_width,
                         cmd.is_focused,
+                        is_bound,
                         cmd.fractional_scale,
                         shm,
                         compositor,

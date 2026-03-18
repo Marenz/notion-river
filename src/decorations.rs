@@ -82,6 +82,7 @@ impl DecorationManager {
         frame: &Frame,
         frame_width: i32,
         is_focused_frame: bool,
+        is_bound: bool,
         fractional_scale: f64,
         shm: &WlShm,
         compositor: &WlCompositor,
@@ -103,8 +104,9 @@ impl DecorationManager {
         }
 
         // Compute a simple hash to avoid unnecessary redraws
-        let content_hash =
-            compute_hash(frame, is_focused_frame, width) ^ (buffer_scale as u64 * 0x9e3779b9);
+        let content_hash = compute_hash(frame, is_focused_frame, width)
+            ^ (buffer_scale as u64 * 0x9e3779b9)
+            ^ (is_bound as u64 * 0x517cc1b7);
 
         let surface_to_window = &mut self.surface_to_window;
         let dec = self.decorations.entry(window_id).or_insert_with(|| {
@@ -187,6 +189,7 @@ impl DecorationManager {
                 height as usize,
                 frame,
                 is_focused_frame,
+                is_bound,
             );
 
             unsafe {
@@ -458,6 +461,7 @@ fn draw_tab_bar_pixels(
     height: usize,
     frame: &Frame,
     is_focused: bool,
+    is_bound: bool,
 ) {
     let num_tabs = frame.windows.len();
     if num_tabs == 0 {
@@ -502,13 +506,19 @@ fn draw_tab_bar_pixels(
             }
         }
 
-        // Draw title text
+        // Draw title text (with binding indicator)
         if let Some(win_ref) = frame.windows.get(tab_idx) {
-            let title = if win_ref.title.is_empty() {
+            let base_title = if win_ref.title.is_empty() {
                 &win_ref.app_id
             } else {
                 &win_ref.title
             };
+            let title = if is_bound && tab_idx == 0 {
+                format!("⊙ {base_title}")
+            } else {
+                base_title.to_string()
+            };
+            let title = &title;
             let text_color = if is_active { 0xFFFFFFFF } else { 0xFFAAAAAA };
             let padding = 4 * height / TAB_BAR_HEIGHT as usize;
             draw_text(
