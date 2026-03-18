@@ -147,12 +147,18 @@ impl WindowManager {
             let area = output.usable_rect();
             let frame_layouts = ws.root.calculate_layout(area, gap);
 
+            // Resize mode indicator color (bright orange)
+            let resize_color = parse_hex_color("#ff9e64");
+            let in_resize_mode = self.mode == crate::wm::InputMode::Resize;
+
             for (frame_id, rect) in &frame_layouts {
                 if let Some(frame) = ws.root.find_frame(*frame_id)
                     && let Some(active_win) = frame.active_window()
                 {
                     let is_focused = *frame_id == focused_frame_id;
-                    let color = if is_focused {
+                    let color = if is_focused && in_resize_mode {
+                        resize_color
+                    } else if is_focused {
                         active_color
                     } else {
                         inactive_color

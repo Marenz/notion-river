@@ -386,8 +386,24 @@ impl EmptyFrameManager {
             let fill = 0x01000000u32;
             let w = width as usize;
             let h = height as usize;
+            let radius = 6usize;
             for y in 0..h {
                 for x in 0..w {
+                    // Round all four corners
+                    let in_corner = (x < radius && y < radius && !in_rounded_corner(x, y, radius))
+                        || (w - 1 - x < radius
+                            && y < radius
+                            && !in_rounded_corner(w - 1 - x, y, radius))
+                        || (x < radius
+                            && h - 1 - y < radius
+                            && !in_rounded_corner(x, h - 1 - y, radius))
+                        || (w - 1 - x < radius
+                            && h - 1 - y < radius
+                            && !in_rounded_corner(w - 1 - x, h - 1 - y, radius));
+                    if in_corner {
+                        pixels[y * w + x] = 0x00000000;
+                        continue;
+                    }
                     let on_border =
                         y < border_w || y >= h - border_w || x < border_w || x >= w - border_w;
                     pixels[y * w + x] = if on_border { color } else { fill };
@@ -492,8 +508,24 @@ fn draw_tab_bar_pixels(
             (tab_idx + 1) * tab_width
         };
 
+        let radius = (height / 6).max(2); // corner radius
+
         for y in 0..height {
             for x in x_start..x_end {
+                // Round top corners of first and last tab
+                let in_corner = (tab_idx == 0
+                    && x - x_start < radius
+                    && y < radius
+                    && !in_rounded_corner(x - x_start, y, radius))
+                    || (tab_idx == num_tabs - 1
+                        && x_end - 1 - x < radius
+                        && y < radius
+                        && !in_rounded_corner(x_end - 1 - x, y, radius));
+                if in_corner {
+                    pixels[y * width + x] = 0x00000000;
+                    continue;
+                }
+
                 let color = if x == x_end - 1 && tab_idx < num_tabs - 1 {
                     COLOR_SEPARATOR
                 } else if y >= height - 2 && is_active {
@@ -639,6 +671,13 @@ fn draw_text(
                 0xFF000000 | (out_r.min(255) << 16) | (out_g.min(255) << 8) | out_b.min(255);
         }
     }
+}
+
+/// Check if a pixel at (dx, dy) from a corner is inside the rounded area.
+fn in_rounded_corner(dx: usize, dy: usize, radius: usize) -> bool {
+    let rx = radius as f64 - dx as f64 - 0.5;
+    let ry = radius as f64 - dy as f64 - 0.5;
+    rx * rx + ry * ry <= (radius as f64) * (radius as f64)
 }
 
 fn create_shm_file(size: usize) -> std::io::Result<std::os::fd::OwnedFd> {
