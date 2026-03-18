@@ -1,0 +1,84 @@
+{
+    "layer": "top",
+    "position": "top",
+    "height": 30,
+
+    "modules-left": ["custom/workspaces"],
+    "modules-center": ["clock"],
+    "modules-right": ["pulseaudio", "network", "cpu", "memory", "custom/swap", "disk", "tray"],
+
+    "custom/workspaces": {
+        "exec": "cat /run/user/1000/notion-river-workspaces 2>/dev/null || echo '{\"text\": \"...\"}'",
+        "return-type": "json",
+        "format": "{}",
+        "markup": true,
+        "interval": 1
+    },
+
+    "clock": {
+        "format": "{:%H:%M  %a %d. %b}",
+        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
+    },
+
+    "pulseaudio": {
+        "format": "VOL {volume}% {icon}",
+        "format-muted": "VOL MUTED",
+        "format-icons": {
+            "default": ["▁", "▂", "▃", "▄", "▅", "▆", "▇"]
+        },
+        "on-click": "pavucontrol",
+        "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%+",
+        "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%-"
+    },
+
+    "network": {
+        "format-wifi": "WIFI {signalStrength}%",
+        "format-ethernet": "↑{bandwidthUpBytes} ↓{bandwidthDownBytes}",
+        "format-disconnected": "NET off",
+        "tooltip-format": "{ifname}: {ipaddr}/{cidr}",
+        "interval": 3
+    },
+
+    "cpu": {
+        "format": "CPU {usage}% {icon}",
+        "format-icons": ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"],
+        "tooltip-format": "CPU {usage}%\n{avg_frequency}GHz",
+        "interval": 3,
+        "states": {
+            "warning": 70,
+            "critical": 90
+        }
+    },
+
+    "memory": {
+        "format": "MEM {percentage}% {icon}",
+        "format-icons": ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"],
+        "tooltip-format": "RAM {used:0.1f}G / {total:0.1f}G\nSwap {swapUsed:0.1f}G / {swapTotal:0.1f}G",
+        "states": {
+            "warning": 70,
+            "critical": 90
+        }
+    },
+
+    "custom/swap": {
+        "exec": "free -m | awk '/Swap:/{pct=int($3/$2*100); if(pct>80) cls=\"critical\"; else if(pct>50) cls=\"warning\"; else cls=\"normal\"; printf \"{\\\"text\\\":\\\"SWP %s%%\\\",\\\"class\\\":\\\"%s\\\",\\\"tooltip\\\":\\\"Swap: %dM/%dM\\\"}\\n\", pct, cls, $3, $2}'",
+        "return-type": "json",
+        "interval": 10
+    },
+
+    "disk": {
+        "format": "DSK {percentage_used}% {icon}",
+        "format-icons": ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"],
+        "tooltip-format": "Disk {used} / {total}",
+        "path": "/",
+        "interval": 30,
+        "states": {
+            "warning": 80,
+            "critical": 95
+        }
+    },
+
+    "tray": {
+        "spacing": 10
+    }
+}

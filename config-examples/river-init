@@ -1,0 +1,40 @@
+#!/bin/sh
+# River 0.4.x init script — launched via: river -c ~/.config/river/init
+# This runs as a child of River, so WAYLAND_DISPLAY is set.
+
+# ── Environment ──
+export XKB_DEFAULT_LAYOUT=de
+export XKB_DEFAULT_VARIANT=neo
+export XKB_DEFAULT_MODEL=pc105
+export XDG_CURRENT_DESKTOP=river
+export MOZ_ENABLE_WAYLAND=1
+export ELECTRON_OZONE_PLATFORM_HINT=wayland
+export ELECTRON_ENABLE_WAYLAND=1
+export RUST_LOG=info
+
+# ── Monitor configuration ──
+# kanshi auto-configures outputs based on ~/.config/kanshi/config
+# It stays running and reconfigures on hotplug.
+kanshi &
+
+# ── Volume OSD ──
+WOB_SOCK="$XDG_RUNTIME_DIR/wob.sock"
+rm -f "$WOB_SOCK"
+mkfifo "$WOB_SOCK"
+tail -f "$WOB_SOCK" | wob &
+
+# ── Background services (only start if not already running) ──
+(
+    sleep 3
+    pgrep -x waybar >/dev/null || waybar &
+    pgrep -x nm-applet >/dev/null || nm-applet --indicator &
+    pgrep -x keepassxc >/dev/null || keepassxc &
+) &
+
+# ── Start the window manager ──
+# Always restart unless killed with SIGKILL (-9).
+while true; do
+    notion-river
+    echo "notion-river exited ($?), restarting..."
+    sleep 0.5
+done

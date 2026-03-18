@@ -1,0 +1,91 @@
+# notion-river configuration — native session
+
+active_profile = "i3_neo"
+
+[general]
+physical_keys = true
+physical_layout_index = 0
+focus_follows_mouse = true
+cursor_follows_focus = true
+default_split_ratio = 0.5
+gap = 4
+border_width = 2
+
+[commands]
+terminal = "foot"
+launcher = ["rofi", "-show", "combi", "-modi", "drun,run,windows:/home/marenz/.local/bin/notion-rofi-window-mode", "-combi-modi", "windows,drun,run", "-drun-match-fields", "name,generic,exec,categories,keywords,comment"]
+
+[appearance]
+active_border = "#9b8ec4"
+inactive_border = "#2a2636"
+empty_border = "#5e5775"
+urgent_border = "#c45b84"
+tab_active = "#7c6f9b"
+tab_focused_active = "#9b8ec4"
+tab_inactive = "#1e1b26"
+tab_separator = "#5e5775"
+tab_underline_focused = "#cdb4ff"
+tab_underline_unfocused = "#7c6f9b"
+tab_text_active = "#ede8f5"
+tab_text_inactive = "#8a8399"
+empty_focused = "#7c6f9b"
+empty_unfocused = "#332e42"
+monitor_colors = ["#b4a0e5", "#a6c9a1", "#e5cfa6", "#d68ba8"]
+waybar_focused_bg = "#2a2636"
+
+# ── Workspaces ──
+# Primary monitor (HDMI-A-1)
+[[workspaces]]
+name = "main"
+output = "HDMI-A-1"
+initial_layout = "hsplit"
+
+[[workspaces]]
+name = "secondary"
+output = "HDMI-A-1"
+
+[[workspaces]]
+name = "utility"
+output = "HDMI-A-1"
+
+[[workspaces]]
+name = "steam-games"
+output = "HDMI-A-1"
+
+# Secondary monitor (DP-1, portrait/rotated)
+[[workspaces]]
+name = "social"
+output = "DP-1"
+
+[[workspaces]]
+name = "work"
+output = "DP-1"
+
+[[workspaces]]
+name = "term"
+output = "DP-1"
+
+# ── Window rules ──
+[[winprops]]
+app_id = "telegramdesktop"
+workspace = "social"
+
+[[winprops]]
+app_id = "Vivaldi.*"
+workspace = "main"
+
+[[winprops]]
+app_id = "discord"
+workspace = "social"
+
+[[winprops]]
+app_id = "keepassxc"
+workspace = "utility"
+
+[[winprops]]
+app_id = "thunderbird.*"
+workspace = "utility"
+
+[[winprops]]
+app_id = "steam_app_.*"
+floating = true

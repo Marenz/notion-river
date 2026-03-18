@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -gt 0 ]; then
+    selected="$1"
+    id=${selected%%	*}
+    [ -n "$id" ] && notion-ctl focus-window "$id" >/dev/null 2>&1 || true
+    exit 0
+fi
+
+notion-ctl list-windows | python3 -c '
+import json, sys
+try:
+    windows = json.load(sys.stdin)
+except Exception:
+    windows = []
+for w in windows:
+    title = (w.get("title") or "(untitled)").replace("\n", " ")
+    app = w.get("app_id") or ""
+    ws = w.get("workspace") or "?"
+    marker = "*" if w.get("focused") else " "
+    wid = w["id"]
+    print(f"{wid}\t[{ws}] {marker} {title} ({app})")
+'
