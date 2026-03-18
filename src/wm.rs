@@ -541,6 +541,13 @@ impl WindowManager {
 
     fn init_new_windows(&mut self) {
         for window in self.windows.iter_mut().filter(|w| w.new) {
+            log::info!(
+                "Placing window '{}' (id={}, identifier={:?}, title='{}')",
+                window.app_id,
+                window.id,
+                window.identifier.as_deref().unwrap_or("none"),
+                &window.title[..window.title.len().min(40)],
+            );
             // Try to restore window to its saved position
             let restored = self.saved_state.as_mut().and_then(|state| {
                 crate::state::match_window_to_saved_frame(
