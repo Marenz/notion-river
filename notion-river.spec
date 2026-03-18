@@ -36,10 +36,16 @@ Requires the River compositor (0.4.x+) to be installed separately.
 
 %build
 cargo build --release
+# Build River from vendored source
+cd vendor/river
+zig build -Doptimize=ReleaseSafe -Dxwayland || zig build -Doptimize=ReleaseSafe || true
+cd ../..
 
 %install
 install -Dm755 target/release/notion-river %{buildroot}%{_bindir}/notion-river
 install -Dm755 target/release/notion-ctl %{buildroot}%{_bindir}/notion-ctl
+# Include River if built
+test -f vendor/river/zig-out/bin/river && install -Dm755 vendor/river/zig-out/bin/river %{buildroot}%{_bindir}/river || true
 install -Dm644 notion-river.desktop %{buildroot}%{_datadir}/wayland-sessions/notion-river.desktop
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples
 install -Dm755 config-examples/start-river %{buildroot}%{_datadir}/notion-river/examples/start-river
@@ -50,6 +56,7 @@ install -Dm755 config-examples/notion-rofi-window-mode %{buildroot}%{_datadir}/n
 %doc README.md config.example.toml
 %{_bindir}/notion-river
 %{_bindir}/notion-ctl
+%{_bindir}/river
 %{_datadir}/wayland-sessions/notion-river.desktop
 %{_datadir}/notion-river/
 

@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install build dependencies
         run: |
@@ -29,13 +31,31 @@ jobs:
             libfreetype-dev \
             dpkg-dev \
             fakeroot \
-            debhelper
+            debhelper \
+            libwlroots-dev \
+            libevdev-dev \
+            libinput-dev \
+            libegl-dev \
+            libpixman-1-dev \
+            libxcursor-dev \
+            wayland-protocols \
+            xwayland
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build release
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.14.0"
+
+      - name: Build River
+        run: |
+          cd vendor/river
+          zig build -Doptimize=ReleaseSafe -Dxwayland || zig build -Doptimize=ReleaseSafe
+
+      - name: Build notion-river
         run: cargo build --release
 
       - name: Extract version
@@ -55,6 +75,8 @@ jobs:
 
           cp target/release/notion-river "${PKGDIR}/usr/bin/"
           cp target/release/notion-ctl "${PKGDIR}/usr/bin/"
+          # Include River binary if built
+          test -f vendor/river/zig-out/bin/river && cp vendor/river/zig-out/bin/river "${PKGDIR}/usr/bin/" || true
           cp notion-river.desktop "${PKGDIR}/usr/share/wayland-sessions/"
           cp config-examples/start-river "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"
@@ -108,14 +130,24 @@ jobs:
             rpm-build \
             cargo \
             rust \
+            zig \
             pkg-config \
             wayland-devel \
+            wayland-protocols-devel \
+            wlroots-devel \
             cairo-devel \
             pango-devel \
             libxkbcommon-devel \
-            freetype2-devel
+            freetype2-devel \
+            libevdev-devel \
+            libinput-devel \
+            Mesa-libEGL-devel \
+            libpixman-1-0-devel \
+            libXcursor-devel
 
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Extract version
         id: version

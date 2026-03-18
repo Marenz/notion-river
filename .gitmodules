@@ -1,0 +1,3 @@
+[submodule "vendor/river"]
+	path = vendor/river
+	url = https://codeberg.org/river/river.git
