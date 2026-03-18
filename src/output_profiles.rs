@@ -70,12 +70,11 @@ impl OutputProfiles {
 
         let mut assignments = HashMap::new();
         for ws in &workspaces.workspaces {
-            if let Some(oid) = ws.active_output {
-                if let Some(output) = workspaces.output(oid) {
-                    if let Some(name) = &output.name {
-                        assignments.insert(name.clone(), ws.name.clone());
-                    }
-                }
+            if let Some(oid) = ws.active_output
+                && let Some(output) = workspaces.output(oid)
+                && let Some(name) = &output.name
+            {
+                assignments.insert(name.clone(), ws.name.clone());
             }
         }
 
@@ -122,10 +121,10 @@ impl OutputProfiles {
             };
 
             // Unassign whatever is on this output
-            if let Some(&old_ws) = workspaces.output_workspace.get(&output_id) {
-                if let Some(ws) = workspaces.workspaces.iter_mut().find(|w| w.id == old_ws) {
-                    ws.active_output = None;
-                }
+            if let Some(&old_ws) = workspaces.output_workspace.get(&output_id)
+                && let Some(ws) = workspaces.workspaces.iter_mut().find(|w| w.id == old_ws)
+            {
+                ws.active_output = None;
             }
             workspaces.assign_workspace_to_output(ws_id, output_id);
         }

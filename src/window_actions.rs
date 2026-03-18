@@ -45,25 +45,25 @@ impl WindowManager {
             Action::ToggleFullscreen => {
                 let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
                 let frame_id = ws.focused_frame;
-                if let Some(frame) = ws.root.find_frame(frame_id) {
-                    if let Some(win_ref) = frame.active_window() {
-                        let wid = win_ref.window_id;
-                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
-                            if win.fullscreen {
-                                win.proxy.exit_fullscreen();
-                                win.proxy.inform_not_fullscreen();
-                                win.fullscreen = false;
-                                log::info!("Exiting fullscreen for window {wid}");
-                            } else {
-                                // Find the output proxy for the workspace's output
-                                let output_proxy =
-                                    ws.active_output.and_then(|oid| river_outputs.get(&oid.0));
-                                if let Some(output) = output_proxy {
-                                    win.proxy.fullscreen(output);
-                                    win.proxy.inform_fullscreen();
-                                    win.fullscreen = true;
-                                    log::info!("Entering fullscreen for window {wid}");
-                                }
+                if let Some(frame) = ws.root.find_frame(frame_id)
+                    && let Some(win_ref) = frame.active_window()
+                {
+                    let wid = win_ref.window_id;
+                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                        if win.fullscreen {
+                            win.proxy.exit_fullscreen();
+                            win.proxy.inform_not_fullscreen();
+                            win.fullscreen = false;
+                            log::info!("Exiting fullscreen for window {wid}");
+                        } else {
+                            // Find the output proxy for the workspace's output
+                            let output_proxy =
+                                ws.active_output.and_then(|oid| river_outputs.get(&oid.0));
+                            if let Some(output) = output_proxy {
+                                win.proxy.fullscreen(output);
+                                win.proxy.inform_fullscreen();
+                                win.fullscreen = true;
+                                log::info!("Entering fullscreen for window {wid}");
                             }
                         }
                     }
@@ -75,17 +75,16 @@ impl WindowManager {
                 let ws_idx = self.workspaces.focused_workspace.0;
                 let ws = &self.workspaces.workspaces[ws_idx];
                 let frame_id = ws.focused_frame;
-                if let Some(frame) = ws.root.find_frame(frame_id) {
-                    if let Some(win_ref) = frame.active_window() {
-                        if let Some(fi) = crate::app_bindings::AppBindings::frame_index(
-                            &self.workspaces,
-                            ws.id,
-                            frame_id,
-                        ) {
-                            self.app_bindings
-                                .toggle_binding(&win_ref.app_id, &ws.name, fi);
-                        }
-                    }
+                if let Some(frame) = ws.root.find_frame(frame_id)
+                    && let Some(win_ref) = frame.active_window()
+                    && let Some(fi) = crate::app_bindings::AppBindings::frame_index(
+                        &self.workspaces,
+                        ws.id,
+                        frame_id,
+                    )
+                {
+                    self.app_bindings
+                        .toggle_binding(&win_ref.app_id, &ws.name, fi);
                 }
             }
 
@@ -94,29 +93,28 @@ impl WindowManager {
                 let ws_idx = self.workspaces.focused_workspace.0;
                 let ws = &self.workspaces.workspaces[ws_idx];
                 let frame_id = ws.focused_frame;
-                if let Some(frame) = ws.root.find_frame(frame_id) {
-                    if let Some(win_ref) = frame.active_window() {
-                        if let Some(fi) = crate::app_bindings::AppBindings::frame_index(
-                            &self.workspaces,
-                            ws.id,
-                            frame_id,
-                        ) {
-                            self.app_bindings
-                                .bind_exclusive(&win_ref.app_id, &ws.name, fi);
-                        }
-                    }
+                if let Some(frame) = ws.root.find_frame(frame_id)
+                    && let Some(win_ref) = frame.active_window()
+                    && let Some(fi) = crate::app_bindings::AppBindings::frame_index(
+                        &self.workspaces,
+                        ws.id,
+                        frame_id,
+                    )
+                {
+                    self.app_bindings
+                        .bind_exclusive(&win_ref.app_id, &ws.name, fi);
                 }
             }
 
             Action::ToggleFloat => {
                 let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
                 let frame_id = ws.focused_frame;
-                if let Some(frame) = ws.root.find_frame(frame_id) {
-                    if let Some(win_ref) = frame.active_window() {
-                        let wid = win_ref.window_id;
-                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
-                            win.floating = !win.floating;
-                        }
+                if let Some(frame) = ws.root.find_frame(frame_id)
+                    && let Some(win_ref) = frame.active_window()
+                {
+                    let wid = win_ref.window_id;
+                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                        win.floating = !win.floating;
                     }
                 }
             }
@@ -127,39 +125,39 @@ impl WindowManager {
                 let frame_id = ws.focused_frame;
                 let gap = self.config.general.gap as i32;
 
-                if let Some(output_id) = ws.active_output {
-                    if let Some(output) = self.workspaces.output(output_id) {
-                        let area = output.usable_rect();
-                        if let Some(neighbor) = ws.root.find_neighbor(frame_id, dir, area, gap) {
-                            // Neighbor within same workspace
-                            log::info!("FocusDirection {dir:?}: {frame_id:?} -> {neighbor:?}");
-                            let ws_mut = &mut self.workspaces.workspaces[ws_idx];
-                            ws_mut.focused_frame = neighbor;
-                        } else {
-                            // No neighbor in this workspace — try adjacent monitor
-                            let frame_rect = ws
-                                .root
-                                .calculate_layout(area, gap)
-                                .into_iter()
-                                .find(|(id, _)| *id == frame_id)
-                                .map(|(_, r)| r);
+                if let Some(output_id) = ws.active_output
+                    && let Some(output) = self.workspaces.output(output_id)
+                {
+                    let area = output.usable_rect();
+                    if let Some(neighbor) = ws.root.find_neighbor(frame_id, dir, area, gap) {
+                        // Neighbor within same workspace
+                        log::info!("FocusDirection {dir:?}: {frame_id:?} -> {neighbor:?}");
+                        let ws_mut = &mut self.workspaces.workspaces[ws_idx];
+                        ws_mut.focused_frame = neighbor;
+                    } else {
+                        // No neighbor in this workspace — try adjacent monitor
+                        let frame_rect = ws
+                            .root
+                            .calculate_layout(area, gap)
+                            .into_iter()
+                            .find(|(id, _)| *id == frame_id)
+                            .map(|(_, r)| r);
 
-                            if let Some(src_rect) = frame_rect {
-                                let target =
-                                    self.find_cross_monitor_target(output_id, dir, src_rect, gap);
-                                if let Some((target_ws_id, target_frame_id)) = target {
-                                    log::info!(
-                                        "FocusDirection {dir:?}: cross-monitor to ws {} frame {target_frame_id:?}",
-                                        self.workspaces.workspaces[target_ws_id.0].name
-                                    );
-                                    self.workspaces.workspaces[target_ws_id.0].focused_frame =
-                                        target_frame_id;
-                                    self.workspaces.focused_workspace = target_ws_id;
-                                } else {
-                                    log::info!(
-                                        "FocusDirection {dir:?}: no neighbor or adjacent monitor"
-                                    );
-                                }
+                        if let Some(src_rect) = frame_rect {
+                            let target =
+                                self.find_cross_monitor_target(output_id, dir, src_rect, gap);
+                            if let Some((target_ws_id, target_frame_id)) = target {
+                                log::info!(
+                                    "FocusDirection {dir:?}: cross-monitor to ws {} frame {target_frame_id:?}",
+                                    self.workspaces.workspaces[target_ws_id.0].name
+                                );
+                                self.workspaces.workspaces[target_ws_id.0].focused_frame =
+                                    target_frame_id;
+                                self.workspaces.focused_workspace = target_ws_id;
+                            } else {
+                                log::info!(
+                                    "FocusDirection {dir:?}: no neighbor or adjacent monitor"
+                                );
                             }
                         }
                     }
@@ -205,20 +203,20 @@ impl WindowManager {
                 if let Some(target_frame_id) = same_ws_neighbor {
                     // Move within same workspace
                     let ws = &mut self.workspaces.workspaces[ws_idx];
-                    if let Some(frame) = ws.root.find_frame(frame_id) {
-                        if let Some(win_ref) = frame.active_window().cloned() {
-                            let wid = win_ref.window_id;
-                            if let Some(src) = ws.root.find_frame_mut(frame_id) {
-                                src.remove_window(wid);
-                            }
-                            if let Some(dst) = ws.root.find_frame_mut(target_frame_id) {
-                                dst.add_window(win_ref);
-                            }
-                            if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
-                                win.frame_id = Some(target_frame_id);
-                            }
-                            self.workspaces.workspaces[ws_idx].focused_frame = target_frame_id;
+                    if let Some(frame) = ws.root.find_frame(frame_id)
+                        && let Some(win_ref) = frame.active_window().cloned()
+                    {
+                        let wid = win_ref.window_id;
+                        if let Some(src) = ws.root.find_frame_mut(frame_id) {
+                            src.remove_window(wid);
                         }
+                        if let Some(dst) = ws.root.find_frame_mut(target_frame_id) {
+                            dst.add_window(win_ref);
+                        }
+                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                            win.frame_id = Some(target_frame_id);
+                        }
+                        self.workspaces.workspaces[ws_idx].focused_frame = target_frame_id;
                     }
                 } else {
                     // Try cross-monitor move
@@ -288,22 +286,22 @@ impl WindowManager {
                 let ws = &mut self.workspaces.workspaces[self.workspaces.focused_workspace.0];
                 let frame_id = ws.focused_frame;
 
-                if let Some(frame) = ws.root.find_frame(frame_id) {
-                    if let Some(win_ref) = frame.active_window().cloned() {
-                        let wid = win_ref.window_id;
-                        // Remove from current frame
-                        if let Some(src) = ws.root.find_frame_mut(frame_id) {
-                            src.remove_window(wid);
+                if let Some(frame) = ws.root.find_frame(frame_id)
+                    && let Some(win_ref) = frame.active_window().cloned()
+                {
+                    let wid = win_ref.window_id;
+                    // Remove from current frame
+                    if let Some(src) = ws.root.find_frame_mut(frame_id) {
+                        src.remove_window(wid);
+                    }
+                    // Find target workspace and add to its focused frame
+                    if let Some(target_ws) = self.workspaces.workspace_by_name_mut(&name) {
+                        let target_frame = target_ws.focused_frame;
+                        if let Some(dst) = target_ws.root.find_frame_mut(target_frame) {
+                            dst.add_window(win_ref);
                         }
-                        // Find target workspace and add to its focused frame
-                        if let Some(target_ws) = self.workspaces.workspace_by_name_mut(&name) {
-                            let target_frame = target_ws.focused_frame;
-                            if let Some(dst) = target_ws.root.find_frame_mut(target_frame) {
-                                dst.add_window(win_ref);
-                            }
-                            if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
-                                win.frame_id = Some(target_frame);
-                            }
+                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                            win.frame_id = Some(target_frame);
                         }
                     }
                 }
@@ -545,11 +543,11 @@ impl WindowManager {
         let frame_id = ws.focused_frame;
 
         // Only unsplit if frame is empty
-        if let Some(frame) = ws.root.find_frame(frame_id) {
-            if !frame.is_empty() {
-                log::info!("Cannot unsplit non-empty frame");
-                return;
-            }
+        if let Some(frame) = ws.root.find_frame(frame_id)
+            && !frame.is_empty()
+        {
+            log::info!("Cannot unsplit non-empty frame");
+            return;
         }
 
         // Get all frame IDs before removal to find a new focus target

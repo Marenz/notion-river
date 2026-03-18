@@ -148,34 +148,34 @@ impl WindowManager {
             let frame_layouts = ws.root.calculate_layout(area, gap);
 
             for (frame_id, rect) in &frame_layouts {
-                if let Some(frame) = ws.root.find_frame(*frame_id) {
-                    if let Some(active_win) = frame.active_window() {
-                        let is_focused = *frame_id == focused_frame_id;
-                        let color = if is_focused {
-                            active_color
-                        } else {
-                            inactive_color
-                        };
+                if let Some(frame) = ws.root.find_frame(*frame_id)
+                    && let Some(active_win) = frame.active_window()
+                {
+                    let is_focused = *frame_id == focused_frame_id;
+                    let color = if is_focused {
+                        active_color
+                    } else {
+                        inactive_color
+                    };
 
-                        if let Some((idx, _)) = self
-                            .windows
-                            .iter()
-                            .enumerate()
-                            .find(|(_, w)| w.id == active_win.window_id)
-                        {
-                            draw_cmds.push(DrawCmd {
-                                window_id: active_win.window_id,
-                                win_idx: idx,
-                                frame_id: *frame_id,
-                                rect_x: rect.x,
-                                rect_y: rect.y,
-                                rect_width: rect.width,
-                                rect_height: rect.height,
-                                is_focused,
-                                border_color: color,
-                                fractional_scale: output.fractional_scale(),
-                            });
-                        }
+                    if let Some((idx, _)) = self
+                        .windows
+                        .iter()
+                        .enumerate()
+                        .find(|(_, w)| w.id == active_win.window_id)
+                    {
+                        draw_cmds.push(DrawCmd {
+                            window_id: active_win.window_id,
+                            win_idx: idx,
+                            frame_id: *frame_id,
+                            rect_x: rect.x,
+                            rect_y: rect.y,
+                            rect_width: rect.width,
+                            rect_height: rect.height,
+                            is_focused,
+                            border_color: color,
+                            fractional_scale: output.fractional_scale(),
+                        });
                     }
                 }
             }
@@ -217,14 +217,14 @@ impl WindowManager {
             let area = output.usable_rect();
             let frame_layouts = ws.root.calculate_layout(area, gap);
             for (frame_id, rect) in &frame_layouts {
-                if let Some(frame) = ws.root.find_frame(*frame_id) {
-                    if frame.is_empty() {
-                        empty_cmds.push(EmptyCmd {
-                            frame_id: *frame_id,
-                            rect: *rect,
-                            is_focused: *frame_id == focused_frame_id,
-                        });
-                    }
+                if let Some(frame) = ws.root.find_frame(*frame_id)
+                    && frame.is_empty()
+                {
+                    empty_cmds.push(EmptyCmd {
+                        frame_id: *frame_id,
+                        rect: *rect,
+                        is_focused: *frame_id == focused_frame_id,
+                    });
                 }
             }
         }

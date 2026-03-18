@@ -160,6 +160,7 @@ pub struct AppearanceConfig {
 
 /// Pre-parsed ARGB8888 colors for use in pixel rendering.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Colors {
     pub tab_active: u32,
     pub tab_focused_active: u32,

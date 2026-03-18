@@ -422,15 +422,15 @@ fn bind(out: &mut Vec<BindingConfig>, mods: &str, key: &str, action: &str, args:
 /// Get bindings for a profile, falling back to built-in defaults.
 pub fn get_profile_bindings(config: &Config) -> (Vec<BindingConfig>, Vec<BindingConfig>) {
     // Check if the active profile has custom bindings in config
-    if let Some(profile) = config.profiles.get(&config.active_profile) {
-        if !profile.bindings.is_empty() {
-            return (profile.bindings.clone(), profile.resize_bindings.clone());
-        }
+    if let Some(profile) = config.profiles.get(&config.active_profile)
+        && !profile.bindings.is_empty()
+    {
+        return (profile.bindings.clone(), profile.resize_bindings.clone());
     }
 
     // Fall back to built-in profiles
     match config.active_profile.as_str() {
         "notion" => (builtin_notion_bindings(), builtin_notion_resize_bindings()),
-        "i3_neo" | _ => (builtin_i3_neo_bindings(), builtin_i3_neo_resize_bindings()),
+        _ => (builtin_i3_neo_bindings(), builtin_i3_neo_resize_bindings()),
     }
 }

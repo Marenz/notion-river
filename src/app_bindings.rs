@@ -133,10 +133,10 @@ impl AppBindings {
         }
         // Wildcard prefix match (e.g. "steam_app_*" matches "steam_app_1086940")
         for (pattern, locs) in &self.bindings {
-            if let Some(prefix) = pattern.strip_suffix('*') {
-                if app_id.starts_with(prefix) {
-                    return Some(locs);
-                }
+            if let Some(prefix) = pattern.strip_suffix('*')
+                && app_id.starts_with(prefix)
+            {
+                return Some(locs);
             }
         }
         None
@@ -159,18 +159,17 @@ impl AppBindings {
                 .workspaces
                 .iter()
                 .find(|w| w.name == loc.workspace)
+                && ws.active_output.is_some()
             {
-                if ws.active_output.is_some() {
-                    let frame_ids = ws.root.all_frame_ids();
-                    if let Some(&fid) = frame_ids.get(loc.frame_index) {
-                        // Check if this frame already has the app
-                        let already_has = ws
-                            .root
-                            .find_frame(fid)
-                            .is_some_and(|f| f.windows.iter().any(|w| w.app_id == app_id));
-                        if !already_has {
-                            return Some((ws.id, fid));
-                        }
+                let frame_ids = ws.root.all_frame_ids();
+                if let Some(&fid) = frame_ids.get(loc.frame_index) {
+                    // Check if this frame already has the app
+                    let already_has = ws
+                        .root
+                        .find_frame(fid)
+                        .is_some_and(|f| f.windows.iter().any(|w| w.app_id == app_id));
+                    if !already_has {
+                        return Some((ws.id, fid));
                     }
                 }
             }
@@ -253,6 +252,7 @@ impl AppBindings {
     }
 
     /// Get the app_id bound to a specific frame location, if any.
+    #[allow(dead_code)]
     pub fn app_at(&self, workspace: &str, frame_index: usize) -> Option<&str> {
         for (app_id, locs) in &self.bindings {
             if locs

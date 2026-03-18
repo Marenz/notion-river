@@ -28,9 +28,9 @@ use crate::wm::AppData;
 pub const TAB_BAR_HEIGHT: i32 = 24;
 
 /// ARGB8888 colors (premultiplied alpha).
-const COLOR_TAB_ACTIVE: u32 = 0xFF4c7899;
+const COLOR_TAB_ACTIVE: u32 = 0xFF4C7899;
 const COLOR_TAB_INACTIVE: u32 = 0xFF222222;
-const COLOR_FOCUSED_ACTIVE: u32 = 0xFF5294c4;
+const COLOR_FOCUSED_ACTIVE: u32 = 0xFF5294C4;
 const COLOR_SEPARATOR: u32 = 0xFF888888;
 
 /// A decoration attached above a specific window.
@@ -75,6 +75,7 @@ impl DecorationManager {
     /// `frame` - the frame this window belongs to
     /// `frame_width` - width of the frame area
     /// `is_focused_frame` - whether this frame has focus
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_tab_bar(
         &mut self,
         window_id: u64,
@@ -216,6 +217,7 @@ impl DecorationManager {
 
     /// Given a surface protocol id and click x coordinate, return
     /// (window_id, tab_index) if this is a tab bar click.
+    #[allow(dead_code)]
     pub fn tab_click(
         &self,
         surface_id: u32,
@@ -265,7 +267,7 @@ impl DecorationManager {
 
 // ── Empty frame indicators using shell surfaces ──────────────────────────
 
-const COLOR_EMPTY_FOCUSED: u32 = 0xFF4c7899;
+const COLOR_EMPTY_FOCUSED: u32 = 0xFF4C7899;
 const COLOR_EMPTY_UNFOCUSED: u32 = 0xFF444444;
 
 /// A shell surface indicator for an empty frame.
@@ -298,6 +300,7 @@ impl EmptyFrameManager {
     }
 
     /// Draw an empty frame border indicator.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_empty_frame(
         &mut self,
         frame_id: FrameId,
@@ -538,6 +541,7 @@ fn draw_tab_bar_pixels(
 // ── Font rendering via Cairo + Pango (same stack as waybar/GTK) ──────────
 
 /// Render text using cairo+pango for identical quality to waybar.
+#[allow(clippy::too_many_arguments)]
 fn draw_text(
     pixels: &mut [u32],
     stride: usize,
@@ -600,7 +604,7 @@ fn draw_text(
 
     for row in 0..height {
         for col in 0..width {
-            let src_offset = row * cairo_stride as usize + col * 4;
+            let src_offset = row * cairo_stride + col * 4;
             if src_offset + 3 >= surface_data.len() {
                 continue;
             }

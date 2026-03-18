@@ -238,20 +238,20 @@ impl SplitNode {
             SplitNode::Leaf(_) => false,
             SplitNode::Split { first, second, .. } => {
                 // Check if first child is the target leaf
-                if let SplitNode::Leaf(frame) = first.as_ref() {
-                    if frame.id == target_id && frame.is_empty() {
-                        let sibling = std::mem::replace(second.as_mut(), SplitNode::single_frame());
-                        *self = sibling;
-                        return true;
-                    }
+                if let SplitNode::Leaf(frame) = first.as_ref()
+                    && frame.id == target_id && frame.is_empty()
+                {
+                    let sibling = std::mem::replace(second.as_mut(), SplitNode::single_frame());
+                    *self = sibling;
+                    return true;
                 }
                 // Check if second child is the target leaf
-                if let SplitNode::Leaf(frame) = second.as_ref() {
-                    if frame.id == target_id && frame.is_empty() {
-                        let sibling = std::mem::replace(first.as_mut(), SplitNode::single_frame());
-                        *self = sibling;
-                        return true;
-                    }
+                if let SplitNode::Leaf(frame) = second.as_ref()
+                    && frame.id == target_id && frame.is_empty()
+                {
+                    let sibling = std::mem::replace(first.as_mut(), SplitNode::single_frame());
+                    *self = sibling;
+                    return true;
                 }
                 // Recurse
                 first.remove_frame(target_id) || second.remove_frame(target_id)

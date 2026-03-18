@@ -32,35 +32,35 @@ impl WindowManager {
                 .iter()
                 .find_map(|ws| ws.root.find_frame_with_window(window_id));
 
-            if let Some(src_fid) = source_frame_id {
-                if src_fid != target_frame_id {
-                    let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
-                        ws.root.find_frame(src_fid).and_then(|f| {
-                            f.windows.iter().find(|w| w.window_id == window_id).cloned()
-                        })
-                    });
+            if let Some(src_fid) = source_frame_id
+                && src_fid != target_frame_id
+            {
+                let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
+                    ws.root.find_frame(src_fid).and_then(|f| {
+                        f.windows.iter().find(|w| w.window_id == window_id).cloned()
+                    })
+                });
 
-                    if let Some(win_ref) = win_ref {
-                        for ws in &mut self.workspaces.workspaces {
-                            if let Some(frame) = ws.root.find_frame_mut(src_fid) {
-                                frame.remove_window(window_id);
-                            }
+                if let Some(win_ref) = win_ref {
+                    for ws in &mut self.workspaces.workspaces {
+                        if let Some(frame) = ws.root.find_frame_mut(src_fid) {
+                            frame.remove_window(window_id);
                         }
-                        let ws = &mut self.workspaces.workspaces[ws_id.0];
-                        if let Some(frame) = ws.root.find_frame_mut(target_frame_id) {
-                            frame.add_window(win_ref);
-                        }
-                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == window_id) {
-                            win.frame_id = Some(target_frame_id);
-                        }
-                        ws.focused_frame = target_frame_id;
-                        log::info!(
-                            "Pointer drag moved window {} from {:?} to {:?}",
-                            window_id,
-                            src_fid,
-                            target_frame_id
-                        );
                     }
+                    let ws = &mut self.workspaces.workspaces[ws_id.0];
+                    if let Some(frame) = ws.root.find_frame_mut(target_frame_id) {
+                        frame.add_window(win_ref);
+                    }
+                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == window_id) {
+                        win.frame_id = Some(target_frame_id);
+                    }
+                    ws.focused_frame = target_frame_id;
+                    log::info!(
+                        "Pointer drag moved window {} from {:?} to {:?}",
+                        window_id,
+                        src_fid,
+                        target_frame_id
+                    );
                 }
             }
         }

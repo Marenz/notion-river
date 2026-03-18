@@ -247,10 +247,10 @@ impl WorkspaceManager {
 
             if let Some(ws_id) = ws_id {
                 // Unassign whatever was on this output before
-                if let Some(&old_ws) = self.output_workspace.get(output_id) {
-                    if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws) {
-                        ws.active_output = None;
-                    }
+                if let Some(&old_ws) = self.output_workspace.get(output_id)
+                    && let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws)
+                {
+                    ws.active_output = None;
                 }
                 self.assign_workspace_to_output(ws_id, *output_id);
                 log::info!(
@@ -300,10 +300,10 @@ impl WorkspaceManager {
 
         // Unassign whatever workspace is currently on that output
         let displaced_ws: Option<WorkspaceId> = self.output_workspace.get(&target_output).copied();
-        if let Some(old_ws_id) = displaced_ws {
-            if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws_id) {
-                ws.active_output = None;
-            }
+        if let Some(old_ws_id) = displaced_ws
+            && let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws_id)
+        {
+            ws.active_output = None;
         }
 
         // Assign target workspace to that output

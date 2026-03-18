@@ -81,6 +81,7 @@ pub enum InputMode {
 pub struct WindowManager {
     pub config: Config,
     /// Pre-parsed ARGB8888 decoration colors.
+    #[allow(dead_code)]
     pub colors: crate::config::Colors,
     pub workspaces: WorkspaceManager,
     pub windows: Vec<ManagedWindow>,
@@ -234,7 +235,7 @@ impl WindowManager {
         let saved_active_tabs = if let Some(ref state) = saved_state {
             let tabs = crate::state::restore_layout(&mut workspaces, state);
             // Store visible workspace preferences for later (after output names arrive)
-            workspaces.saved_visible = state.visible_workspaces.iter().cloned().collect();
+            workspaces.saved_visible = state.visible_workspaces.to_vec();
             tabs
         } else {
             std::collections::HashMap::new()
@@ -342,7 +343,7 @@ impl WindowManager {
                         .map(|fid| (ws.id, fid, ws.active_output.is_some()))
                 });
 
-                let (current_ws, current_frame, currently_visible) = match current {
+                let (_current_ws, current_frame, currently_visible) = match current {
                     Some(c) => c,
                     None => continue,
                 };
@@ -359,18 +360,16 @@ impl WindowManager {
                         .workspaces
                         .iter()
                         .find(|w| w.name == loc.workspace)?;
-                    if !ws.active_output.is_some() {
-                        return None;
-                    }
+                    ws.active_output?;
                     let frame_ids = ws.root.all_frame_ids();
                     let fid = *frame_ids.get(loc.frame_index)?;
                     Some((ws.id.0, fid))
                 });
 
-                if let Some((dst_ws_idx, dst_fid)) = target {
-                    if dst_fid != current_frame {
-                        moves.push((wid, current_frame, dst_ws_idx, dst_fid));
-                    }
+                if let Some((dst_ws_idx, dst_fid)) = target
+                    && dst_fid != current_frame
+                {
+                    moves.push((wid, current_frame, dst_ws_idx, dst_fid));
                 }
             }
         }
@@ -480,10 +479,10 @@ impl WindowManager {
             }
 
             if let Some(ws) = self.workspaces.workspaces.get_mut(ws_id.0) {
-                if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                    if let Some(tab_idx) = frame.windows.iter().position(|w| w.window_id == id) {
-                        frame.active_tab = tab_idx;
-                    }
+                if let Some(frame) = ws.root.find_frame_mut(frame_id)
+                    && let Some(tab_idx) = frame.windows.iter().position(|w| w.window_id == id)
+                {
+                    frame.active_tab = tab_idx;
                 }
                 ws.focused_frame = frame_id;
             }
@@ -568,31 +567,27 @@ impl WindowManager {
             .workspaces
             .get(self.workspaces.focused_workspace.0)
             .is_some_and(|ws| ws.active_output.is_some());
-        if !focused_visible {
-            if let Some(ws) = self
+        if !focused_visible
+            && let Some(ws) = self
                 .workspaces
                 .workspaces
                 .iter()
                 .find(|ws| ws.active_output.is_some())
-            {
-                self.workspaces.focused_workspace = ws.id;
-            }
+        {
+            self.workspaces.focused_workspace = ws.id;
         }
     }
 
     fn sync_window_titles(&mut self) {
         for win in &self.windows {
             for ws in &mut self.workspaces.workspaces {
-                if let Some(frame_id) = ws.root.find_frame_with_window(win.id) {
-                    if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                        if let Some(wref) = frame.windows.iter_mut().find(|w| w.window_id == win.id)
-                        {
-                            if wref.title != win.title || wref.app_id != win.app_id {
-                                wref.title = win.title.clone();
-                                wref.app_id = win.app_id.clone();
-                            }
-                        }
-                    }
+                if let Some(frame_id) = ws.root.find_frame_with_window(win.id)
+                    && let Some(frame) = ws.root.find_frame_mut(frame_id)
+                    && let Some(wref) = frame.windows.iter_mut().find(|w| w.window_id == win.id)
+                    && (wref.title != win.title || wref.app_id != win.app_id)
+                {
+                    wref.title = win.title.clone();
+                    wref.app_id = win.app_id.clone();
                 }
             }
         }
@@ -690,10 +685,10 @@ impl WindowManager {
         if !self.saved_active_tabs.is_empty() {
             for (frame_id, active_tab) in &self.saved_active_tabs {
                 for ws in &mut self.workspaces.workspaces {
-                    if let Some(frame) = ws.root.find_frame_mut(*frame_id) {
-                        if *active_tab < frame.windows.len() {
-                            frame.active_tab = *active_tab;
-                        }
+                    if let Some(frame) = ws.root.find_frame_mut(*frame_id)
+                        && *active_tab < frame.windows.len()
+                    {
+                        frame.active_tab = *active_tab;
                     }
                 }
             }
@@ -859,12 +854,11 @@ impl WindowManager {
                 // Find which frame this window is in and make it the active tab
                 for ws in &mut self.workspaces.workspaces {
                     if let Some(frame_id) = ws.root.find_frame_with_window(*wid) {
-                        if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                            if let Some(tab_idx) =
+                        if let Some(frame) = ws.root.find_frame_mut(frame_id)
+                            && let Some(tab_idx) =
                                 frame.windows.iter().position(|w| w.window_id == *wid)
-                            {
-                                frame.active_tab = tab_idx;
-                            }
+                        {
+                            frame.active_tab = tab_idx;
                         }
                         ws.focused_frame = frame_id;
                         self.workspaces.focused_workspace = ws.id;
@@ -913,10 +907,10 @@ impl WindowManager {
         // Now clear the ops
         for seat in self.seats.values_mut() {
             if seat.op_release {
-                if let SeatOp::Resize { window_id, .. } = &seat.op {
-                    if let Some(win) = self.windows.iter().find(|w| w.id == *window_id) {
-                        win.proxy.inform_resize_end();
-                    }
+                if let SeatOp::Resize { window_id, .. } = &seat.op
+                    && let Some(win) = self.windows.iter().find(|w| w.id == *window_id)
+                {
+                    win.proxy.inform_resize_end();
                 }
                 seat.proxy.op_end();
                 seat.op = SeatOp::None;

@@ -119,11 +119,11 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 // Process pending tab click before manage
                 if let Some((ws_idx, frame_id, tab_index)) = state.pending_tab_click.take() {
                     if let Some(ws) = state.wm.workspaces.workspaces.get_mut(ws_idx) {
-                        if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                            if tab_index < frame.windows.len() {
-                                log::info!("Tab click: frame {:?} tab {}", frame_id, tab_index);
-                                frame.active_tab = tab_index;
-                            }
+                        if let Some(frame) = ws.root.find_frame_mut(frame_id)
+                            && tab_index < frame.windows.len()
+                        {
+                            log::info!("Tab click: frame {:?} tab {}", frame_id, tab_index);
+                            frame.active_tab = tab_index;
                         }
                         ws.focused_frame = frame_id;
                         state.wm.workspaces.focused_workspace = ws.id;
@@ -230,18 +230,18 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     && max_height == min_height;
                 let is_small =
                     max_width > 0 && max_width < 600 && max_height > 0 && max_height < 400;
-                if is_fixed || is_small {
-                    if !window.floating {
-                        window.floating = true;
-                        log::info!(
-                            "Auto-floating window {} ({}x{}-{}x{})",
-                            window.id,
-                            min_width,
-                            min_height,
-                            max_width,
-                            max_height
-                        );
-                    }
+                if (is_fixed || is_small)
+                    && !window.floating
+                {
+                    window.floating = true;
+                    log::info!(
+                        "Auto-floating window {} ({}x{}-{}x{})",
+                        window.id,
+                        min_width,
+                        min_height,
+                        max_width,
+                        max_height
+                    );
                 }
             }
             Event::AppId { app_id } => {
@@ -637,10 +637,10 @@ impl Dispatch<WlOutput, u32> for AppData {
             }
             Event::Scale { factor } => {
                 log::info!("wl_output global {} scale: {factor}", data);
-                if let Some(&oid) = state.wl_output_map.get(data) {
-                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                        output.scale = factor;
-                    }
+                if let Some(&oid) = state.wl_output_map.get(data)
+                    && let Some(output) = state.wm.workspaces.output_mut(oid)
+                {
+                    output.scale = factor;
                 }
                 // Trigger re-render so decorations pick up the new scale
                 if let Some(wm_proxy) = &state.river_wm {
@@ -649,11 +649,11 @@ impl Dispatch<WlOutput, u32> for AppData {
             }
             Event::Mode { width, height, .. } => {
                 log::info!("wl_output global {} mode: {width}x{height}", data);
-                if let Some(&oid) = state.wl_output_map.get(data) {
-                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                        output.physical_width = width;
-                        output.physical_height = height;
-                    }
+                if let Some(&oid) = state.wl_output_map.get(data)
+                    && let Some(output) = state.wm.workspaces.output_mut(oid)
+                {
+                    output.physical_width = width;
+                    output.physical_height = height;
                 }
                 if let Some(wm_proxy) = &state.river_wm {
                     wm_proxy.manage_dirty();
@@ -798,15 +798,15 @@ impl Dispatch<wayland_client::protocol::wl_pointer::WlPointer, ()> for AppData {
                                 Some((ws.id, frame_id, frame.windows.len(), rect.width))
                             });
 
-                            if let Some((ws_id, frame_id, num_tabs, frame_width)) = tab_info {
-                                if num_tabs > 0 {
-                                    let tab_width = frame_width as f64 / num_tabs as f64;
-                                    let tab_index = (surface_x / tab_width) as usize;
-                                    let tab_index = tab_index.min(num_tabs - 1);
-                                    state.pending_tab_click = Some((ws_id.0, frame_id, tab_index));
-                                    if let Some(wm_proxy) = &state.river_wm {
-                                        wm_proxy.manage_dirty();
-                                    }
+                            if let Some((ws_id, frame_id, num_tabs, frame_width)) = tab_info
+                                && num_tabs > 0
+                            {
+                                let tab_width = frame_width as f64 / num_tabs as f64;
+                                let tab_index = (surface_x / tab_width) as usize;
+                                let tab_index = tab_index.min(num_tabs - 1);
+                                state.pending_tab_click = Some((ws_id.0, frame_id, tab_index));
+                                if let Some(wm_proxy) = &state.river_wm {
+                                    wm_proxy.manage_dirty();
                                 }
                             }
                         }
