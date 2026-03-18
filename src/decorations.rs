@@ -116,6 +116,9 @@ impl DecorationManager {
             }
         });
 
+        // Use viewport for pixel-perfect fractional scaling:
+        // buffer_scale=1, render at exact physical resolution,
+        // viewport sets the logical destination size
         if let Some(ref vp) = dec.viewport {
             dec.surface.set_buffer_scale(1);
             vp.set_destination(frame_width, TAB_BAR_HEIGHT);
@@ -148,7 +151,7 @@ impl DecorationManager {
                 }
             };
 
-            // Map the shm buffer and render directly with cairo
+            // Map and draw
             let map = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
@@ -164,9 +167,17 @@ impl DecorationManager {
                 return;
             }
 
-            // Create cairo surface directly on the shm buffer — zero-copy
-            let data = unsafe { std::slice::from_raw_parts_mut(map as *mut u8, size as usize) };
-            draw_tab_bar_cairo(data, width, height, stride, frame, is_focused_frame);
+            let pixels = unsafe {
+                std::slice::from_raw_parts_mut(map as *mut u32, (width * height) as usize)
+            };
+
+            draw_tab_bar_pixels(
+                pixels,
+                width as usize,
+                height as usize,
+                frame,
+                is_focused_frame,
+            );
 
             unsafe {
                 libc::munmap(map, size as usize);
@@ -429,110 +440,180 @@ fn compute_hash(frame: &Frame, is_focused: bool, width: i32) -> u64 {
     hasher.finish()
 }
 
-/// Draw the entire tab bar directly into the shm buffer using cairo+pango.
-/// Zero-copy: cairo renders directly into the wl_shm mmap'd memory.
-fn draw_tab_bar_cairo(
-    data: &mut [u8],
-    width: i32,
-    height: i32,
-    stride: i32,
+/// Draw the tab bar pixels.
+fn draw_tab_bar_pixels(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
     frame: &Frame,
     is_focused: bool,
 ) {
     let num_tabs = frame.windows.len();
     if num_tabs == 0 {
-        data.fill(0);
+        // Shouldn't happen (only called for windows that exist) but fill transparent
+        pixels.fill(0x00000000);
         return;
     }
 
-    let surface = match unsafe {
-        cairo::ImageSurface::create_for_data_unsafe(
-            data.as_mut_ptr(),
-            cairo::Format::ARgb32,
-            width,
-            height,
-            stride,
-        )
-    } {
-        Ok(s) => s,
-        Err(_) => return,
-    };
+    let tab_width = width / num_tabs;
+
+    for tab_idx in 0..num_tabs {
+        let is_active = tab_idx == frame.active_tab;
+        let bg = if is_active && is_focused {
+            COLOR_FOCUSED_ACTIVE
+        } else if is_active {
+            COLOR_TAB_ACTIVE
+        } else {
+            COLOR_TAB_INACTIVE
+        };
+
+        let x_start = tab_idx * tab_width;
+        let x_end = if tab_idx == num_tabs - 1 {
+            width
+        } else {
+            (tab_idx + 1) * tab_width
+        };
+
+        for y in 0..height {
+            for x in x_start..x_end {
+                let color = if x == x_end - 1 && tab_idx < num_tabs - 1 {
+                    COLOR_SEPARATOR
+                } else if y >= height - 2 && is_active {
+                    if is_focused {
+                        0xFFFFFFFF
+                    } else {
+                        0xFF888888
+                    }
+                } else {
+                    bg
+                };
+                pixels[y * width + x] = color;
+            }
+        }
+
+        // Draw title text
+        if let Some(win_ref) = frame.windows.get(tab_idx) {
+            let title = if win_ref.title.is_empty() {
+                &win_ref.app_id
+            } else {
+                &win_ref.title
+            };
+            let text_color = if is_active { 0xFFFFFFFF } else { 0xFFAAAAAA };
+            let padding = 4 * height / TAB_BAR_HEIGHT as usize;
+            draw_text(
+                pixels,
+                width,
+                height,
+                x_start + padding,
+                padding,
+                title,
+                text_color,
+                x_end.saturating_sub(padding),
+            );
+        }
+    }
+}
+
+// ── Font rendering via Cairo + Pango (same stack as waybar/GTK) ──────────
+
+/// Render text using cairo+pango for identical quality to waybar.
+fn draw_text(
+    pixels: &mut [u32],
+    stride: usize,
+    height: usize,
+    x0: usize,
+    _y0: usize,
+    text: &str,
+    color: u32,
+    x_max: usize,
+) {
+    let width = x_max - x0;
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let color_r = ((color >> 16) & 0xFF) as f64 / 255.0;
+    let color_g = ((color >> 8) & 0xFF) as f64 / 255.0;
+    let color_b = (color & 0xFF) as f64 / 255.0;
+
+    // Create a cairo image surface backed by our pixel buffer region
+    // We render into a temporary buffer then copy to the right position
+    let mut surface =
+        match cairo::ImageSurface::create(cairo::Format::ARgb32, width as i32, height as i32) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+    let cairo_stride = surface.stride() as usize;
 
     let cr = match cairo::Context::new(&surface) {
         Ok(c) => c,
         Err(_) => return,
     };
 
-    let w = width as f64;
-    let h = height as f64;
-    let tab_width = w / num_tabs as f64;
-    let padding = (4.0 * h / TAB_BAR_HEIGHT as f64).round();
+    // Set up pango layout with font size in pixels (not points)
+    let layout = pangocairo::functions::create_layout(&cr);
+    let font_size_px = (height as f64 * 0.58).max(10.0);
+    let mut font_desc = pango::FontDescription::from_string("Noto Sans Bold");
+    font_desc.set_absolute_size(font_size_px * pango::SCALE as f64);
+    layout.set_font_description(Some(&font_desc));
+    layout.set_text(text);
+    layout.set_width(width as i32 * pango::SCALE);
+    layout.set_ellipsize(pango::EllipsizeMode::End);
+    layout.set_single_paragraph_mode(true);
 
-    for tab_idx in 0..num_tabs {
-        let is_active = tab_idx == frame.active_tab;
+    // Vertically center
+    let (_, text_height) = layout.pixel_size();
+    let y_offset = ((height as i32 - text_height) / 2).max(0) as f64;
 
-        let x_start = tab_idx as f64 * tab_width;
-        let x_end = if tab_idx == num_tabs - 1 { w } else { (tab_idx + 1) as f64 * tab_width };
+    cr.move_to(0.0, y_offset);
+    cr.set_source_rgb(color_r, color_g, color_b);
+    pangocairo::functions::show_layout(&cr, &layout);
 
-        // Background
-        let (bg_r, bg_g, bg_b) = argb_to_rgb(if is_active && is_focused {
-            COLOR_FOCUSED_ACTIVE
-        } else if is_active {
-            COLOR_TAB_ACTIVE
-        } else {
-            COLOR_TAB_INACTIVE
-        });
-        cr.set_source_rgb(bg_r, bg_g, bg_b);
-        cr.rectangle(x_start, 0.0, x_end - x_start, h);
-        let _ = cr.fill();
+    drop(cr);
 
-        // Separator
-        if tab_idx < num_tabs - 1 {
-            let (sr, sg, sb) = argb_to_rgb(COLOR_SEPARATOR);
-            cr.set_source_rgb(sr, sg, sb);
-            cr.rectangle(x_end - 1.0, 0.0, 1.0, h);
-            let _ = cr.fill();
-        }
+    // Copy cairo buffer to our pixel buffer
+    let surface_data = match surface.data() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
 
-        // Active underline
-        if is_active {
-            if is_focused { cr.set_source_rgb(1.0, 1.0, 1.0); }
-            else { let (r, g, b) = argb_to_rgb(0xFF888888); cr.set_source_rgb(r, g, b); }
-            cr.rectangle(x_start, h - 2.0, x_end - x_start, 2.0);
-            let _ = cr.fill();
-        }
+    for row in 0..height {
+        for col in 0..width {
+            let src_offset = row * cairo_stride as usize + col * 4;
+            if src_offset + 3 >= surface_data.len() {
+                continue;
+            }
+            // Cairo uses native-endian ARGB (on little-endian: BGRA in memory)
+            let b = surface_data[src_offset] as u32;
+            let g = surface_data[src_offset + 1] as u32;
+            let r = surface_data[src_offset + 2] as u32;
+            let a = surface_data[src_offset + 3] as u32;
 
-        // Title text — rendered directly onto the opaque background
-        if let Some(win_ref) = frame.windows.get(tab_idx) {
-            let title = if win_ref.title.is_empty() { &win_ref.app_id } else { &win_ref.title };
+            if a == 0 {
+                continue;
+            }
 
-            let layout = pangocairo::functions::create_layout(&cr);
-            let font_size_px = (h * 0.58).max(10.0);
-            let mut font_desc = pango::FontDescription::from_string("Noto Sans Bold");
-            font_desc.set_absolute_size(font_size_px * pango::SCALE as f64);
-            layout.set_font_description(Some(&font_desc));
-            layout.set_text(title);
-            let avail = (x_end - x_start - padding * 2.0).max(0.0);
-            layout.set_width(avail as i32 * pango::SCALE);
-            layout.set_ellipsize(pango::EllipsizeMode::End);
-            layout.set_single_paragraph_mode(true);
+            let dst_x = x0 + col;
+            let dst_y = row;
+            if dst_x >= stride || dst_y >= pixels.len() / stride {
+                continue;
+            }
 
-            let (_, text_height) = layout.pixel_size();
-            let y_offset = ((height - text_height) / 2).max(0) as f64;
+            // Alpha blend onto existing background
+            let alpha = a as f32 / 255.0;
+            let bg = pixels[dst_y * stride + dst_x];
+            let bg_r = ((bg >> 16) & 0xFF) as f32;
+            let bg_g = ((bg >> 8) & 0xFF) as f32;
+            let bg_b = (bg & 0xFF) as f32;
 
-            if is_active { cr.set_source_rgb(1.0, 1.0, 1.0); }
-            else { cr.set_source_rgb(0.667, 0.667, 0.667); }
-            cr.move_to(x_start + padding, y_offset);
-            pangocairo::functions::show_layout(&cr, &layout);
+            let out_r = (r as f32 * alpha / alpha.max(0.01) * alpha + bg_r * (1.0 - alpha)) as u32;
+            let out_g = (g as f32 * alpha / alpha.max(0.01) * alpha + bg_g * (1.0 - alpha)) as u32;
+            let out_b = (b as f32 * alpha / alpha.max(0.01) * alpha + bg_b * (1.0 - alpha)) as u32;
+
+            pixels[dst_y * stride + dst_x] =
+                0xFF000000 | (out_r.min(255) << 16) | (out_g.min(255) << 8) | out_b.min(255);
         }
     }
-}
-
-fn argb_to_rgb(color: u32) -> (f64, f64, f64) {
-    let r = ((color >> 16) & 0xFF) as f64 / 255.0;
-    let g = ((color >> 8) & 0xFF) as f64 / 255.0;
-    let b = (color & 0xFF) as f64 / 255.0;
-    (r, g, b)
 }
 
 fn create_shm_file(size: usize) -> std::io::Result<std::os::fd::OwnedFd> {
