@@ -561,6 +561,10 @@ impl Dispatch<WlOutput, u32> for AppData {
                         output.scale = factor;
                     }
                 }
+                // Trigger re-render so decorations pick up the new scale
+                if let Some(wm_proxy) = &state.river_wm {
+                    wm_proxy.manage_dirty();
+                }
             }
             Event::Mode { width, height, .. } => {
                 log::info!("wl_output global {} mode: {width}x{height}", data);
@@ -569,6 +573,9 @@ impl Dispatch<WlOutput, u32> for AppData {
                         output.physical_width = width;
                         output.physical_height = height;
                     }
+                }
+                if let Some(wm_proxy) = &state.river_wm {
+                    wm_proxy.manage_dirty();
                 }
             }
             _ => {}

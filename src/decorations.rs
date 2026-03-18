@@ -43,6 +43,8 @@ pub struct WindowDecoration {
     /// Last drawn width (to avoid unnecessary redraws).
     pub last_width: i32,
     pub last_hash: u64,
+    /// Scale the buffer was last rendered at.
+    pub last_scale: i32,
 }
 
 impl std::fmt::Debug for WindowDecoration {
@@ -86,7 +88,12 @@ impl DecorationManager {
         viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
         qh: &QueueHandle<AppData>,
     ) {
-        let scale = fractional_scale.max(1.0);
+        // TODO: fix scale detection timing. For now hardcode 2x for HiDPI.
+        let scale = if fractional_scale > 1.0 {
+            fractional_scale
+        } else {
+            2.0
+        };
         let buffer_scale = scale.ceil() as i32;
         let width = (frame_width as f64 * scale).round() as i32;
         let height = (TAB_BAR_HEIGHT as f64 * scale).round() as i32;
@@ -113,6 +120,7 @@ impl DecorationManager {
                 pool: None,
                 last_width: 0,
                 last_hash: 0,
+                last_scale: 0,
             }
         });
 
@@ -129,7 +137,9 @@ impl DecorationManager {
         // Position above the window
         dec.decoration.set_offset(0, -TAB_BAR_HEIGHT);
 
-        let needs_redraw = dec.last_width != width || dec.last_hash != content_hash;
+        let needs_redraw = dec.last_width != width
+            || dec.last_hash != content_hash
+            || dec.last_scale != buffer_scale;
 
         if needs_redraw {
             // Destroy old buffer/pool
@@ -194,6 +204,7 @@ impl DecorationManager {
             dec.pool = Some(pool);
             dec.last_width = width;
             dec.last_hash = content_hash;
+            dec.last_scale = buffer_scale;
         }
 
         dec.decoration.sync_next_commit();
