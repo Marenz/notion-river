@@ -125,12 +125,29 @@ impl AppBindings {
 
     /// Find the best frame to place a new window with the given app_id.
     /// Returns (WorkspaceId, FrameId) or None if no binding exists.
+    /// Find locations for an app_id, supporting wildcard prefixes (e.g. "steam_app_*").
+    fn find_locations(&self, app_id: &str) -> Option<&Vec<BoundLocation>> {
+        // Exact match first
+        if let Some(locs) = self.bindings.get(app_id) {
+            return Some(locs);
+        }
+        // Wildcard prefix match (e.g. "steam_app_*" matches "steam_app_1086940")
+        for (pattern, locs) in &self.bindings {
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                if app_id.starts_with(prefix) {
+                    return Some(locs);
+                }
+            }
+        }
+        None
+    }
+
     pub fn find_target(
         &self,
         app_id: &str,
         workspaces: &WorkspaceManager,
     ) -> Option<(WorkspaceId, FrameId)> {
-        let locations = self.bindings.get(app_id)?;
+        let locations = self.find_locations(app_id)?;
         if locations.is_empty() {
             return None;
         }
@@ -204,7 +221,7 @@ impl AppBindings {
         workspace: &str,
         frame_index: usize,
     ) -> Option<(i32, i32)> {
-        let locs = self.bindings.get(app_id)?;
+        let locs = self.find_locations(app_id)?;
         locs.iter()
             .find(|l| l.workspace == workspace && l.frame_index == frame_index)
             .and_then(|l| l.fixed_dimensions)
