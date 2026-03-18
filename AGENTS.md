@@ -30,7 +30,7 @@ lightdm is configured with a "Notion River" session (`/usr/share/wayland-session
 
 The `start-river` script sets XKB layout (de/neo), Wayland env vars, and execs River.
 
-The init script (`~/.config/river/init`) starts kanshi, waybar, nm-applet, keepassxc, and runs notion-river in a restart loop (always restarts, not just on exit 0). kanshi sets DPI at scale 2.0 for HiDPI; wp_viewporter protocol handles fractional scaling.
+The init script (`~/.config/river/init`) starts kanshi, waybar, nm-applet, keepassxc, and runs notion-river in a restart loop (always restarts, not just on exit 0). kanshi sets DPI at scale 1.5 for HiDPI (clean fraction, no wlroots blur); wp_viewporter protocol handles fractional scaling.
 
 ### Nested testing (inside X11)
 
@@ -59,7 +59,8 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `src/actions.rs` — action enum and config string parsing
 - `src/config.rs` — TOML config loading and defaults
 - `src/focus.rs` — focus-follows-mouse logic, extracted for testability with 12 unit tests
-- `src/state.rs` — state persistence: save/restore layout tree, window placement, active tabs, visible workspaces
+- `src/state.rs` — state persistence: save/restore layout tree, window placement, active tabs, visible workspaces to `~/.config/notion-river/`
+- `src/app_bindings.rs` — app-to-frame bindings: bind/unbind apps to frames, wildcard app_id matching, fixed dimensions, persistence to `~/.config/notion-river/bindings.json`, enforce_app_bindings auto-move
 - `src/ipc.rs` — waybar workspace status: writes JSON to `$XDG_RUNTIME_DIR/notion-river-workspaces`
 - `protocol/` — River protocol XML files (vendored)
 
@@ -75,20 +76,30 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Cursor-follows-focus**: pointer_warp on keyboard-triggered focus changes only.
 - **Pointer ops**: left-drag moves windows between frames (drop on release); right-drag resizes splits with dual-axis corner detection.
 - **Layer-shell**: river-layer-shell-v1 for waybar/rofi/notifications. non_exclusive_area adjusts tiling area.
-- **State persistence**: layout tree + window-to-frame mapping + visible workspaces saved to JSON on restart/signal. Windows matched by River's stable identifier, then app_id+title.
+- **State persistence**: layout tree + window-to-frame mapping + active tabs + visible workspaces saved to JSON in `~/.config/notion-river/` on restart/signal (survives reboots). Windows matched by River's stable identifier only (no app_id fallback). Active tab correctly preserved via `add_window_quiet`.
 - **Title sync**: WindowRef titles updated from ManagedWindow every manage cycle for live tab bar updates.
-- **Control IPC**: `$XDG_RUNTIME_DIR/notion-river.sock` accepts `list-windows`, `list-workspaces`, `focus-window <id>`, `switch-workspace <name>` for `notion-ctl` and rofi integration. `focus-window` switches to hidden workspaces if the target window is on one.
-- **wp_viewporter**: Wayland protocol for fractional scaling support with HiDPI (scale 2.0 via kanshi).
+- **Control IPC**: `$XDG_RUNTIME_DIR/notion-river.sock` accepts `list-windows`, `list-workspaces`, `focus-window <id>`, `switch-workspace <name>`, `bind <app_id> <workspace> <frame_path>`, `unbind <app_id>`, `set-fixed-dimensions <app_id> <w>x<h>` for `notion-ctl` and rofi integration. `focus-window` switches to hidden workspaces if the target window is on one.
+- **App bindings**: Apps can be bound to specific frames via `Super+f` (toggle) / `Super+Shift+f` (exclusive). Bindings persist in `~/.config/notion-river/bindings.json`. `enforce_app_bindings` auto-moves bound windows to visible workspace frames during manage cycle.
+- **Wildcard app_id matching**: Binding patterns like `steam_app_*` match all Steam games, useful for binding categories of apps.
+- **Fixed dimensions**: Per-binding fixed window dimensions (e.g. 1920x1080 for Steam streaming) — bound windows are forced to these dimensions regardless of frame size.
+- **Auto-float popups**: Windows with DimensionsHint are auto-floated as popup windows.
+- **Fullscreen toggle**: `Super+Return` toggles fullscreen for the focused window.
+- **Resize mode**: `Super+R` enters/exits resize mode with absolute direction semantics (Up always moves the boundary up, regardless of which side).
+- **Tab drag specificity**: Dragging a tab in the tab bar drags that specific clicked tab, not the active window.
+- **wp_viewporter**: Wayland protocol for fractional scaling support with HiDPI (scale 1.5x via kanshi).
+- **Runtime keyboard layout switching**: `Ctrl+F12` toggles between `de/neo` and `de` layouts at runtime.
 
 ## Built-in Keybinding Profiles
 
 - `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher, Super+Shift+o window switcher, Super+b/v split, Super+n/p tabs
 - `notion`: Vim-style (h/j/k/l), Super+Return terminal, Super+p launcher, Super+Shift+p window switcher, Super+s/v split, Super+Tab tabs
-- Both: media keys (XF86Audio*, XF86MonBrightness*), Super+Shift+R restart, Super+t toggle split
+- Both: media keys (XF86Audio*, XF86MonBrightness*), Super+Shift+R restart, Super+t toggle split, Super+f bind app to frame, Super+Shift+f exclusive bind, Super+Return fullscreen toggle, Super+R resize mode, Ctrl+F12 keyboard layout toggle
 
 ## Config Files
 
 - `~/.config/notion-river/config.toml` — WM config (profile, workspaces, commands, appearance)
+- `~/.config/notion-river/bindings.json` — persisted app-to-frame bindings (auto-managed, survives reboots)
+- `~/.config/notion-river/state.json` — persisted layout/window state (auto-managed, survives reboots)
 - `~/.config/river/init` — River init script (env vars, kanshi, waybar, notion-river restart loop)
 - `~/.local/bin/start-river` — Session launcher (XKB layout, env vars, exec river)
 - `~/.config/kanshi/config` — Monitor layout (position, scale, transform)
@@ -107,6 +118,8 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - Stale wayland socket locks after crashes: `rm -f /run/user/$(id -u)/wayland-*`
 - The init restart loop always restarts notion-river (not conditional on exit code). This means crashes also trigger a restart.
 - Contour terminal works under Wayland — no special flags needed.
+- Fractional scale 1.5x (kanshi) is clean — it's a simple fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or 2x.
+- XWayland support requires rebuilding River with `-Dxwayland=true`. Some apps (Steam) need it.
 
 ## HiDPI / Scaling Deep Dive
 
