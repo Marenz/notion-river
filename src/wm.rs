@@ -410,6 +410,33 @@ impl WindowManager {
                 crate::control::ControlRequest::SwitchWorkspace(name) => {
                     self.workspaces.switch_workspace(&name);
                 }
+                crate::control::ControlRequest::Bind {
+                    app_id,
+                    workspace,
+                    frame_index,
+                    dimensions,
+                } => {
+                    use crate::app_bindings::BoundLocation;
+                    let loc = BoundLocation {
+                        workspace: workspace.clone(),
+                        frame_index,
+                        fixed_dimensions: dimensions,
+                    };
+                    self.app_bindings.bindings.insert(app_id.clone(), vec![loc]);
+                    self.app_bindings.save();
+                    log::info!(
+                        "Bound '{}' to {} frame #{} dims={:?}",
+                        app_id,
+                        workspace,
+                        frame_index,
+                        dimensions
+                    );
+                }
+                crate::control::ControlRequest::Unbind(app_id) => {
+                    self.app_bindings.bindings.remove(&app_id);
+                    self.app_bindings.save();
+                    log::info!("Unbound '{}'", app_id);
+                }
                 crate::control::ControlRequest::SetFixedDimensions(app_id, dims) => {
                     // Apply to all current bindings for this app
                     if let Some(locs) = self.app_bindings.bindings.get(&app_id) {

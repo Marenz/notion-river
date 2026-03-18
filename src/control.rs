@@ -17,6 +17,13 @@ pub enum ControlRequest {
     FocusWindow(u64),
     SwitchWorkspace(String),
     SetFixedDimensions(String, Option<(i32, i32)>),
+    Bind {
+        app_id: String,
+        workspace: String,
+        frame_index: usize,
+        dimensions: Option<(i32, i32)>,
+    },
+    Unbind(String),
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -181,6 +188,58 @@ fn handle_client(
                 .lock()
                 .expect("control pending poisoned")
                 .push(ControlRequest::SwitchWorkspace(name));
+            let _ = stream.write_all(b"OK\n");
+        }
+        "bind" => {
+            // Usage: bind <app_id> <workspace> <frame_index> [WxH]
+            let Some(app_id) = parts.next() else {
+                let _ =
+                    stream.write_all(b"ERR usage: bind <app_id> <workspace> <frame_index> [WxH]\n");
+                return;
+            };
+            let Some(workspace) = parts.next() else {
+                let _ = stream.write_all(b"ERR missing workspace\n");
+                return;
+            };
+            let Some(frame_str) = parts.next() else {
+                let _ = stream.write_all(b"ERR missing frame_index\n");
+                return;
+            };
+            let frame_index = match frame_str.parse::<usize>() {
+                Ok(i) => i,
+                Err(_) => {
+                    let _ = stream.write_all(b"ERR bad frame_index\n");
+                    return;
+                }
+            };
+            let dimensions = parts.next().and_then(|d| {
+                let p: Vec<&str> = d.split('x').collect();
+                if p.len() == 2 {
+                    Some((p[0].parse::<i32>().ok()?, p[1].parse::<i32>().ok()?))
+                } else {
+                    None
+                }
+            });
+            pending
+                .lock()
+                .expect("control pending poisoned")
+                .push(ControlRequest::Bind {
+                    app_id: app_id.to_string(),
+                    workspace: workspace.to_string(),
+                    frame_index,
+                    dimensions,
+                });
+            let _ = stream.write_all(b"OK\n");
+        }
+        "unbind" => {
+            let Some(app_id) = parts.next() else {
+                let _ = stream.write_all(b"ERR missing app_id\n");
+                return;
+            };
+            pending
+                .lock()
+                .expect("control pending poisoned")
+                .push(ControlRequest::Unbind(app_id.to_string()));
             let _ = stream.write_all(b"OK\n");
         }
         "set-fixed-dimensions" => {
