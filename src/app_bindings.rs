@@ -32,10 +32,11 @@ pub struct AppBindings {
 }
 
 fn bindings_path() -> PathBuf {
-    std::env::var("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
-        .join("notion-river-bindings.json")
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.config"))
+        .join("notion-river");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("bindings.json")
 }
 
 impl AppBindings {

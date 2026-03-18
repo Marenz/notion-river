@@ -9,10 +9,11 @@ use crate::workspace::{WorkspaceId, WorkspaceManager};
 const STATE_FILE: &str = "notion-river-state.json";
 
 fn state_path() -> PathBuf {
-    std::env::var("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
-        .join(STATE_FILE)
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+        .join("notion-river");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(STATE_FILE)
 }
 
 // ── Serializable state ───────────────────────────────────────────────────
