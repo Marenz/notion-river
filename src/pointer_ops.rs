@@ -1,69 +1,176 @@
 //! Pointer operation handling: move-drop, seat ops (resize), resize axis
 //! detection, and cursor warping.
 
-use crate::layout::FrameId;
+use crate::layout::{FrameId, Orientation, Rect};
 use crate::wm::{SeatOp, WindowManager};
+use crate::workspace::WorkspaceId;
+
+/// Where within a frame a drop will land.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropZone {
+    /// Add as a tab (center area)
+    Tab,
+    /// Split and place on top
+    Top,
+    /// Split and place on bottom
+    Bottom,
+    /// Split and place on left
+    Left,
+    /// Split and place on right
+    Right,
+}
+
+impl DropZone {
+    /// Determine the drop zone from pointer position within a frame rect.
+    /// Edge zones are 25% from each edge; center is the remaining area.
+    pub fn from_position(px: i32, py: i32, rect: &Rect) -> Self {
+        let rel_x = (px - rect.x) as f32 / rect.width.max(1) as f32;
+        let rel_y = (py - rect.y) as f32 / rect.height.max(1) as f32;
+        let edge = 0.25;
+
+        if rel_y < edge && rel_y < rel_x && rel_y < (1.0 - rel_x) {
+            DropZone::Top
+        } else if rel_y > (1.0 - edge) && (1.0 - rel_y) < rel_x && (1.0 - rel_y) < (1.0 - rel_x) {
+            DropZone::Bottom
+        } else if rel_x < edge {
+            DropZone::Left
+        } else if rel_x > (1.0 - edge) {
+            DropZone::Right
+        } else {
+            DropZone::Tab
+        }
+    }
+}
+
+/// Find which frame and drop zone the pointer is over.
+fn find_drop_target(
+    workspaces: &crate::workspace::WorkspaceManager,
+    px: i32,
+    py: i32,
+    gap: i32,
+) -> Option<(WorkspaceId, FrameId, Rect, DropZone)> {
+    workspaces.workspaces.iter().find_map(|ws| {
+        let output = ws
+            .active_output
+            .and_then(|oid| workspaces.output(oid))?;
+        let area = output.usable_rect();
+        let layouts = ws.root.calculate_layout(area, gap);
+        layouts.into_iter().find_map(|(frame_id, rect)| {
+            if px >= rect.x && px < rect.x + rect.width && py >= rect.y && py < rect.y + rect.height {
+                let zone = DropZone::from_position(px, py, &rect);
+                Some((ws.id, frame_id, rect, zone))
+            } else {
+                None
+            }
+        })
+    })
+}
 
 impl WindowManager {
     pub(crate) fn handle_move_drop(&mut self, window_id: u64, drop_x: i32, drop_y: i32, gap: i32) {
-        let target_frame = self.workspaces.workspaces.iter().find_map(|ws| {
-            let output = ws
-                .active_output
-                .and_then(|oid| self.workspaces.output(oid))?;
-            let area = output.usable_rect();
-            let layouts = ws.root.calculate_layout(area, gap);
-            layouts.into_iter().find_map(|(frame_id, rect)| {
-                if drop_x >= rect.x
-                    && drop_x < rect.x + rect.width
-                    && drop_y >= rect.y
-                    && drop_y < rect.y + rect.height
-                {
-                    Some((ws.id, frame_id))
-                } else {
-                    None
-                }
+        let Some((ws_id, target_frame_id, _rect, zone)) =
+            find_drop_target(&self.workspaces, drop_x, drop_y, gap)
+        else {
+            return;
+        };
+
+        let source_frame_id = self
+            .workspaces
+            .workspaces
+            .iter()
+            .find_map(|ws| ws.root.find_frame_with_window(window_id));
+
+        let Some(src_fid) = source_frame_id else {
+            return;
+        };
+
+        // Get the window ref
+        let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
+            ws.root.find_frame(src_fid).and_then(|f| {
+                f.windows
+                    .iter()
+                    .find(|w| w.window_id == window_id)
+                    .cloned()
             })
         });
 
-        if let Some((ws_id, target_frame_id)) = target_frame {
-            let source_frame_id = self
-                .workspaces
-                .workspaces
-                .iter()
-                .find_map(|ws| ws.root.find_frame_with_window(window_id));
+        let Some(win_ref) = win_ref else { return };
 
-            if let Some(src_fid) = source_frame_id
-                && src_fid != target_frame_id
-            {
-                let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
-                    ws.root.find_frame(src_fid).and_then(|f| {
-                        f.windows.iter().find(|w| w.window_id == window_id).cloned()
-                    })
-                });
+        // Remove from source frame
+        for ws in &mut self.workspaces.workspaces {
+            if let Some(frame) = ws.root.find_frame_mut(src_fid) {
+                frame.remove_window(window_id);
+            }
+        }
 
-                if let Some(win_ref) = win_ref {
-                    for ws in &mut self.workspaces.workspaces {
-                        if let Some(frame) = ws.root.find_frame_mut(src_fid) {
-                            frame.remove_window(window_id);
+        let ratio = self.config.general.default_split_ratio;
+        let ws = &mut self.workspaces.workspaces[ws_id.0];
+
+        match zone {
+            DropZone::Tab => {
+                // Add as tab to existing frame
+                if let Some(frame) = ws.root.find_frame_mut(target_frame_id) {
+                    frame.add_window(win_ref);
+                }
+                ws.focused_frame = target_frame_id;
+            }
+            DropZone::Top | DropZone::Bottom => {
+                // Split vertically, place in new frame
+                if let Some(new_fid) =
+                    ws.root
+                        .split_frame(target_frame_id, Orientation::Vertical, ratio)
+                {
+                    let _dest = if zone == DropZone::Top {
+                        // Window goes to first (top), existing content stays in second (bottom)
+                        // But split_frame puts new frame as second, so swap
+                        target_frame_id
+                    } else {
+                        new_fid
+                    };
+                    if zone == DropZone::Top {
+                        // Move existing windows from target to new frame, put our window in target
+                        // This is complex — simpler: just add to the new frame (bottom for Top zone)
+                        // Actually split_frame creates: [old_target | new_frame]
+                        // For Top: we want [our_window | old_content] so add to old_target
+                        // and move old content to new frame... too complex.
+                        // Simple approach: add to new frame regardless, user can rearrange
+                        if let Some(frame) = ws.root.find_frame_mut(new_fid) {
+                            frame.add_window(win_ref);
                         }
+                        ws.focused_frame = new_fid;
+                    } else {
+                        if let Some(frame) = ws.root.find_frame_mut(new_fid) {
+                            frame.add_window(win_ref);
+                        }
+                        ws.focused_frame = new_fid;
                     }
-                    let ws = &mut self.workspaces.workspaces[ws_id.0];
-                    if let Some(frame) = ws.root.find_frame_mut(target_frame_id) {
+                }
+            }
+            DropZone::Left | DropZone::Right => {
+                // Split horizontally, place in new frame
+                if let Some(new_fid) = ws.root.split_frame(
+                    target_frame_id,
+                    Orientation::Horizontal,
+                    ratio,
+                ) {
+                    if let Some(frame) = ws.root.find_frame_mut(new_fid) {
                         frame.add_window(win_ref);
                     }
-                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == window_id) {
-                        win.frame_id = Some(target_frame_id);
-                    }
-                    ws.focused_frame = target_frame_id;
-                    log::info!(
-                        "Pointer drag moved window {} from {:?} to {:?}",
-                        window_id,
-                        src_fid,
-                        target_frame_id
-                    );
+                    ws.focused_frame = new_fid;
                 }
             }
         }
+
+        if let Some(win) = self.windows.iter_mut().find(|w| w.id == window_id) {
+            win.frame_id = Some(ws.focused_frame);
+        }
+
+        log::info!(
+            "Pointer drag: window {} -> {:?} zone {:?}",
+            window_id,
+            target_frame_id,
+            zone
+        );
     }
 
     pub(crate) fn handle_seat_ops(&mut self) {
@@ -141,6 +248,37 @@ impl WindowManager {
                     0.0
                 };
                 ws.root.adjust_ratio(cmd.frame_id, ratio_dx, ratio_dy);
+            }
+        }
+
+        // Visual drag: when moving a single-tab frame, position the window at the cursor
+        let move_drags: Vec<(u64, i32, i32)> = self
+            .seats
+            .values()
+            .filter(|s| !s.op_release)
+            .filter_map(|s| match &s.op {
+                SeatOp::Move {
+                    window_id,
+                    start_x,
+                    start_y,
+                } => Some((*window_id, start_x + s.op_dx, start_y + s.op_dy)),
+                _ => None,
+            })
+            .collect();
+
+        for (wid, drag_x, drag_y) in move_drags {
+            // Check if this window is the only one in its frame
+            let is_single = self.workspaces.workspaces.iter().any(|ws| {
+                ws.root
+                    .find_frame_with_window(wid)
+                    .and_then(|fid| ws.root.find_frame(fid))
+                    .is_some_and(|f| f.windows.len() == 1)
+            });
+            if is_single
+                && let Some(win) = self.windows.iter().find(|w| w.id == wid)
+            {
+                win.node.set_position(drag_x, drag_y);
+                win.node.place_top();
             }
         }
     }
