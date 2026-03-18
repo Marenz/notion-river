@@ -638,6 +638,7 @@ impl SplitNode {
             | self.adjust_ratio_axis(target_id, Orientation::Vertical, dy)
     }
 
+    #[cfg(test)]
     fn adjust_ratio_axis(&mut self, target_id: FrameId, axis: Orientation, delta: f32) -> bool {
         if delta.abs() < 0.0001 {
             return false;
