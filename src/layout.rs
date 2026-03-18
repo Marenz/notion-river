@@ -127,6 +127,11 @@ impl Frame {
         self.active_tab = self.windows.len() - 1;
     }
 
+    /// Add a window without changing the active tab (used during restore).
+    pub fn add_window_quiet(&mut self, win: WindowRef) {
+        self.windows.push(win);
+    }
+
     /// Remove a window by id. Returns the removed WindowRef if found.
     /// Adjusts active_tab to stay in bounds.
     pub fn remove_window(&mut self, window_id: u64) -> Option<WindowRef> {

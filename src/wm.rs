@@ -590,11 +590,17 @@ impl WindowManager {
                 .root
                 .find_frame_mut(frame_id)
             {
-                frame.add_window(WindowRef {
+                let win_ref = WindowRef {
                     window_id: window.id,
                     app_id: window.app_id.clone(),
                     title: window.title.clone(),
-                });
+                };
+                // Use quiet add during restore to preserve saved active_tab
+                if restored.is_some() {
+                    frame.add_window_quiet(win_ref);
+                } else {
+                    frame.add_window(win_ref);
+                }
                 window.frame_id = Some(frame_id);
             }
 
@@ -607,9 +613,21 @@ impl WindowManager {
         }
 
         // Clear saved state once all saved slots have been consumed
+        // Always apply saved active tabs (they were set during restore_layout)
+        if !self.saved_active_tabs.is_empty() {
+            for (frame_id, active_tab) in &self.saved_active_tabs {
+                for ws in &mut self.workspaces.workspaces {
+                    if let Some(frame) = ws.root.find_frame_mut(*frame_id) {
+                        if *active_tab < frame.windows.len() {
+                            frame.active_tab = *active_tab;
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(ref state) = self.saved_state {
-            // Clear saved state when all slots are consumed OR after 2
-            // manage cycles with no new windows (all windows have been placed).
+            // Clear saved state after 2 cycles with no new windows
             let had_new_windows = self.windows.iter().any(|w| w.new);
             if had_new_windows {
                 self.restore_cycles_without_new = 0;
@@ -619,16 +637,7 @@ impl WindowManager {
             if !crate::state::has_remaining_matches(state) || self.restore_cycles_without_new > 2 {
                 log::info!("All saved windows restored, clearing saved state");
                 self.saved_state = None;
-                // Apply saved active tab indices
-                for (frame_id, active_tab) in self.saved_active_tabs.drain() {
-                    for ws in &mut self.workspaces.workspaces {
-                        if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                            if active_tab < frame.windows.len() {
-                                frame.active_tab = active_tab;
-                            }
-                        }
-                    }
-                }
+                self.saved_active_tabs.clear();
             }
         }
     }
