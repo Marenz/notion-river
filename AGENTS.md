@@ -108,6 +108,51 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - The init restart loop always restarts notion-river (not conditional on exit code). This means crashes also trigger a restart.
 - Contour terminal works under Wayland — no special flags needed.
 
+## HiDPI / Scaling Deep Dive
+
+This was a hard-fought battle. Documenting for posterity.
+
+### The problem
+Tab bar text appeared blurry compared to waybar text rendered by GTK/Pango.
+
+### Root cause (discovered after many iterations)
+`wl_output.scale` and `wl_output.mode` events arrive AFTER the first manage/render cycle. On the first frame:
+- `Output.physical_width = 0`, `Output.scale = 1` (defaults)
+- `fractional_scale()` returns 1.0
+- Tab bar renders at 1x into a `buffer_scale=1` surface
+- Compositor displays this 1x surface on a 2x display → bilinear upscale = **blur**
+
+The `wl_output.scale=2` event arrives moments later, but:
+- The tab bar hash doesn't change (same frame content)
+- No re-render is triggered
+- The 1x buffer persists for the lifetime of the decoration
+
+### What didn't work
+- **fontdue** — poor kerning, no hinting, wrong spacing
+- **FreeType directly** — better but still soft compared to GTK
+- **Cairo+Pango with intermediate surface + pixel copy** — the copy step introduced alpha blending artifacts (premultiplied alpha was applied twice: `r * alpha / alpha * alpha`)
+- **Zero-copy cairo (create_for_data_unsafe)** — eliminated the copy but didn't fix the scale timing issue
+- **wp_viewporter** — River doesn't expose this protocol, so we can't render at exact fractional resolution
+- **Fractional scale 1.75x** — wlroots has a known rounding bug (#953) that causes blur at non-integer scales. Integer 2x is the only reliable option.
+- **Subpixel rendering (TARGET_LCD)** — actually makes text worse at integer 2x because RGB subpixels don't align with the 2x pixel grid
+- **Various font options (Slight/Full hinting, Subpixel/Gray antialias)** — minimal difference; the real issue was the 1x vs 2x buffer, not the font rendering settings
+
+### What worked
+1. **Integer output scale** — kanshi `scale 2` not `1.75`. Fractional scaling + wlroots = blur.
+2. **Force minimum 2x scale in decoration rendering** — `let scale = if fractional_scale > 1.0 { fractional_scale } else { 2.0 }`. This bypasses the timing issue where scale detection arrives too late.
+3. **Cairo+Pango rendering** — same stack as waybar/GTK. `set_absolute_size` for pixel-perfect font sizing. Default fontconfig options (don't override antialias/hinting).
+4. **Track `last_scale` per decoration** — force redraw when scale changes (via `manage_dirty` on `wl_output.scale` and `wl_output.mode` events).
+
+### Key architectural insight
+River's WM protocol (river-window-management-v1) operates in two phases:
+- **Manage phase**: WM sets focus, dimensions, bindings
+- **Render phase**: WM sets positions, borders, draws decorations
+
+`wl_output` events (scale, mode) arrive asynchronously between cycles. Calling `manage_dirty()` from these handlers triggers a new cycle, but the first render has already committed a 1x buffer. The `last_scale` tracking detects this and forces a re-render — but only if the scale actually changes from the default.
+
+### The 2.0 fallback
+The current fix (`else { 2.0 }`) assumes HiDPI. For 1x displays, `fractional_scale` will correctly return 1.0 from the computed `physical/logical` ratio once `wl_output.mode` arrives. The fallback only applies to the first render before scale is known. On a 1x display, this means the first render is at 2x (wastes memory but looks fine — compositor downscales). On the next cycle the correct 1.0 scale takes over. Not perfect but acceptable.
+
 ## Dependencies
 
 - `wayland-client` / `wayland-scanner` / `wayland-backend` — Wayland protocol handling
