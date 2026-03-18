@@ -105,6 +105,8 @@ pub struct WindowManager {
     pub layer_shell_has_focus: bool,
     /// IPC state for waybar workspace display.
     pub ipc: crate::ipc::IpcState,
+    /// App-to-frame bindings for window placement.
+    pub app_bindings: crate::app_bindings::AppBindings,
     /// Control socket state for window/workspace switching.
     pub control: crate::control::ControlState,
 }
@@ -251,6 +253,7 @@ impl WindowManager {
             suppress_interaction: false,
             layer_shell_has_focus: false,
             ipc: crate::ipc::IpcState::new(),
+            app_bindings: crate::app_bindings::AppBindings::load(),
             control: crate::control::ControlState::new(),
         }
     }
@@ -284,6 +287,7 @@ impl WindowManager {
 
         self.handle_pending_actions(proxy, river_outputs);
         self.handle_control_requests();
+        self.enforce_app_bindings();
         self.apply_window_management(proxy);
         self.update_binding_modes();
 
@@ -303,6 +307,94 @@ impl WindowManager {
             .update_snapshot(crate::control::build_snapshot(self));
 
         proxy.manage_finish();
+    }
+
+    /// Enforce app bindings: if a bound window is on a hidden workspace but
+    /// has a binding on a visible workspace, move it there.
+    fn enforce_app_bindings(&mut self) {
+        // Collect moves to avoid borrow issues: (window_id, src_frame_id, dst_ws_idx, dst_frame_id)
+        let mut moves: Vec<(u64, crate::layout::FrameId, usize, crate::layout::FrameId)> =
+            Vec::new();
+
+        for (app_id, locations) in &self.app_bindings.bindings {
+            // Find all windows with this app_id
+            let window_ids: Vec<u64> = self
+                .windows
+                .iter()
+                .filter(|w| w.app_id == *app_id)
+                .map(|w| w.id)
+                .collect();
+
+            for &wid in &window_ids {
+                // Find which workspace/frame this window is in
+                let current = self.workspaces.workspaces.iter().find_map(|ws| {
+                    ws.root
+                        .find_frame_with_window(wid)
+                        .map(|fid| (ws.id, fid, ws.active_output.is_some()))
+                });
+
+                let (current_ws, current_frame, currently_visible) = match current {
+                    Some(c) => c,
+                    None => continue,
+                };
+
+                // If already visible, no action needed
+                if currently_visible {
+                    continue;
+                }
+
+                // Find a visible bound frame for this app
+                let target = locations.iter().find_map(|loc| {
+                    let ws = self
+                        .workspaces
+                        .workspaces
+                        .iter()
+                        .find(|w| w.name == loc.workspace)?;
+                    if !ws.active_output.is_some() {
+                        return None;
+                    }
+                    let frame_ids = ws.root.all_frame_ids();
+                    let fid = *frame_ids.get(loc.frame_index)?;
+                    Some((ws.id.0, fid))
+                });
+
+                if let Some((dst_ws_idx, dst_fid)) = target {
+                    if dst_fid != current_frame {
+                        moves.push((wid, current_frame, dst_ws_idx, dst_fid));
+                    }
+                }
+            }
+        }
+
+        // Execute moves
+        for (wid, src_fid, dst_ws_idx, dst_fid) in moves {
+            // Get window ref
+            let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
+                ws.root
+                    .find_frame(src_fid)
+                    .and_then(|f| f.windows.iter().find(|w| w.window_id == wid).cloned())
+            });
+
+            if let Some(win_ref) = win_ref {
+                // Remove from source
+                for ws in &mut self.workspaces.workspaces {
+                    if let Some(frame) = ws.root.find_frame_mut(src_fid) {
+                        frame.remove_window(wid);
+                    }
+                }
+                // Add to destination
+                if let Some(frame) = self.workspaces.workspaces[dst_ws_idx]
+                    .root
+                    .find_frame_mut(dst_fid)
+                {
+                    frame.add_window(win_ref);
+                }
+                if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                    win.frame_id = Some(dst_fid);
+                }
+                log::info!("Auto-moved bound window {wid} to visible workspace");
+            }
+        }
     }
 
     fn handle_control_requests(&mut self) {
@@ -466,6 +558,16 @@ impl WindowManager {
                     window.app_id,
                     self.workspaces.workspaces[ws_id.0].name,
                     fid
+                );
+                (ws_id.0, fid)
+            } else if let Some((ws_id, fid)) = self
+                .app_bindings
+                .find_target(&window.app_id, &self.workspaces)
+            {
+                log::info!(
+                    "Placing window '{}' in bound frame on workspace '{}'",
+                    window.app_id,
+                    self.workspaces.workspaces[ws_id.0].name,
                 );
                 (ws_id.0, fid)
             } else {

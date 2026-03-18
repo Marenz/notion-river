@@ -6,6 +6,7 @@
 //! changes the layout — only explicit user actions (split/unsplit) do.
 
 mod actions;
+mod app_bindings;
 mod bindings;
 mod config;
 mod control;

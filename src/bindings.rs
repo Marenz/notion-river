@@ -195,6 +195,10 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     // ── Floating ──
     bind(&mut b, "super+shift", "space", "toggle_float", &[]);
 
+    // ── App bindings ──
+    bind(&mut b, "super", "f", "bind_app", &[]);
+    bind(&mut b, "super+shift", "f", "toggle_bind_app", &[]);
+
     // ── Resize mode ──
     bind(&mut b, "super", "r", "resize_mode", &[]);
 
@@ -370,6 +374,10 @@ pub fn builtin_notion_bindings() -> Vec<BindingConfig> {
 
     // ── Floating ──
     bind(&mut b, "super+shift", "f", "toggle_float", &[]);
+
+    // ── App bindings ──
+    bind(&mut b, "super", "g", "bind_app", &[]);
+    bind(&mut b, "super+shift", "g", "toggle_bind_app", &[]);
 
     // ── Resize mode ──
     bind(&mut b, "super", "r", "resize_mode", &[]);

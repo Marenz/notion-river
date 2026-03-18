@@ -70,6 +70,42 @@ impl WindowManager {
                 }
             }
 
+            Action::BindApp => {
+                let ws_idx = self.workspaces.focused_workspace.0;
+                let ws = &self.workspaces.workspaces[ws_idx];
+                let frame_id = ws.focused_frame;
+                if let Some(frame) = ws.root.find_frame(frame_id) {
+                    if let Some(win_ref) = frame.active_window() {
+                        if let Some(fi) = crate::app_bindings::AppBindings::frame_index(
+                            &self.workspaces,
+                            ws.id,
+                            frame_id,
+                        ) {
+                            self.app_bindings
+                                .bind_primary(&win_ref.app_id, &ws.name, fi);
+                        }
+                    }
+                }
+            }
+
+            Action::ToggleBindApp => {
+                let ws_idx = self.workspaces.focused_workspace.0;
+                let ws = &self.workspaces.workspaces[ws_idx];
+                let frame_id = ws.focused_frame;
+                if let Some(frame) = ws.root.find_frame(frame_id) {
+                    if let Some(win_ref) = frame.active_window() {
+                        if let Some(fi) = crate::app_bindings::AppBindings::frame_index(
+                            &self.workspaces,
+                            ws.id,
+                            frame_id,
+                        ) {
+                            self.app_bindings
+                                .toggle_additional(&win_ref.app_id, &ws.name, fi);
+                        }
+                    }
+                }
+            }
+
             Action::ToggleFloat => {
                 let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
                 let frame_id = ws.focused_frame;

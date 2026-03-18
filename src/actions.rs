@@ -13,6 +13,10 @@ pub enum Action {
     ToggleFloat,
     /// Toggle the split orientation (H↔V) of the parent of the focused frame.
     ToggleSplit,
+    /// Bind the focused window's app_id to the current frame (primary).
+    BindApp,
+    /// Toggle an additional frame binding for the focused window's app_id.
+    ToggleBindApp,
 
     // ── Focus ──
     /// Move focus to the frame in the given direction.
@@ -78,6 +82,8 @@ impl Action {
             "toggle_fullscreen" | "fullscreen" => Action::ToggleFullscreen,
             "toggle_float" | "floating" => Action::ToggleFloat,
             "toggle_split" => Action::ToggleSplit,
+            "bind_app" => Action::BindApp,
+            "toggle_bind_app" => Action::ToggleBindApp,
 
             "focus" => {
                 if let Some(dir) = args.first().and_then(|s| Direction::from_str(s)) {
