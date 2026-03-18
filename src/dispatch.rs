@@ -412,8 +412,46 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
 
         match event {
             Event::Pressed => {
+                // Check if the click is on a tab bar — if so, determine which
+                // tab's window to operate on instead of the hovered window.
+                let tab_window_id = state.wl_pointer_surface.and_then(|surface_id| {
+                    let &decoration_win_id =
+                        state.wm.decorations.surface_to_window.get(&surface_id)?;
+                    let surface_x = state.wl_pointer_surface_x;
+                    // Find the frame this decoration belongs to
+                    let (frame, frame_width) =
+                        state.wm.workspaces.workspaces.iter().find_map(|ws| {
+                            let fid = ws.root.find_frame_with_window(decoration_win_id)?;
+                            let frame = ws.root.find_frame(fid)?;
+                            let gap = state.wm.config.general.gap as i32;
+                            let output = ws
+                                .active_output
+                                .and_then(|oid| state.wm.workspaces.output(oid))?;
+                            let area = output.usable_rect();
+                            let layouts = ws.root.calculate_layout(area, gap);
+                            let (_, rect) = layouts.iter().find(|(id, _)| *id == fid)?;
+                            Some((frame, rect.width))
+                        })?;
+                    if frame.windows.len() <= 1 {
+                        return None; // single tab, use normal hovered window
+                    }
+                    let scale = state
+                        .wm
+                        .workspaces
+                        .outputs
+                        .first()
+                        .map(|o| o.fractional_scale())
+                        .unwrap_or(1.0)
+                        .max(1.0);
+                    let tab_width = (frame_width as f64 * scale) / frame.windows.len() as f64;
+                    let tab_idx = (surface_x / tab_width) as usize;
+                    let tab_idx = tab_idx.min(frame.windows.len() - 1);
+                    Some(frame.windows[tab_idx].window_id)
+                });
+
+                let effective_id = tab_window_id.or(hovered_id);
                 let hovered_win =
-                    hovered_id.and_then(|hid| state.wm.windows.iter().find(|w| w.id == hid));
+                    effective_id.and_then(|hid| state.wm.windows.iter().find(|w| w.id == hid));
 
                 // Compute the op to start (all immutable borrows)
                 let new_op = if let Some(win) = hovered_win {
