@@ -116,9 +116,6 @@ impl DecorationManager {
             }
         });
 
-        // Use viewport for pixel-perfect fractional scaling:
-        // buffer_scale=1, render at exact physical resolution,
-        // viewport sets the logical destination size
         if let Some(ref vp) = dec.viewport {
             dec.surface.set_buffer_scale(1);
             vp.set_destination(frame_width, TAB_BAR_HEIGHT);
@@ -151,7 +148,7 @@ impl DecorationManager {
                 }
             };
 
-            // Map and draw
+            // Map the shm buffer and render directly with cairo
             let map = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
@@ -167,17 +164,9 @@ impl DecorationManager {
                 return;
             }
 
-            let pixels = unsafe {
-                std::slice::from_raw_parts_mut(map as *mut u32, (width * height) as usize)
-            };
-
-            draw_tab_bar_pixels(
-                pixels,
-                width as usize,
-                height as usize,
-                frame,
-                is_focused_frame,
-            );
+            // Create cairo surface directly on the shm buffer — zero-copy
+            let data = unsafe { std::slice::from_raw_parts_mut(map as *mut u8, size as usize) };
+            draw_tab_bar_cairo(data, width, height, stride, frame, is_focused_frame);
 
             unsafe {
                 libc::munmap(map, size as usize);
@@ -198,6 +187,25 @@ impl DecorationManager {
 
         dec.decoration.sync_next_commit();
         dec.surface.commit();
+    }
+
+    /// Given a surface protocol id and click x coordinate, return
+    /// (window_id, tab_index) if this is a tab bar click.
+    pub fn tab_click(
+        &self,
+        surface_id: u32,
+        surface_x: f64,
+        num_tabs: usize,
+        frame_width: i32,
+    ) -> Option<(u64, usize)> {
+        let window_id = self.surface_to_window.get(&surface_id)?;
+        if num_tabs == 0 || frame_width <= 0 {
+            return None;
+        }
+        let tab_width = frame_width as f64 / num_tabs as f64;
+        let tab_index = (surface_x / tab_width) as usize;
+        let tab_index = tab_index.min(num_tabs - 1);
+        Some((*window_id, tab_index))
     }
 
     /// Remove decoration for a window that's gone.
@@ -421,136 +429,101 @@ fn compute_hash(frame: &Frame, is_focused: bool, width: i32) -> u64 {
     hasher.finish()
 }
 
-/// Draw the entire tab bar (background + text) using cairo+pango.
-/// Single-pass rendering — no intermediate blending step.
-fn draw_tab_bar_pixels(
-    pixels: &mut [u32],
-    width: usize,
-    height: usize,
+/// Draw the entire tab bar directly into the shm buffer using cairo+pango.
+/// Zero-copy: cairo renders directly into the wl_shm mmap'd memory.
+fn draw_tab_bar_cairo(
+    data: &mut [u8],
+    width: i32,
+    height: i32,
+    stride: i32,
     frame: &Frame,
     is_focused: bool,
 ) {
     let num_tabs = frame.windows.len();
     if num_tabs == 0 {
-        pixels.fill(0x00000000);
+        data.fill(0);
         return;
     }
 
-    // Create cairo surface over the entire tab bar
-    let mut surface =
-        match cairo::ImageSurface::create(cairo::Format::ARgb32, width as i32, height as i32) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-    {
-        let cr = match cairo::Context::new(&surface) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
-        // Apply font rendering settings
-        // Don't override font options — let fontconfig/pango pick the right
-        // settings for this display (grayscale AA at integer scale, subpixel
-        // at fractional). This matches what GTK/waybar does.
-
-        let tab_width = width / num_tabs;
-        let padding = (4.0 * height as f64 / TAB_BAR_HEIGHT as f64).round();
-
-        for tab_idx in 0..num_tabs {
-            let is_active = tab_idx == frame.active_tab;
-
-            let x_start = (tab_idx * tab_width) as f64;
-            let x_end = if tab_idx == num_tabs - 1 {
-                width as f64
-            } else {
-                ((tab_idx + 1) * tab_width) as f64
-            };
-
-            // Draw background
-            let (bg_r, bg_g, bg_b) = if is_active && is_focused {
-                argb_to_rgb(COLOR_FOCUSED_ACTIVE)
-            } else if is_active {
-                argb_to_rgb(COLOR_TAB_ACTIVE)
-            } else {
-                argb_to_rgb(COLOR_TAB_INACTIVE)
-            };
-            cr.set_source_rgb(bg_r, bg_g, bg_b);
-            cr.rectangle(x_start, 0.0, x_end - x_start, height as f64);
-            let _ = cr.fill();
-
-            // Draw separator
-            if tab_idx < num_tabs - 1 {
-                let (sr, sg, sb) = argb_to_rgb(COLOR_SEPARATOR);
-                cr.set_source_rgb(sr, sg, sb);
-                cr.rectangle(x_end - 1.0, 0.0, 1.0, height as f64);
-                let _ = cr.fill();
-            }
-
-            // Draw active indicator line
-            if is_active {
-                let (lr, lg, lb) = if is_focused {
-                    (1.0, 1.0, 1.0)
-                } else {
-                    argb_to_rgb(0xFF888888)
-                };
-                cr.set_source_rgb(lr, lg, lb);
-                cr.rectangle(x_start, height as f64 - 2.0, x_end - x_start, 2.0);
-                let _ = cr.fill();
-            }
-
-            // Draw title text directly onto the background
-            if let Some(win_ref) = frame.windows.get(tab_idx) {
-                let title = if win_ref.title.is_empty() {
-                    &win_ref.app_id
-                } else {
-                    &win_ref.title
-                };
-
-                let layout = pangocairo::functions::create_layout(&cr);
-                let font_size_px = (height as f64 * 0.58).max(10.0);
-                let mut font_desc = pango::FontDescription::from_string("Noto Sans Bold");
-                font_desc.set_absolute_size(font_size_px * pango::SCALE as f64);
-                layout.set_font_description(Some(&font_desc));
-                layout.set_text(title);
-                let avail = (x_end - x_start - padding * 2.0).max(0.0);
-                layout.set_width(avail as i32 * pango::SCALE);
-                layout.set_ellipsize(pango::EllipsizeMode::End);
-                layout.set_single_paragraph_mode(true);
-
-                let (_, text_height) = layout.pixel_size();
-                let y_offset = ((height as i32 - text_height) / 2).max(0) as f64;
-
-                if is_active {
-                    cr.set_source_rgb(1.0, 1.0, 1.0);
-                } else {
-                    cr.set_source_rgb(0.667, 0.667, 0.667);
-                }
-                cr.move_to(x_start + padding, y_offset);
-                pangocairo::functions::show_layout(&cr, &layout);
-            }
-        }
-    }
-
-    // Copy cairo surface directly to pixel buffer — no blending needed,
-    // cairo rendered everything opaque onto the background.
-    let cairo_stride = surface.stride() as usize;
-    let surface_data = match surface.data() {
-        Ok(d) => d,
+    let surface = match unsafe {
+        cairo::ImageSurface::create_for_data_unsafe(
+            data.as_mut_ptr(),
+            cairo::Format::ARgb32,
+            width,
+            height,
+            stride,
+        )
+    } {
+        Ok(s) => s,
         Err(_) => return,
     };
 
-    for row in 0..height {
-        for col in 0..width {
-            let src_offset = row * cairo_stride + col * 4;
-            if src_offset + 3 >= surface_data.len() {
-                continue;
-            }
-            let b = surface_data[src_offset] as u32;
-            let g = surface_data[src_offset + 1] as u32;
-            let r = surface_data[src_offset + 2] as u32;
-            // Fully opaque — no blending
-            pixels[row * width + col] = 0xFF000000 | (r << 16) | (g << 8) | b;
+    let cr = match cairo::Context::new(&surface) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let w = width as f64;
+    let h = height as f64;
+    let tab_width = w / num_tabs as f64;
+    let padding = (4.0 * h / TAB_BAR_HEIGHT as f64).round();
+
+    for tab_idx in 0..num_tabs {
+        let is_active = tab_idx == frame.active_tab;
+
+        let x_start = tab_idx as f64 * tab_width;
+        let x_end = if tab_idx == num_tabs - 1 { w } else { (tab_idx + 1) as f64 * tab_width };
+
+        // Background
+        let (bg_r, bg_g, bg_b) = argb_to_rgb(if is_active && is_focused {
+            COLOR_FOCUSED_ACTIVE
+        } else if is_active {
+            COLOR_TAB_ACTIVE
+        } else {
+            COLOR_TAB_INACTIVE
+        });
+        cr.set_source_rgb(bg_r, bg_g, bg_b);
+        cr.rectangle(x_start, 0.0, x_end - x_start, h);
+        let _ = cr.fill();
+
+        // Separator
+        if tab_idx < num_tabs - 1 {
+            let (sr, sg, sb) = argb_to_rgb(COLOR_SEPARATOR);
+            cr.set_source_rgb(sr, sg, sb);
+            cr.rectangle(x_end - 1.0, 0.0, 1.0, h);
+            let _ = cr.fill();
+        }
+
+        // Active underline
+        if is_active {
+            if is_focused { cr.set_source_rgb(1.0, 1.0, 1.0); }
+            else { let (r, g, b) = argb_to_rgb(0xFF888888); cr.set_source_rgb(r, g, b); }
+            cr.rectangle(x_start, h - 2.0, x_end - x_start, 2.0);
+            let _ = cr.fill();
+        }
+
+        // Title text — rendered directly onto the opaque background
+        if let Some(win_ref) = frame.windows.get(tab_idx) {
+            let title = if win_ref.title.is_empty() { &win_ref.app_id } else { &win_ref.title };
+
+            let layout = pangocairo::functions::create_layout(&cr);
+            let font_size_px = (h * 0.58).max(10.0);
+            let mut font_desc = pango::FontDescription::from_string("Noto Sans Bold");
+            font_desc.set_absolute_size(font_size_px * pango::SCALE as f64);
+            layout.set_font_description(Some(&font_desc));
+            layout.set_text(title);
+            let avail = (x_end - x_start - padding * 2.0).max(0.0);
+            layout.set_width(avail as i32 * pango::SCALE);
+            layout.set_ellipsize(pango::EllipsizeMode::End);
+            layout.set_single_paragraph_mode(true);
+
+            let (_, text_height) = layout.pixel_size();
+            let y_offset = ((height - text_height) / 2).max(0) as f64;
+
+            if is_active { cr.set_source_rgb(1.0, 1.0, 1.0); }
+            else { cr.set_source_rgb(0.667, 0.667, 0.667); }
+            cr.move_to(x_start + padding, y_offset);
+            pangocairo::functions::show_layout(&cr, &layout);
         }
     }
 }

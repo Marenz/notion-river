@@ -85,6 +85,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                 "wp_viewporter" => {
                     use crate::protocol::wp_viewporter::WpViewporter;
                     let vp = registry.bind::<WpViewporter, _, _>(name, version.min(1), qh, ());
+                    log::info!("Bound wp_viewporter");
                     state.wp_viewporter = Some(vp);
                 }
                 _ => {}
