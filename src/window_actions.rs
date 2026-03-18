@@ -71,6 +71,7 @@ impl WindowManager {
             }
 
             Action::BindApp => {
+                // Toggle: add binding if not here, remove if already here
                 let ws_idx = self.workspaces.focused_workspace.0;
                 let ws = &self.workspaces.workspaces[ws_idx];
                 let frame_id = ws.focused_frame;
@@ -82,13 +83,14 @@ impl WindowManager {
                             frame_id,
                         ) {
                             self.app_bindings
-                                .bind_primary(&win_ref.app_id, &ws.name, fi);
+                                .toggle_binding(&win_ref.app_id, &ws.name, fi);
                         }
                     }
                 }
             }
 
             Action::ToggleBindApp => {
+                // Exclusive: clear all other bindings, keep only this frame
                 let ws_idx = self.workspaces.focused_workspace.0;
                 let ws = &self.workspaces.workspaces[ws_idx];
                 let frame_id = ws.focused_frame;
@@ -100,7 +102,7 @@ impl WindowManager {
                             frame_id,
                         ) {
                             self.app_bindings
-                                .toggle_additional(&win_ref.app_id, &ws.name, fi);
+                                .bind_exclusive(&win_ref.app_id, &ws.name, fi);
                         }
                     }
                 }

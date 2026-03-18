@@ -68,30 +68,9 @@ impl AppBindings {
         }
     }
 
-    /// Set the primary binding for an app_id to the given frame.
-    /// Replaces any existing primary binding.
-    pub fn bind_primary(&mut self, app_id: &str, workspace: &str, frame_index: usize) {
-        let loc = BoundLocation {
-            workspace: workspace.to_string(),
-            frame_index,
-        };
-        let locations = self.bindings.entry(app_id.to_string()).or_default();
-        // Remove any existing binding for this workspace+frame
-        locations.retain(|l| l != &loc);
-        // Insert at front (primary)
-        locations.insert(0, loc);
-        log::info!(
-            "Bound app '{}' primary to {} frame #{}",
-            app_id,
-            workspace,
-            frame_index
-        );
-        self.save();
-    }
-
-    /// Toggle an additional binding for an app_id. If already bound to this
-    /// location, remove it. Otherwise add it.
-    pub fn toggle_additional(&mut self, app_id: &str, workspace: &str, frame_index: usize) {
+    /// Toggle binding for an app_id on this frame.
+    /// If already bound here, remove. Otherwise add.
+    pub fn toggle_binding(&mut self, app_id: &str, workspace: &str, frame_index: usize) {
         let loc = BoundLocation {
             workspace: workspace.to_string(),
             frame_index,
@@ -108,7 +87,7 @@ impl AppBindings {
         } else {
             locations.push(loc);
             log::info!(
-                "Added binding for app '{}' to {} frame #{}",
+                "Bound app '{}' to {} frame #{}",
                 app_id,
                 workspace,
                 frame_index
@@ -117,6 +96,23 @@ impl AppBindings {
         if locations.is_empty() {
             self.bindings.remove(app_id);
         }
+        self.save();
+    }
+
+    /// Clear all bindings for an app except the current frame.
+    /// If not bound here yet, binds it exclusively.
+    pub fn bind_exclusive(&mut self, app_id: &str, workspace: &str, frame_index: usize) {
+        let loc = BoundLocation {
+            workspace: workspace.to_string(),
+            frame_index,
+        };
+        self.bindings.insert(app_id.to_string(), vec![loc]);
+        log::info!(
+            "Exclusively bound app '{}' to {} frame #{}",
+            app_id,
+            workspace,
+            frame_index
+        );
         self.save();
     }
 

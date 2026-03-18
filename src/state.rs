@@ -292,19 +292,18 @@ fn find_and_consume_match(
 ) -> Option<usize> {
     match node {
         SavedNode::Leaf { windows, .. } => {
-            // Priority: 1) identifier match, 2) app_id+title, 3) app_id only
-            let pos = identifier
-                .and_then(|id| {
-                    windows
-                        .iter()
-                        .position(|w| w.identifier.as_deref() == Some(id))
-                })
-                .or_else(|| {
-                    windows
-                        .iter()
-                        .position(|w| w.app_id == app_id && w.title == title)
-                })
-                .or_else(|| windows.iter().position(|w| w.app_id == app_id));
+            // If we have an identifier, match ONLY by identifier (it's unique).
+            // Fall back to app_id+title only when no identifier is available.
+            let pos = if let Some(id) = identifier {
+                windows
+                    .iter()
+                    .position(|w| w.identifier.as_deref() == Some(id))
+            } else {
+                windows
+                    .iter()
+                    .position(|w| w.app_id == app_id && w.title == title)
+                    .or_else(|| windows.iter().position(|w| w.app_id == app_id))
+            };
             if let Some(pos) = pos {
                 windows.remove(pos); // consume the slot
                 Some(base_index)
