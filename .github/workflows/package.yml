@@ -1,0 +1,144 @@
+name: Package
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deb:
+    name: Build .deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwayland-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libxkbcommon-dev \
+            libfreetype-dev \
+            dpkg-dev \
+            fakeroot \
+            debhelper
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build .deb package
+        run: |
+          PKG=notion-river
+          VER=${{ steps.version.outputs.version }}
+          PKGDIR="${PKG}_${VER}_amd64"
+
+          mkdir -p "${PKGDIR}/DEBIAN"
+          mkdir -p "${PKGDIR}/usr/bin"
+          mkdir -p "${PKGDIR}/usr/share/wayland-sessions"
+          mkdir -p "${PKGDIR}/usr/share/notion-river/examples"
+
+          cp target/release/notion-river "${PKGDIR}/usr/bin/"
+          cp target/release/notion-ctl "${PKGDIR}/usr/bin/"
+          cp notion-river.desktop "${PKGDIR}/usr/share/wayland-sessions/"
+          cp config-examples/start-river "${PKGDIR}/usr/share/notion-river/examples/"
+          cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"
+
+          chmod 755 "${PKGDIR}/usr/bin/"*
+          chmod 755 "${PKGDIR}/usr/share/notion-river/examples/"*
+
+          INSTALLED_SIZE=$(du -sk "${PKGDIR}" | cut -f1)
+
+          cat > "${PKGDIR}/DEBIAN/control" <<EOF
+          Package: notion-river
+          Version: ${VER}
+          Architecture: amd64
+          Maintainer: Marenz <marenz@users.noreply.github.com>
+          Installed-Size: ${INSTALLED_SIZE}
+          Depends: libwayland-client0, libcairo2, libpango-1.0-0, libpangocairo-1.0-0, libxkbcommon0, libfreetype6
+          Recommends: foot, waybar, rofi-wayland
+          Section: x11
+          Priority: optional
+          Homepage: https://github.com/Marenz/notion-river
+          Description: Notion/Ion3-style static tiling window manager for River
+           notion-river is a window manager for the River Wayland compositor that
+           implements static tiling from the Notion WM. The screen layout is a
+           persistent wireframe of frames that exist independently of windows.
+           .
+           Requires the River compositor (0.4.x+) to be installed separately.
+          EOF
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' "${PKGDIR}/DEBIAN/control"
+
+          dpkg-deb --build --root-owner-group "${PKGDIR}"
+
+      - name: Upload .deb
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.deb"
+
+  rpm:
+    name: Build .rpm
+    runs-on: ubuntu-latest
+    container:
+      image: registry.opensuse.org/opensuse/tumbleweed:latest
+    steps:
+      - name: Install system tools
+        run: |
+          zypper --non-interactive install \
+            git \
+            tar \
+            gzip \
+            rpm-build \
+            cargo \
+            rust \
+            pkg-config \
+            wayland-devel \
+            cairo-devel \
+            pango-devel \
+            libxkbcommon-devel \
+            freetype2-devel
+
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare source tarball
+        run: |
+          VER=${{ steps.version.outputs.version }}
+          mkdir -p ~/rpmbuild/{SOURCES,SPECS}
+          tar czf ~/rpmbuild/SOURCES/notion-river-${VER}.tar.gz \
+            --transform "s,^,notion-river-${VER}/," \
+            --exclude='.git' --exclude='target' \
+            .
+          cp notion-river.spec ~/rpmbuild/SPECS/
+
+      - name: Build RPM
+        run: |
+          VER=${{ steps.version.outputs.version }}
+          rpmbuild -bb ~/rpmbuild/SPECS/notion-river.spec \
+            --define "version ${VER}" \
+            --define "_topdir $HOME/rpmbuild"
+
+      - name: Copy RPM to workspace
+        run: cp ~/rpmbuild/RPMS/*/*.rpm .
+
+      - name: Upload .rpm
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.rpm"

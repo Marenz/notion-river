@@ -1,0 +1,41 @@
+Source: notion-river
+Section: x11
+Priority: optional
+Maintainer: Marenz <marenz@users.noreply.github.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo (>= 1.75),
+ rustc (>= 1.75),
+ pkg-config,
+ libwayland-dev,
+ libcairo2-dev,
+ libpango1.0-dev,
+ libxkbcommon-dev,
+ libfreetype-dev,
+Standards-Version: 4.6.2
+Homepage: https://github.com/Marenz/notion-river
+Rules-Requires-Root: no
+
+Package: notion-river
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ libwayland-client0,
+ libcairo2,
+ libpango-1.0-0,
+ libpangocairo-1.0-0,
+ libxkbcommon0,
+ libfreetype6,
+Recommends:
+ foot,
+ waybar,
+ rofi-wayland,
+Description: Notion/Ion3-style static tiling window manager for River
+ notion-river is a window manager for the River Wayland compositor that
+ implements static tiling from the Notion WM. The screen layout is a
+ persistent wireframe of frames that exist independently of windows.
+ Windows are placed into frames as tabs. Opening/closing windows never
+ changes the layout — only explicit user actions (split/unsplit) do.
+ .
+ Requires the River compositor (0.4.x+) to be installed separately.

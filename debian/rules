@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+
+export CARGO_HOME = $(CURDIR)/debian/.cargo
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_install:
+	install -Dm755 target/release/notion-river $(CURDIR)/debian/notion-river/usr/bin/notion-river
+	install -Dm755 target/release/notion-ctl $(CURDIR)/debian/notion-river/usr/bin/notion-ctl
+	install -Dm644 notion-river.desktop $(CURDIR)/debian/notion-river/usr/share/wayland-sessions/notion-river.desktop
+	install -dm755 $(CURDIR)/debian/notion-river/usr/share/notion-river/examples
+	install -Dm755 config-examples/start-river $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/start-river
+	install -Dm755 config-examples/notion-rofi-window-mode $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/notion-rofi-window-mode
+
+override_dh_auto_test:
+	cargo test --release --locked
+
+override_dh_auto_clean:
+	cargo clean
+	rm -rf $(CARGO_HOME)
+
+override_dh_shlibdeps:
+	dh_shlibdeps -l/usr/lib/$(DEB_HOST_MULTIARCH)

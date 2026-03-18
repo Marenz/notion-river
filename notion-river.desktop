@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Notion River
+Comment=Notion/Ion3-style static tiling window manager for River
+Exec=start-river
+Type=Application
+DesktopNames=River
