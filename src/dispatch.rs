@@ -723,7 +723,9 @@ impl Dispatch<wayland_client::protocol::wl_pointer::WlPointer, ()> for AppData {
                 }
             }
             Event::Leave { .. } => {
-                state.wl_pointer_surface = None;
+                // Don't clear — keep the last known surface so pointer
+                // bindings can reference it (River grabs the pointer and
+                // sends Leave before the binding event arrives).
             }
             Event::Button {
                 button,
