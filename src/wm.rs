@@ -97,6 +97,8 @@ pub struct WindowManager {
     pub empty_frames: EmptyFrameManager,
     /// Saved state for window matching on restart.
     pub saved_state: Option<crate::state::SavedState>,
+    /// Manage cycles since last new window (for state restore timeout).
+    pub restore_cycles_without_new: u32,
     /// Saved active tab indices to apply after window restore.
     pub saved_active_tabs: std::collections::HashMap<FrameId, usize>,
     /// Suppress WindowInteraction for one manage cycle (after tab click).
@@ -249,6 +251,7 @@ impl WindowManager {
             decorations: DecorationManager::new(),
             empty_frames: EmptyFrameManager::new(),
             saved_state,
+            restore_cycles_without_new: 0,
             saved_active_tabs,
             suppress_interaction: false,
             layer_shell_has_focus: false,
@@ -605,7 +608,15 @@ impl WindowManager {
 
         // Clear saved state once all saved slots have been consumed
         if let Some(ref state) = self.saved_state {
-            if !crate::state::has_remaining_matches(state) {
+            // Clear saved state when all slots are consumed OR after 2
+            // manage cycles with no new windows (all windows have been placed).
+            let had_new_windows = self.windows.iter().any(|w| w.new);
+            if had_new_windows {
+                self.restore_cycles_without_new = 0;
+            } else {
+                self.restore_cycles_without_new += 1;
+            }
+            if !crate::state::has_remaining_matches(state) || self.restore_cycles_without_new > 2 {
                 log::info!("All saved windows restored, clearing saved state");
                 self.saved_state = None;
                 // Apply saved active tab indices
