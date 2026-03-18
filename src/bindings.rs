@@ -206,27 +206,27 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super+shift", "c", "reload_config", &[]);
     bind(&mut b, "super+shift", "r", "restart", &[]);
 
-    // ── Media keys (no modifier) ──
+    // ── Media keys (no modifier) — with wob OSD ──
     bind(
         &mut b,
         "",
         "XF86AudioRaiseVolume",
         "spawn",
-        &["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"],
+        &["notion-volume", "up"],
     );
     bind(
         &mut b,
         "",
         "XF86AudioLowerVolume",
         "spawn",
-        &["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"],
+        &["notion-volume", "down"],
     );
     bind(
         &mut b,
         "",
         "XF86AudioMute",
         "spawn",
-        &["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"],
+        &["notion-volume", "mute"],
     );
     bind(
         &mut b,
