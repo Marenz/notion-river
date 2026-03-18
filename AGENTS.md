@@ -61,6 +61,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `src/focus.rs` — focus-follows-mouse logic, extracted for testability with 12 unit tests
 - `src/state.rs` — state persistence: save/restore layout tree, window placement, active tabs, visible workspaces to `~/.config/notion-river/`
 - `src/app_bindings.rs` — app-to-frame bindings: bind/unbind apps to frames, wildcard app_id matching, fixed dimensions, persistence to `~/.config/notion-river/bindings.json`, enforce_app_bindings auto-move
+- `src/output_profiles.rs` — output profile management: hashes connected output names, saves/restores workspace-to-output assignments in `~/.config/notion-river/output-profiles.json`
 - `src/ipc.rs` — waybar workspace status: writes JSON to `$XDG_RUNTIME_DIR/notion-river-workspaces`
 - `protocol/` — River protocol XML files (vendored)
 
@@ -87,6 +88,9 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Resize mode**: `Super+R` enters/exits resize mode with absolute direction semantics (Up always moves the boundary up, regardless of which side).
 - **Tab drag specificity**: Dragging a tab in the tab bar drags that specific clicked tab, not the active window.
 - **wp_viewporter**: Wayland protocol for fractional scaling support with HiDPI (scale 1.5x via kanshi).
+- **Output profiles**: Per-monitor-config workspace assignment memory. Hashes connected output names into a profile key, saves workspace-to-output assignments in `~/.config/notion-river/output-profiles.json`. When the same monitor set reconnects, previous workspace assignments are restored automatically.
+- **Monitor disconnect**: Workspaces stay intact (layout preserved), they just become invisible. Focus moves to a visible workspace. No window migration or layout tearing.
+- **Monitor reconnect**: Output profile restores previous workspace-to-output assignments for the reconnected monitor set.
 - **Runtime keyboard layout switching**: `Ctrl+F12` toggles between `de/neo` and `de` layouts at runtime.
 
 ## Built-in Keybinding Profiles
@@ -100,6 +104,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `~/.config/notion-river/config.toml` — WM config (profile, workspaces, commands, appearance)
 - `~/.config/notion-river/bindings.json` — persisted app-to-frame bindings (auto-managed, survives reboots)
 - `~/.config/notion-river/state.json` — persisted layout/window state (auto-managed, survives reboots)
+- `~/.config/notion-river/output-profiles.json` — per-monitor-set workspace assignment profiles (auto-managed, hashed by connected output names)
 - `~/.config/river/init` — River init script (env vars, kanshi, waybar, notion-river restart loop)
 - `~/.local/bin/start-river` — Session launcher (XKB layout, env vars, exec river)
 - `~/.config/kanshi/config` — Monitor layout (position, scale, transform)
@@ -118,7 +123,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - Stale wayland socket locks after crashes: `rm -f /run/user/$(id -u)/wayland-*`
 - The init restart loop always restarts notion-river (not conditional on exit code). This means crashes also trigger a restart.
 - Contour terminal works under Wayland — no special flags needed.
-- Fractional scale 1.5x (kanshi) is clean — it's a simple fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or 2x.
+- Fractional scale 1.5x (kanshi) is the best fractional scale — it's a clean fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or integer scales (1x, 2x).
 - XWayland support requires rebuilding River with `-Dxwayland=true`. Some apps (Steam) need it.
 
 ## HiDPI / Scaling Deep Dive

@@ -27,7 +27,8 @@ This gives you a predictable, stable workspace layout that doesn't rearrange its
 - **Cursor-follows-focus** on keyboard navigation
 - **Cross-monitor focus and window moving** with edge-position matching
 - **Pointer drag** — left-drag moves windows between frames (drags clicked tab, not active window), right-drag resizes splits
-- **Multi-monitor** with per-output workspace assignment
+- **Multi-monitor** with per-output workspace assignment and hotplug support
+- **Monitor hotplug** — output profiles remember workspace-to-monitor assignments; disconnect preserves workspaces (layout intact, just invisible), reconnect restores previous assignments automatically
 - **Layer-shell support** — waybar, notifications, rofi overlays
 - **Waybar integration** — workspace indicators with per-monitor grouping
 - **IPC control socket** — `notion-ctl` can list/focus windows, switch workspaces, bind/unbind apps, set fixed dimensions
@@ -39,7 +40,7 @@ This gives you a predictable, stable workspace layout that doesn't rearrange its
 - **Physical key bindings** — work across keyboard layouts (Neo, Dvorak, etc.)
 - **Runtime keyboard layout switching** — `Ctrl+F12` toggles between de/neo and de
 - **Two built-in keybinding profiles** — `i3_neo` (Neo layout) and `notion` (Vim-style)
-- **State persistence** — layout, window placement, active tabs, and app bindings saved in `~/.config/notion-river/` (survives reboots). Identifier-only restore matching.
+- **State persistence** — layout, window placement, active tabs, app bindings, and output profiles saved in `~/.config/notion-river/` (survives reboots). Identifier-only restore matching.
 - **Split moves active window** — splitting a multi-tab frame moves the current window to the new frame
 - **TOML configuration**
 
@@ -208,7 +209,7 @@ notion-ctl set-fixed-dimensions <app_id> <width>x<height>
 
 ## Status
 
-Usable as a daily driver. App-to-frame bindings with wildcard matching and fixed dimensions. XWayland support for legacy apps. IPC control socket enables external tooling (rofi window switcher, app binding management). Tab bars use Cairo+Pango for crisp font rendering. HiDPI works at scale 1.5x via kanshi (clean fraction, no wlroots blur).
+Usable as a daily driver. Multi-monitor with hotplug support and output profiles. App-to-frame bindings with wildcard matching and fixed dimensions. XWayland support for legacy apps. IPC control socket enables external tooling (rofi window switcher, app binding management). Tab bars use Cairo+Pango for crisp font rendering. HiDPI works at scale 1.5x via kanshi (clean fraction, no wlroots blur).
 
 ### Planned
 
