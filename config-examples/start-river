@@ -1,9 +1,11 @@
 #!/bin/sh
 # Launch River with notion-river WM.
 
-export XKB_DEFAULT_LAYOUT=de
-export XKB_DEFAULT_VARIANT=neo
+# Two layouts: de/neo (default) and plain de. Ctrl+F12 toggles.
+export XKB_DEFAULT_LAYOUT=de,de
+export XKB_DEFAULT_VARIANT=neo,
 export XKB_DEFAULT_MODEL=pc105
+export XKB_DEFAULT_OPTIONS=grp:ctrl_f12_toggle
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=river
 export MOZ_ENABLE_WAYLAND=1

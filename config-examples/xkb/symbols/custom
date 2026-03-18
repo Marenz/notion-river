@@ -1,0 +1,5 @@
+// Ctrl+F12 toggles layout group
+partial modifier_keys
+xkb_symbols "ctrl_f12_toggle" {
+    key <FK12> {[  F12,  ISO_Next_Group  ], type[group1] = "PC_CONTROL_LEVEL2" };
+};

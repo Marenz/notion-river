@@ -1,0 +1,4 @@
+! option = symbols
+  grp:ctrl_f12_toggle = +custom(ctrl_f12_toggle)
+
+! include %S/evdev
