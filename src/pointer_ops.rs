@@ -35,9 +35,9 @@ impl WindowManager {
             if let Some(src_fid) = source_frame_id {
                 if src_fid != target_frame_id {
                     let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
-                        ws.root
-                            .find_frame(src_fid)
-                            .and_then(|f| f.active_window().cloned())
+                        ws.root.find_frame(src_fid).and_then(|f| {
+                            f.windows.iter().find(|w| w.window_id == window_id).cloned()
+                        })
                     });
 
                     if let Some(win_ref) = win_ref {
