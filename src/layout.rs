@@ -545,9 +545,93 @@ impl SplitNode {
         }
     }
 
-    /// Adjust split ratios based on pointer drag delta.
-    /// Applies dx to the nearest horizontal ancestor split, and dy to the
-    /// nearest vertical ancestor split. Both can apply independently.
+    /// Adjust the split ratio closest to the pointer position.
+    /// `area` is the output rect, `px`/`py` is the pointer position.
+    pub fn adjust_ratio_at(
+        &mut self,
+        area: Rect,
+        px: i32,
+        py: i32,
+        dx: f32,
+        dy: f32,
+        gap: i32,
+    ) -> bool {
+        match self {
+            SplitNode::Leaf(_) => false,
+            SplitNode::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => {
+                let half_gap = gap / 2;
+                // Compute the boundary position for this split
+                let boundary = match orientation {
+                    Orientation::Horizontal => {
+                        let first_w = ((area.width - gap) as f32 * *ratio) as i32;
+                        area.x + first_w + half_gap
+                    }
+                    Orientation::Vertical => {
+                        let first_h = ((area.height - gap) as f32 * *ratio) as i32;
+                        area.y + first_h + half_gap
+                    }
+                };
+
+                // Distance from pointer to this boundary
+                let dist = match orientation {
+                    Orientation::Horizontal => (px - boundary).abs(),
+                    Orientation::Vertical => (py - boundary).abs(),
+                };
+
+                // Compute child areas
+                let (first_area, second_area) = match orientation {
+                    Orientation::Horizontal => {
+                        let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                        let sw = area.width - gap - fw;
+                        (
+                            Rect::new(area.x, area.y, fw, area.height),
+                            Rect::new(area.x + fw + gap, area.y, sw, area.height),
+                        )
+                    }
+                    Orientation::Vertical => {
+                        let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                        let sh = area.height - gap - fh;
+                        (
+                            Rect::new(area.x, area.y, area.width, fh),
+                            Rect::new(area.x, area.y + fh + gap, area.width, sh),
+                        )
+                    }
+                };
+
+                // Try children first — they might have a closer boundary
+                let child_handled =
+                    first.adjust_ratio_at(first_area, px, py, dx, dy, gap)
+                        || second.adjust_ratio_at(second_area, px, py, dx, dy, gap);
+
+                if child_handled {
+                    return true;
+                }
+
+                // No child handled it — check if we should
+                // Only adjust if pointer is within threshold of our boundary
+                let threshold = gap + 40;
+                if dist < threshold {
+                    let delta = match orientation {
+                        Orientation::Horizontal => dx,
+                        Orientation::Vertical => dy,
+                    };
+                    if delta.abs() > 0.0001 {
+                        *ratio = (*ratio + delta).clamp(0.1, 0.9);
+                        return true;
+                    }
+                }
+
+                false
+            }
+        }
+    }
+
+    /// Legacy: adjust ratio by frame id (for keyboard resize mode).
     pub fn adjust_ratio(&mut self, target_id: FrameId, dx: f32, dy: f32) -> bool {
         self.adjust_ratio_axis(target_id, Orientation::Horizontal, dx)
             | self.adjust_ratio_axis(target_id, Orientation::Vertical, dy)
@@ -573,7 +657,6 @@ impl SplitNode {
                         || second.adjust_ratio_axis(target_id, axis, delta);
                 }
 
-                // Recurse into the child that contains the target first
                 let handled = if in_first {
                     first.adjust_ratio_axis(target_id, axis, delta)
                 } else {
@@ -581,7 +664,6 @@ impl SplitNode {
                 };
 
                 if !handled && *orientation == axis {
-                    // We are the nearest ancestor with matching axis
                     *ratio = (*ratio + delta).clamp(0.1, 0.9);
                     return true;
                 }

@@ -211,6 +211,7 @@ pub enum SeatOp {
         resize_v: bool,
     },
     /// Resize split boundary from an empty frame area.
+    #[allow(dead_code)]
     ResizeEmpty {
         frame_id: FrameId,
         resize_h: bool,

@@ -174,38 +174,31 @@ impl WindowManager {
     }
 
     pub(crate) fn handle_seat_ops(&mut self) {
-        // Collect resize ops with axis flags
+        // Collect resize ops with pointer position
         struct ResizeCmd {
-            frame_id: FrameId,
             dx: i32,
             dy: i32,
             resize_h: bool,
             resize_v: bool,
+            pointer_x: i32,
+            pointer_y: i32,
         }
         let resize_ops: Vec<ResizeCmd> = self
             .seats
             .values_mut()
             .filter(|s| !s.op_release)
             .filter_map(|s| {
-                let (frame_id, rh, rv) = match &s.op {
+                let (rh, rv) = match &s.op {
                     SeatOp::Resize {
-                        window_id,
                         resize_h,
                         resize_v,
                         ..
-                    } => {
-                        let fid = self
-                            .workspaces
-                            .workspaces
-                            .iter()
-                            .find_map(|ws| ws.root.find_frame_with_window(*window_id))?;
-                        (fid, *resize_h, *resize_v)
-                    }
+                    } => (*resize_h, *resize_v),
                     SeatOp::ResizeEmpty {
-                        frame_id,
                         resize_h,
                         resize_v,
-                    } => (*frame_id, *resize_h, *resize_v),
+                        ..
+                    } => (*resize_h, *resize_v),
                     _ => return None,
                 };
 
@@ -215,17 +208,20 @@ impl WindowManager {
                 s.op_prev_dy = s.op_dy;
                 if ddx != 0 || ddy != 0 {
                     Some(ResizeCmd {
-                        frame_id,
                         dx: ddx,
                         dy: ddy,
                         resize_h: rh,
                         resize_v: rv,
+                        pointer_x: s.pointer_x,
+                        pointer_y: s.pointer_y,
                     })
                 } else {
                     None
                 }
             })
             .collect();
+
+        let gap = self.config.general.gap as i32;
 
         for cmd in resize_ops {
             let ws_idx = self.workspaces.focused_workspace.0;
@@ -247,7 +243,9 @@ impl WindowManager {
                 } else {
                     0.0
                 };
-                ws.root.adjust_ratio(cmd.frame_id, ratio_dx, ratio_dy);
+                // Use pointer-position-based resize for correct boundary selection
+                ws.root
+                    .adjust_ratio_at(area, cmd.pointer_x, cmd.pointer_y, ratio_dx, ratio_dy, gap);
             }
         }
 
