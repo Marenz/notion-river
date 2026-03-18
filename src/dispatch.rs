@@ -317,6 +317,14 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
                     }
                 }
                 state.wm.workspaces.reassign_outputs();
+                // Try to restore output profile for this monitor config
+                if !state
+                    .wm
+                    .output_profiles
+                    .restore_for_current(&mut state.wm.workspaces)
+                {
+                    log::info!("No output profile for current config");
+                }
             }
             Event::Position { x, y } => {
                 if let Some(output) = state.wm.workspaces.output_mut(oid) {

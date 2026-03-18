@@ -15,6 +15,7 @@ mod dispatch;
 mod focus;
 mod ipc;
 mod layout;
+mod output_profiles;
 mod pointer_ops;
 mod protocol;
 mod rendering;

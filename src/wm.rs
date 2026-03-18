@@ -109,6 +109,8 @@ pub struct WindowManager {
     pub ipc: crate::ipc::IpcState,
     /// App-to-frame bindings for window placement.
     pub app_bindings: crate::app_bindings::AppBindings,
+    /// Per-output-config workspace assignment memory.
+    pub output_profiles: crate::output_profiles::OutputProfiles,
     /// Control socket state for window/workspace switching.
     pub control: crate::control::ControlState,
 }
@@ -257,6 +259,7 @@ impl WindowManager {
             layer_shell_has_focus: false,
             ipc: crate::ipc::IpcState::new(),
             app_bindings: crate::app_bindings::AppBindings::load(),
+            output_profiles: crate::output_profiles::OutputProfiles::load(),
             control: crate::control::ControlState::new(),
         }
     }
@@ -303,6 +306,9 @@ impl WindowManager {
         {
             self.warp_cursor_to_frame(new_focused_frame);
         }
+
+        // Save output profile when workspace state changes
+        self.output_profiles.save_current(&self.workspaces);
 
         // Update waybar workspace display via FIFO
         self.ipc.update(&self.workspaces, &self.config.appearance);
@@ -547,9 +553,83 @@ impl WindowManager {
             .filter(|o| o.removed)
             .map(|o| o.id)
             .collect();
-        for id in removed {
-            self.workspaces.remove_output(id);
+        if removed.is_empty() {
+            return;
         }
+        for id in &removed {
+            self.workspaces.remove_output(*id);
+        }
+        // Migrate windows from now-invisible workspaces to a visible one
+        self.migrate_orphaned_windows();
+    }
+
+    /// Move windows from invisible workspaces to the first visible workspace.
+    fn migrate_orphaned_windows(&mut self) {
+        // Find a visible workspace to receive orphaned windows
+        let target = self
+            .workspaces
+            .workspaces
+            .iter()
+            .find(|ws| ws.active_output.is_some())
+            .map(|ws| (ws.id.0, ws.focused_frame));
+
+        let Some((target_ws_idx, target_frame)) = target else {
+            log::warn!("No visible workspace to migrate orphaned windows to");
+            return;
+        };
+
+        // Collect windows on invisible workspaces
+        let mut orphans: Vec<(u64, crate::layout::FrameId)> = Vec::new();
+        for ws in &self.workspaces.workspaces {
+            if ws.active_output.is_some() {
+                continue; // visible, skip
+            }
+            for frame_id in ws.root.all_frame_ids() {
+                if let Some(frame) = ws.root.find_frame(frame_id) {
+                    for win_ref in &frame.windows {
+                        orphans.push((win_ref.window_id, frame_id));
+                    }
+                }
+            }
+        }
+
+        if orphans.is_empty() {
+            return;
+        }
+
+        log::info!(
+            "Migrating {} orphaned windows to visible workspace",
+            orphans.len()
+        );
+
+        for (wid, src_frame) in &orphans {
+            let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
+                ws.root
+                    .find_frame(*src_frame)
+                    .and_then(|f| f.windows.iter().find(|w| w.window_id == *wid).cloned())
+            });
+            if let Some(win_ref) = win_ref {
+                // Remove from source
+                for ws in &mut self.workspaces.workspaces {
+                    if let Some(frame) = ws.root.find_frame_mut(*src_frame) {
+                        frame.remove_window(*wid);
+                    }
+                }
+                // Add to target
+                if let Some(frame) = self.workspaces.workspaces[target_ws_idx]
+                    .root
+                    .find_frame_mut(target_frame)
+                {
+                    frame.add_window(win_ref);
+                }
+                if let Some(win) = self.windows.iter_mut().find(|w| w.id == *wid) {
+                    win.frame_id = Some(target_frame);
+                }
+            }
+        }
+
+        // Focus the target workspace
+        self.workspaces.focused_workspace = crate::workspace::WorkspaceId(target_ws_idx);
     }
 
     fn sync_window_titles(&mut self) {
