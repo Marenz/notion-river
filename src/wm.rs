@@ -410,6 +410,24 @@ impl WindowManager {
                 crate::control::ControlRequest::SwitchWorkspace(name) => {
                     self.workspaces.switch_workspace(&name);
                 }
+                crate::control::ControlRequest::SetFixedDimensions(app_id, dims) => {
+                    // Apply to all current bindings for this app
+                    if let Some(locs) = self.app_bindings.bindings.get(&app_id) {
+                        let locs: Vec<_> = locs
+                            .iter()
+                            .map(|l| (l.workspace.clone(), l.frame_index))
+                            .collect();
+                        for (ws, fi) in locs {
+                            self.app_bindings
+                                .set_fixed_dimensions(&app_id, &ws, fi, dims);
+                        }
+                    }
+                    log::info!(
+                        "Set fixed dimensions {:?} for all bindings of '{}'",
+                        dims,
+                        app_id
+                    );
+                }
             }
         }
     }

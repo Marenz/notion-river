@@ -23,6 +23,10 @@ use crate::workspace::{WorkspaceId, WorkspaceManager};
 pub struct BoundLocation {
     pub workspace: String,
     pub frame_index: usize,
+    /// Optional fixed dimensions (width, height) for windows in this binding.
+    /// When set, propose these dimensions instead of the frame size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_dimensions: Option<(i32, i32)>,
 }
 
 /// All app bindings. Maps app_id → list of bound locations (ordered, first = primary).
@@ -75,6 +79,7 @@ impl AppBindings {
         let loc = BoundLocation {
             workspace: workspace.to_string(),
             frame_index,
+            fixed_dimensions: None,
         };
         let locations = self.bindings.entry(app_id.to_string()).or_default();
         if let Some(pos) = locations.iter().position(|l| l == &loc) {
@@ -106,6 +111,7 @@ impl AppBindings {
         let loc = BoundLocation {
             workspace: workspace.to_string(),
             frame_index,
+            fixed_dimensions: None,
         };
         self.bindings.insert(app_id.to_string(), vec![loc]);
         log::info!(
@@ -189,6 +195,44 @@ impl AppBindings {
             locs.iter()
                 .any(|l| l.workspace == workspace && l.frame_index == frame_index)
         })
+    }
+
+    /// Get fixed dimensions for a window at this frame, if any binding specifies them.
+    pub fn fixed_dimensions_for(
+        &self,
+        app_id: &str,
+        workspace: &str,
+        frame_index: usize,
+    ) -> Option<(i32, i32)> {
+        let locs = self.bindings.get(app_id)?;
+        locs.iter()
+            .find(|l| l.workspace == workspace && l.frame_index == frame_index)
+            .and_then(|l| l.fixed_dimensions)
+    }
+
+    /// Set fixed dimensions for an app binding at the given location.
+    pub fn set_fixed_dimensions(
+        &mut self,
+        app_id: &str,
+        workspace: &str,
+        frame_index: usize,
+        dims: Option<(i32, i32)>,
+    ) {
+        if let Some(locs) = self.bindings.get_mut(app_id) {
+            for loc in locs.iter_mut() {
+                if loc.workspace == workspace && loc.frame_index == frame_index {
+                    loc.fixed_dimensions = dims;
+                    log::info!(
+                        "Set fixed dimensions {:?} for '{}' on {} frame #{}",
+                        dims,
+                        app_id,
+                        workspace,
+                        frame_index
+                    );
+                }
+            }
+        }
+        self.save();
     }
 
     /// Get the app_id bound to a specific frame location, if any.

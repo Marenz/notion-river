@@ -16,6 +16,7 @@ fn socket_path() -> PathBuf {
 pub enum ControlRequest {
     FocusWindow(u64),
     SwitchWorkspace(String),
+    SetFixedDimensions(String, Option<(i32, i32)>),
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -180,6 +181,39 @@ fn handle_client(
                 .lock()
                 .expect("control pending poisoned")
                 .push(ControlRequest::SwitchWorkspace(name));
+            let _ = stream.write_all(b"OK\n");
+        }
+        "set-fixed-dimensions" => {
+            // Usage: set-fixed-dimensions <app_id> <width>x<height>
+            // Or:    set-fixed-dimensions <app_id> clear
+            let Some(app_id) = parts.next() else {
+                let _ = stream.write_all(b"ERR missing app_id\n");
+                return;
+            };
+            let Some(dims_str) = parts.next() else {
+                let _ = stream.write_all(b"ERR missing dimensions (WxH or 'clear')\n");
+                return;
+            };
+            let dims = if dims_str == "clear" {
+                None
+            } else {
+                let parts: Vec<&str> = dims_str.split('x').collect();
+                if parts.len() != 2 {
+                    let _ = stream.write_all(b"ERR bad format, use WxH\n");
+                    return;
+                }
+                match (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+                    (Ok(w), Ok(h)) => Some((w, h)),
+                    _ => {
+                        let _ = stream.write_all(b"ERR bad dimensions\n");
+                        return;
+                    }
+                }
+            };
+            pending
+                .lock()
+                .expect("control pending poisoned")
+                .push(ControlRequest::SetFixedDimensions(app_id.to_string(), dims));
             let _ = stream.write_all(b"OK\n");
         }
         _ => {

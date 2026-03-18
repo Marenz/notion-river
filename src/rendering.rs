@@ -30,11 +30,27 @@ impl WindowManager {
                     if let Some(active_win) = frame.active_window() {
                         let wid = active_win.window_id;
                         if let Some(win) = self.windows.iter().find(|w| w.id == wid) {
-                            // Propose dimensions (minus border and tab bar)
                             let bw = border as i32 * 2;
                             let tab_h = TAB_BAR_HEIGHT;
-                            win.proxy
-                                .propose_dimensions(rect.width - bw, rect.height - bw - tab_h);
+                            // Check for fixed dimensions from app bindings
+                            let frame_idx = ws
+                                .root
+                                .all_frame_ids()
+                                .iter()
+                                .position(|id| *id == *frame_id);
+                            let fixed = frame_idx.and_then(|fi| {
+                                self.app_bindings.fixed_dimensions_for(
+                                    &active_win.app_id,
+                                    &ws.name,
+                                    fi,
+                                )
+                            });
+                            if let Some((fw, fh)) = fixed {
+                                win.proxy.propose_dimensions(fw, fh);
+                            } else {
+                                win.proxy
+                                    .propose_dimensions(rect.width - bw, rect.height - bw - tab_h);
+                            }
                         }
                     }
                     // Hide non-active tabs

@@ -217,7 +217,33 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 window.width = width;
                 window.height = height;
             }
-            Event::DimensionsHint { .. } => {}
+            Event::DimensionsHint {
+                min_width,
+                min_height,
+                max_width,
+                max_height,
+            } => {
+                // Auto-float small fixed-size windows (popups, notifications)
+                let is_fixed = max_width > 0
+                    && max_height > 0
+                    && max_width == min_width
+                    && max_height == min_height;
+                let is_small =
+                    max_width > 0 && max_width < 600 && max_height > 0 && max_height < 400;
+                if is_fixed || is_small {
+                    if !window.floating {
+                        window.floating = true;
+                        log::info!(
+                            "Auto-floating window {} ({}x{}-{}x{})",
+                            window.id,
+                            min_width,
+                            min_height,
+                            max_width,
+                            max_height
+                        );
+                    }
+                }
+            }
             Event::AppId { app_id } => {
                 if let Some(ref id) = app_id {
                     log::info!("Window {} app_id: {id}", window.id);

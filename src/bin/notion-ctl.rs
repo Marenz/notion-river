@@ -12,7 +12,7 @@ fn socket_path() -> PathBuf {
 
 fn usage() {
     eprintln!(
-        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl focus-window <id>\n  notion-ctl switch-workspace <name>"
+        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl focus-window <id>\n  notion-ctl switch-workspace <name>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>"
     );
 }
 
@@ -39,6 +39,13 @@ fn main() {
                 std::process::exit(2);
             }
             format!("switch-workspace {}", args[1..].join(" "))
+        }
+        "set-fixed-dimensions" => {
+            if args.len() != 3 {
+                usage();
+                std::process::exit(2);
+            }
+            format!("set-fixed-dimensions {} {}", args[1], args[2])
         }
         _ => {
             usage();
