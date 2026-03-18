@@ -33,6 +33,9 @@ pub struct AppData {
     pub wp_viewporter: Option<crate::protocol::wp_viewporter::WpViewporter>,
     /// Map from wl_output global name (u32) to river OutputId.
     pub wl_output_map: std::collections::HashMap<u32, OutputId>,
+    /// Map from OutputId to river_output_v1 proxy (for fullscreen etc).
+    pub river_outputs:
+        std::collections::HashMap<u64, crate::protocol::river_output_v1::RiverOutputV1>,
     /// Map from wl_output global name (u32) to connector name string.
     pub wl_output_names: std::collections::HashMap<u32, String>,
     /// wl_seat global name (for binding wl_pointer).
@@ -55,6 +58,7 @@ impl Default for AppData {
             wl_shm: None,
             wp_viewporter: None,
             wl_output_map: std::collections::HashMap::new(),
+            river_outputs: std::collections::HashMap::new(),
             wl_output_names: std::collections::HashMap::new(),
             wl_seat_name: None,
             pending_tab_click: None,
@@ -124,6 +128,7 @@ pub struct ManagedWindow {
     pub frame_id: Option<FrameId>,
     /// Whether this window is floating.
     pub floating: bool,
+    pub fullscreen: bool,
     /// Floating position.
     pub float_x: i32,
     pub float_y: i32,
@@ -256,6 +261,10 @@ impl WindowManager {
         &mut self,
         proxy: &RiverWindowManagerV1,
         river_xkb: &RiverXkbBindingsV1,
+        river_outputs: &std::collections::HashMap<
+            u64,
+            crate::protocol::river_output_v1::RiverOutputV1,
+        >,
         qh: &QueueHandle<AppData>,
     ) {
         let prev_focused_frame = self.workspaces.focused_workspace().focused_frame;
@@ -273,7 +282,7 @@ impl WindowManager {
             .values()
             .any(|s| !matches!(s.pending_action, Action::None));
 
-        self.handle_pending_actions(proxy);
+        self.handle_pending_actions(proxy, river_outputs);
         self.handle_control_requests();
         self.apply_window_management(proxy);
         self.update_binding_modes();
@@ -612,7 +621,14 @@ impl WindowManager {
 
     // ── Action dispatch ──────────────────────────────────────────────────
 
-    fn handle_pending_actions(&mut self, wm_proxy: &RiverWindowManagerV1) {
+    fn handle_pending_actions(
+        &mut self,
+        wm_proxy: &RiverWindowManagerV1,
+        river_outputs: &std::collections::HashMap<
+            u64,
+            crate::protocol::river_output_v1::RiverOutputV1,
+        >,
+    ) {
         // Collect actions from all seats first — we need to know if there's
         // a keyboard action before applying focus-follows-mouse
         let actions: Vec<(Action, Option<u64>)> = self
@@ -671,7 +687,7 @@ impl WindowManager {
         }
 
         for (action, _) in actions {
-            self.perform_action(action, wm_proxy);
+            self.perform_action(action, wm_proxy, river_outputs);
         }
 
         // Handle seat op releases
@@ -778,6 +794,7 @@ impl ManagedWindow {
             closed: false,
             frame_id: None,
             floating: false,
+            fullscreen: false,
             float_x: 100,
             float_y: 100,
             pointer_move_requested: None,

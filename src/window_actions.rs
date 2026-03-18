@@ -10,7 +10,15 @@ use crate::wm::{InputMode, WindowManager};
 use crate::workspace::OutputId;
 
 impl WindowManager {
-    pub(crate) fn perform_action(&mut self, action: Action, wm_proxy: &RiverWindowManagerV1) {
+    pub(crate) fn perform_action(
+        &mut self,
+        action: Action,
+        wm_proxy: &RiverWindowManagerV1,
+        river_outputs: &std::collections::HashMap<
+            u64,
+            crate::protocol::river_output_v1::RiverOutputV1,
+        >,
+    ) {
         if !matches!(action, Action::None) {
             log::info!("Action: {action:?}");
         }
@@ -39,8 +47,24 @@ impl WindowManager {
                 let frame_id = ws.focused_frame;
                 if let Some(frame) = ws.root.find_frame(frame_id) {
                     if let Some(win_ref) = frame.active_window() {
-                        if self.windows.iter().any(|w| w.id == win_ref.window_id) {
-                            log::info!("Fullscreen toggle not yet implemented");
+                        let wid = win_ref.window_id;
+                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                            if win.fullscreen {
+                                win.proxy.exit_fullscreen();
+                                win.proxy.inform_not_fullscreen();
+                                win.fullscreen = false;
+                                log::info!("Exiting fullscreen for window {wid}");
+                            } else {
+                                // Find the output proxy for the workspace's output
+                                let output_proxy =
+                                    ws.active_output.and_then(|oid| river_outputs.get(&oid.0));
+                                if let Some(output) = output_proxy {
+                                    win.proxy.fullscreen(output);
+                                    win.proxy.inform_fullscreen();
+                                    win.fullscreen = true;
+                                    log::info!("Entering fullscreen for window {wid}");
+                                }
+                            }
                         }
                     }
                 }

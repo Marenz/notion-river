@@ -137,7 +137,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                     .river_xkb
                     .as_ref()
                     .expect("river_xkb_bindings_v1 missing");
-                state.wm.handle_manage_start(proxy, river_xkb, qh);
+                state
+                    .wm
+                    .handle_manage_start(proxy, river_xkb, &state.river_outputs, qh);
             }
             Event::RenderStart => {
                 state.wm.handle_render_start(
@@ -162,6 +164,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
             Event::Output { id } => {
                 let oid = OutputId(id.id().protocol_id() as u64);
                 log::info!("New output: {oid:?}");
+                state.river_outputs.insert(oid.0, id.clone());
                 let output = Output::new(oid);
                 state.wm.workspaces.add_output(output);
                 // Register layer-shell output for exclusive zone tracking
