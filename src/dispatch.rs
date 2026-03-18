@@ -227,7 +227,13 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             Event::Title { title } => {
                 window.title = title.unwrap_or_default();
             }
-            Event::Parent { .. } => {}
+            Event::Parent { parent } => {
+                if parent.is_some() {
+                    // Child windows (dialogs, popups) should float
+                    window.floating = true;
+                    log::info!("Window {} has parent, setting floating", window.id);
+                }
+            }
             Event::DecorationHint { .. } => {}
             Event::PointerMoveRequested { seat } => {
                 window.pointer_move_requested = Some(seat);
