@@ -488,13 +488,13 @@ impl SplitNode {
                         };
 
                         if !handled {
-                            // We are the nearest matching ancestor, adjust ratio
+                            // Absolute direction: Up/Left always shrinks the
+                            // first child (moves boundary up/left).
+                            // Down/Right always grows first child.
                             let adjustment = match direction {
                                 Direction::Left | Direction::Up => -delta,
                                 Direction::Right | Direction::Down => delta,
                             };
-                            // If target is in second child, invert
-                            let adjustment = if in_second { -adjustment } else { adjustment };
                             *ratio = (*ratio + adjustment).clamp(0.1, 0.9);
                             return true;
                         }

@@ -285,7 +285,9 @@ pub fn builtin_i3_neo_resize_bindings() -> Vec<BindingConfig> {
     // Exit resize mode
     bind(&mut b, "", "space", "exit_resize_mode", &[]);
     bind(&mut b, "super", "space", "exit_resize_mode", &[]);
+    bind(&mut b, "super", "r", "exit_resize_mode", &[]);
     bind(&mut b, "", "Escape", "exit_resize_mode", &[]);
+    bind(&mut b, "", "Return", "exit_resize_mode", &[]);
 
     b
 }
