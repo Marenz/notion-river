@@ -170,11 +170,9 @@ impl WindowManager {
 
     pub(crate) fn handle_seat_ops(&mut self) {
         // Collect resize ops with pointer position
-        struct ResizeCmd {
+struct ResizeCmd {
             dx: i32,
             dy: i32,
-            resize_h: bool,
-            resize_v: bool,
             pointer_x: i32,
             pointer_y: i32,
         }
@@ -205,7 +203,7 @@ impl WindowManager {
                     Some(ResizeCmd {
                         dx: ddx,
                         dy: ddy,
-                        resize_h: rh,
+                        #[allow(dead_code)] resize_h: rh,
                         resize_v: rv,
                         pointer_x: cur_x,
                         pointer_y: cur_y,
