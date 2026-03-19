@@ -653,6 +653,14 @@ impl WindowManager {
     }
 
     fn init_new_windows(&mut self) {
+        // Collect existing app_ids for duplicate detection
+        let existing_app_ids: Vec<String> = self
+            .windows
+            .iter()
+            .filter(|w| !w.new)
+            .map(|w| w.app_id.clone())
+            .collect();
+
         for window in self.windows.iter_mut().filter(|w| w.new) {
             log::info!(
                 "Placing window '{}' (id={}, identifier={:?}, title='{}')",
@@ -661,6 +669,31 @@ impl WindowManager {
                 window.identifier.as_deref().unwrap_or("none"),
                 &window.title[..window.title.len().min(40)],
             );
+
+            // Auto-float popup-like windows:
+            // - Already floating (set by parent/dimensions_hint handlers)
+            // - Same app_id exists AND this window has empty/very short title
+            //   (catches notification popups like Thunderbird's)
+            if !window.floating
+                && !window.app_id.is_empty()
+                && window.title.is_empty()
+                && existing_app_ids.contains(&window.app_id)
+            {
+                log::info!(
+                    "Auto-floating popup window {} (empty title, duplicate app_id '{}')",
+                    window.id, window.app_id
+                );
+                window.floating = true;
+            }
+
+            if window.floating {
+                window.proxy.set_tiled(
+                    Edges::Left | Edges::Right | Edges::Top | Edges::Bottom,
+                );
+                window.new = false;
+                continue;
+            }
+
             // Try to restore window to its saved position
             let restored = self.saved_state.as_mut().and_then(|state| {
                 crate::state::match_window_to_saved_frame(

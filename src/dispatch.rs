@@ -260,7 +260,9 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     log::info!("Window {} has parent, setting floating", window.id);
                 }
             }
-            Event::DecorationHint { .. } => {}
+            Event::DecorationHint { hint } => {
+                log::info!("Window {} decoration_hint: {:?}", window.id, hint);
+            }
             Event::PointerMoveRequested { seat } => {
                 window.pointer_move_requested = Some(seat);
             }
