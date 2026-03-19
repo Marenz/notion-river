@@ -552,8 +552,6 @@ impl SplitNode {
         area: Rect,
         px: i32,
         py: i32,
-        dx: f32,
-        dy: f32,
         gap: i32,
     ) -> bool {
         match self {
@@ -617,7 +615,7 @@ impl SplitNode {
 
                 if let Some(child_dist) = child_closest
                     && child_dist < dist
-                    && child.adjust_ratio_at(child_area, px, py, dx, dy, gap)
+                    && child.adjust_ratio_at(child_area, px, py, gap)
                 {
                     return true;
                 }
