@@ -110,6 +110,8 @@ pub struct WindowManager {
     pub ipc: crate::ipc::IpcState,
     /// App-to-frame bindings for window placement.
     pub app_bindings: crate::app_bindings::AppBindings,
+    /// Drag preview overlay.
+    pub drag_preview: crate::decorations::DragPreview,
     /// Per-output-config workspace assignment memory.
     pub output_profiles: crate::output_profiles::OutputProfiles,
     /// Control socket state for window/workspace switching.
@@ -261,6 +263,7 @@ impl WindowManager {
             layer_shell_has_focus: false,
             ipc: crate::ipc::IpcState::new(),
             app_bindings: crate::app_bindings::AppBindings::load(),
+            drag_preview: crate::decorations::DragPreview::default(),
             output_profiles: crate::output_profiles::OutputProfiles::load(),
             control: crate::control::ControlState::new(),
         }
@@ -503,7 +506,45 @@ impl WindowManager {
     ) {
         self.apply_layout_positions(proxy, shm, compositor, viewporter, qh);
         self.handle_seat_ops();
+
+        // Show/hide drag preview overlay
+        if let (Some(shm), Some(compositor)) = (shm, compositor) {
+            self.update_drag_preview(proxy, shm, compositor, qh);
+        }
+
         proxy.render_finish();
+    }
+
+    fn update_drag_preview(
+        &mut self,
+        wm_proxy: &RiverWindowManagerV1,
+        shm: &WlShm,
+        compositor: &WlCompositor,
+        qh: &QueueHandle<AppData>,
+    ) {
+        // Check if there's an active move drag
+        let drag_pos: Option<(i32, i32)> = self.seats.values().find_map(|s| {
+            if s.op_release {
+                return None;
+            }
+            match &s.op {
+                SeatOp::Move { start_x, start_y, .. } => {
+                    Some((start_x + s.op_dx, start_y + s.op_dy))
+                }
+                _ => None,
+            }
+        });
+
+        if let Some((px, py)) = drag_pos {
+            let gap = self.config.general.gap as i32;
+            let target = crate::pointer_ops::find_drop_target(&self.workspaces, px, py, gap);
+            if let Some((_ws_id, _frame_id, rect, zone)) = target {
+                self.drag_preview.show(&rect, &zone, compositor, wm_proxy, shm, qh);
+                return;
+            }
+        }
+
+        self.drag_preview.hide();
     }
 
     // ── Window lifecycle ─────────────────────────────────────────────────

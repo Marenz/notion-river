@@ -43,7 +43,7 @@ impl DropZone {
 }
 
 /// Find which frame and drop zone the pointer is over.
-fn find_drop_target(
+pub fn find_drop_target(
     workspaces: &crate::workspace::WorkspaceManager,
     px: i32,
     py: i32,

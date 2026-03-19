@@ -674,6 +674,174 @@ fn draw_text(
 }
 
 /// Check if a pixel at (dx, dy) from a corner is inside the rounded area.
+// ── Drag preview overlay ─────────────────────────────────────────────────
+
+/// Visual overlay showing drop zones during window drag.
+#[derive(Debug)]
+pub struct DragPreview {
+    surface: Option<WlSurface>,
+    shell_surface: Option<RiverShellSurfaceV1>,
+    node: Option<RiverNodeV1>,
+    buffer: Option<WlBuffer>,
+    pool: Option<WlShmPool>,
+    visible: bool,
+}
+
+impl Default for DragPreview {
+    fn default() -> Self {
+        Self {
+            surface: None,
+            shell_surface: None,
+            node: None,
+            buffer: None,
+            pool: None,
+            visible: false,
+        }
+    }
+}
+
+/// Color with alpha for preview zones (ARGB premultiplied)
+const PREVIEW_TAB: u32 = 0x4089b4fa; // blue, semi-transparent
+const PREVIEW_SPLIT: u32 = 0x40a6e3a1; // green, semi-transparent
+const PREVIEW_BORDER: u32 = 0x8089b4fa; // blue, more opaque
+
+impl DragPreview {
+    pub fn show(
+        &mut self,
+        rect: &Rect,
+        zone: &crate::pointer_ops::DropZone,
+        compositor: &WlCompositor,
+        wm_proxy: &RiverWindowManagerV1,
+        shm: &WlShm,
+        qh: &QueueHandle<crate::wm::AppData>,
+    ) {
+        use crate::pointer_ops::DropZone;
+
+        // Create surface if needed
+        if self.surface.is_none() {
+            let surface = compositor.create_surface(qh, ());
+            let shell_surface = wm_proxy.get_shell_surface(&surface, qh, ());
+            let node = shell_surface.get_node(qh, ());
+            self.surface = Some(surface);
+            self.shell_surface = Some(shell_surface);
+            self.node = Some(node);
+        }
+
+        // Compute the preview area based on zone
+        let (px, py, pw, ph) = match zone {
+            DropZone::Tab => (rect.x, rect.y, rect.width, rect.height),
+            DropZone::Top => (rect.x, rect.y, rect.width, rect.height / 4),
+            DropZone::Bottom => (
+                rect.x,
+                rect.y + rect.height * 3 / 4,
+                rect.width,
+                rect.height / 4,
+            ),
+            DropZone::Left => (rect.x, rect.y, rect.width / 4, rect.height),
+            DropZone::Right => (
+                rect.x + rect.width * 3 / 4,
+                rect.y,
+                rect.width / 4,
+                rect.height,
+            ),
+        };
+
+        if pw <= 0 || ph <= 0 {
+            return;
+        }
+
+        let color = match zone {
+            DropZone::Tab => PREVIEW_TAB,
+            _ => PREVIEW_SPLIT,
+        };
+
+        // Destroy old buffer
+        if let Some(buf) = self.buffer.take() {
+            buf.destroy();
+        }
+        if let Some(pool) = self.pool.take() {
+            pool.destroy();
+        }
+
+        let stride = pw * 4;
+        let size = stride * ph;
+        let fd = match create_shm_file(size as usize) {
+            Ok(fd) => fd,
+            Err(_) => return,
+        };
+
+        let map = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd.as_fd().as_raw_fd(),
+                0,
+            )
+        };
+        if map == libc::MAP_FAILED {
+            return;
+        }
+
+        let pixels = unsafe { std::slice::from_raw_parts_mut(map as *mut u32, (pw * ph) as usize) };
+
+        // Draw the preview: filled area with border
+        let w = pw as usize;
+        let h = ph as usize;
+        let bw = 2usize;
+        for y in 0..h {
+            for x in 0..w {
+                let on_border = y < bw || y >= h - bw || x < bw || x >= w - bw;
+                pixels[y * w + x] = if on_border { PREVIEW_BORDER } else { color };
+            }
+        }
+
+        unsafe {
+            libc::munmap(map, size as usize);
+        }
+
+        let pool = shm.create_pool(fd.as_fd(), size, qh, ());
+        let buffer = pool.create_buffer(0, pw, ph, stride, wl_shm::Format::Argb8888, qh, ());
+
+        if let Some(ref surface) = self.surface {
+            surface.attach(Some(&buffer), 0, 0);
+            surface.damage_buffer(0, 0, pw, ph);
+        }
+        if let Some(ref ss) = self.shell_surface {
+            ss.sync_next_commit();
+        }
+        if let Some(ref surface) = self.surface {
+            surface.commit();
+        }
+        if let Some(ref node) = self.node {
+            node.set_position(px, py);
+            node.place_top();
+        }
+
+        self.buffer = Some(buffer);
+        self.pool = Some(pool);
+        self.visible = true;
+    }
+
+    pub fn hide(&mut self) {
+        if !self.visible {
+            return;
+        }
+        // Attach null buffer to hide
+        if let Some(ref surface) = self.surface {
+            surface.attach(None, 0, 0);
+        }
+        if let Some(ref ss) = self.shell_surface {
+            ss.sync_next_commit();
+        }
+        if let Some(ref surface) = self.surface {
+            surface.commit();
+        }
+        self.visible = false;
+    }
+}
+
 fn in_rounded_corner(dx: usize, dy: usize, radius: usize) -> bool {
     let rx = radius as f64 - dx as f64 - 0.5;
     let ry = radius as f64 - dy as f64 - 0.5;
