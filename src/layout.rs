@@ -603,28 +603,35 @@ impl SplitNode {
                     }
                 };
 
-                // Try children first — they might have a closer boundary
-                let child_handled =
-                    first.adjust_ratio_at(first_area, px, py, dx, dy, gap)
-                        || second.adjust_ratio_at(second_area, px, py, dx, dy, gap);
+                // Check if a child split has a CLOSER boundary on the same axis.
+                // Only recurse into the child that contains the pointer.
+                let in_first = match orientation {
+                    Orientation::Horizontal => px < boundary,
+                    Orientation::Vertical => py < boundary,
+                };
+                let child_area = if in_first { first_area } else { second_area };
+                let child = if in_first { &mut *first } else { &mut *second };
 
-                if child_handled {
-                    return true;
+                // Find the child's closest boundary distance (if it has one)
+                let child_closest = child.closest_boundary_dist(child_area, px, py, gap);
+
+                if let Some(child_dist) = child_closest {
+                    if child_dist < dist {
+                        // Child has a closer boundary — recurse
+                        if child.adjust_ratio_at(child_area, px, py, dx, dy, gap) {
+                            return true;
+                        }
+                    }
                 }
 
-                // No child handled it — this is the nearest boundary.
-                // For simple layouts (2 cells), always adjust.
-                // For complex layouts, use threshold to pick the right boundary.
-                let threshold = gap + 200; // generous threshold during active drag
-                if dist < threshold {
-                    let delta = match orientation {
-                        Orientation::Horizontal => dx,
-                        Orientation::Vertical => dy,
-                    };
-                    if delta.abs() > 0.0001 {
-                        *ratio = (*ratio + delta).clamp(0.1, 0.9);
-                        return true;
-                    }
+                // This boundary is closest (or no child boundary exists) — adjust it
+                let delta = match orientation {
+                    Orientation::Horizontal => dx,
+                    Orientation::Vertical => dy,
+                };
+                if delta.abs() > 0.0001 {
+                    *ratio = (*ratio + delta).clamp(0.1, 0.9);
+                    return true;
                 }
 
                 false
@@ -671,6 +678,51 @@ impl SplitNode {
                     return true;
                 }
                 handled
+            }
+        }
+    }
+
+    /// Find the distance from pointer to the closest split boundary in this subtree.
+    fn closest_boundary_dist(&self, area: Rect, px: i32, py: i32, gap: i32) -> Option<i32> {
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split {
+                orientation, ratio, first, second,
+            } => {
+                let boundary = match orientation {
+                    Orientation::Horizontal => {
+                        let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                        area.x + fw + gap / 2
+                    }
+                    Orientation::Vertical => {
+                        let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                        area.y + fh + gap / 2
+                    }
+                };
+                let dist = match orientation {
+                    Orientation::Horizontal => (px - boundary).abs(),
+                    Orientation::Vertical => (py - boundary).abs(),
+                };
+                // Also check children
+                let (first_area, second_area) = match orientation {
+                    Orientation::Horizontal => {
+                        let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                        let sw = area.width - gap - fw;
+                        (Rect::new(area.x, area.y, fw, area.height),
+                         Rect::new(area.x + fw + gap, area.y, sw, area.height))
+                    }
+                    Orientation::Vertical => {
+                        let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                        let sh = area.height - gap - fh;
+                        (Rect::new(area.x, area.y, area.width, fh),
+                         Rect::new(area.x, area.y + fh + gap, area.width, sh))
+                    }
+                };
+                let child_dist = first.closest_boundary_dist(first_area, px, py, gap)
+                    .into_iter()
+                    .chain(second.closest_boundary_dist(second_area, px, py, gap))
+                    .min();
+                Some(child_dist.map_or(dist, |cd| cd.min(dist)))
             }
         }
     }
