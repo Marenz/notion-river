@@ -228,17 +228,17 @@ impl WindowManager {
             };
             if let Some(area) = area {
                 let ws = &mut self.workspaces.workspaces[ws_idx];
-                let ratio_dx = if cmd.resize_h && area.width > 0 {
+                // Pass both axes — adjust_ratio_at picks the closest boundary
+                let ratio_dx = if area.width > 0 {
                     cmd.dx as f32 / area.width as f32
                 } else {
                     0.0
                 };
-                let ratio_dy = if cmd.resize_v && area.height > 0 {
+                let ratio_dy = if area.height > 0 {
                     cmd.dy as f32 / area.height as f32
                 } else {
                     0.0
                 };
-                // Use pointer-position-based resize for correct boundary selection
                 ws.root.adjust_ratio_at(
                     area,
                     cmd.pointer_x,
