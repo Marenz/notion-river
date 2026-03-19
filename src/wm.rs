@@ -653,6 +653,11 @@ impl WindowManager {
     }
 
     fn init_new_windows(&mut self) {
+        let existing_app_ids: Vec<String> = self.windows.iter()
+            .filter(|w| !w.new)
+            .map(|w| w.app_id.clone())
+            .collect();
+
         for window in self.windows.iter_mut().filter(|w| w.new) {
             log::info!(
                 "Placing window '{}' (id={}, identifier={:?}, title='{}')",
@@ -669,7 +674,7 @@ impl WindowManager {
             if !window.floating
                 && !window.app_id.is_empty()
                 && window.title.is_empty()
-                && self.windows.iter().any(|w| !w.new && w.app_id == window.app_id)
+                && existing_app_ids.contains(&window.app_id)
             {
                 window.floating = true;
                 log::info!("Auto-floating popup {} (untitled, app '{}' already open)", window.id, window.app_id);
