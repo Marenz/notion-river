@@ -662,8 +662,19 @@ impl WindowManager {
                 &window.title[..window.title.len().min(40)],
             );
 
-            // Skip tiling for floating windows (set by parent/dimensions_hint/
-            // decoration_hint handlers in dispatch.rs)
+            // Auto-float windows that look like popups/notifications:
+            // - Already floating (from parent/dimensions_hint in dispatch)
+            // - Window has no title but another window with same app_id exists
+            //   (catches Thunderbird notifications, dialog popups, etc.)
+            if !window.floating
+                && !window.app_id.is_empty()
+                && window.title.is_empty()
+                && self.windows.iter().any(|w| !w.new && w.app_id == window.app_id)
+            {
+                window.floating = true;
+                log::info!("Auto-floating popup {} (untitled, app '{}' already open)", window.id, window.app_id);
+            }
+
             if window.floating {
                 window.proxy.use_csd();
                 window.new = false;
