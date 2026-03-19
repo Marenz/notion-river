@@ -170,7 +170,7 @@ impl WindowManager {
 
     pub(crate) fn handle_seat_ops(&mut self) {
         // Collect resize ops with pointer position
-struct ResizeCmd {
+        struct ResizeCmd {
             dx: i32,
             dy: i32,
             pointer_x: i32,
@@ -181,13 +181,8 @@ struct ResizeCmd {
             .values_mut()
             .filter(|s| !s.op_release)
             .filter_map(|s| {
-                let (rh, rv) = match &s.op {
-                    SeatOp::Resize {
-                        resize_h, resize_v, ..
-                    } => (*resize_h, *resize_v),
-                    SeatOp::ResizeEmpty {
-                        resize_h, resize_v, ..
-                    } => (*resize_h, *resize_v),
+                match &s.op {
+                    SeatOp::Resize { .. } | SeatOp::ResizeEmpty { .. } => {}
                     _ => return None,
                 };
 
@@ -196,15 +191,11 @@ struct ResizeCmd {
                 s.op_prev_dx = s.op_dx;
                 s.op_prev_dy = s.op_dy;
                 if ddx != 0 || ddy != 0 {
-                    // Compute current pointer position from pre-drag position + total delta.
-                    // pointer_x/y is stale during active ops (River sends op_delta, not position).
                     let cur_x = s.pointer_x + s.op_dx;
                     let cur_y = s.pointer_y + s.op_dy;
                     Some(ResizeCmd {
                         dx: ddx,
                         dy: ddy,
-                        #[allow(dead_code)] resize_h: rh,
-                        resize_v: rv,
                         pointer_x: cur_x,
                         pointer_y: cur_y,
                     })
