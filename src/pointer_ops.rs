@@ -171,8 +171,6 @@ impl WindowManager {
     pub(crate) fn handle_seat_ops(&mut self) {
         // Collect resize ops with pointer position
         struct ResizeCmd {
-            dx: i32,
-            dy: i32,
             pointer_x: i32,
             pointer_y: i32,
         }
@@ -194,8 +192,6 @@ impl WindowManager {
                     let cur_x = s.pointer_x + s.op_dx;
                     let cur_y = s.pointer_y + s.op_dy;
                     Some(ResizeCmd {
-                        dx: ddx,
-                        dy: ddy,
                         pointer_x: cur_x,
                         pointer_y: cur_y,
                     })
