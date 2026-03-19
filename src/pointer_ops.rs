@@ -50,13 +50,12 @@ pub fn find_drop_target(
     gap: i32,
 ) -> Option<(WorkspaceId, FrameId, Rect, DropZone)> {
     workspaces.workspaces.iter().find_map(|ws| {
-        let output = ws
-            .active_output
-            .and_then(|oid| workspaces.output(oid))?;
+        let output = ws.active_output.and_then(|oid| workspaces.output(oid))?;
         let area = output.usable_rect();
         let layouts = ws.root.calculate_layout(area, gap);
         layouts.into_iter().find_map(|(frame_id, rect)| {
-            if px >= rect.x && px < rect.x + rect.width && py >= rect.y && py < rect.y + rect.height {
+            if px >= rect.x && px < rect.x + rect.width && py >= rect.y && py < rect.y + rect.height
+            {
                 let zone = DropZone::from_position(px, py, &rect);
                 Some((ws.id, frame_id, rect, zone))
             } else {
@@ -86,12 +85,9 @@ impl WindowManager {
 
         // Get the window ref
         let win_ref = self.workspaces.workspaces.iter().find_map(|ws| {
-            ws.root.find_frame(src_fid).and_then(|f| {
-                f.windows
-                    .iter()
-                    .find(|w| w.window_id == window_id)
-                    .cloned()
-            })
+            ws.root
+                .find_frame(src_fid)
+                .and_then(|f| f.windows.iter().find(|w| w.window_id == window_id).cloned())
         });
 
         let Some(win_ref) = win_ref else { return };
@@ -148,11 +144,10 @@ impl WindowManager {
             }
             DropZone::Left | DropZone::Right => {
                 // Split horizontally, place in new frame
-                if let Some(new_fid) = ws.root.split_frame(
-                    target_frame_id,
-                    Orientation::Horizontal,
-                    ratio,
-                ) {
+                if let Some(new_fid) =
+                    ws.root
+                        .split_frame(target_frame_id, Orientation::Horizontal, ratio)
+                {
                     if let Some(frame) = ws.root.find_frame_mut(new_fid) {
                         frame.add_window(win_ref);
                     }
@@ -190,14 +185,10 @@ impl WindowManager {
             .filter_map(|s| {
                 let (rh, rv) = match &s.op {
                     SeatOp::Resize {
-                        resize_h,
-                        resize_v,
-                        ..
+                        resize_h, resize_v, ..
                     } => (*resize_h, *resize_v),
                     SeatOp::ResizeEmpty {
-                        resize_h,
-                        resize_v,
-                        ..
+                        resize_h, resize_v, ..
                     } => (*resize_h, *resize_v),
                     _ => return None,
                 };
@@ -244,41 +235,19 @@ impl WindowManager {
                     0.0
                 };
                 // Use pointer-position-based resize for correct boundary selection
-                ws.root
-                    .adjust_ratio_at(area, cmd.pointer_x, cmd.pointer_y, ratio_dx, ratio_dy, gap);
+                ws.root.adjust_ratio_at(
+                    area,
+                    cmd.pointer_x,
+                    cmd.pointer_y,
+                    ratio_dx,
+                    ratio_dy,
+                    gap,
+                );
             }
         }
 
-        // Visual drag: when moving a single-tab frame, position the window at the cursor
-        let move_drags: Vec<(u64, i32, i32)> = self
-            .seats
-            .values()
-            .filter(|s| !s.op_release)
-            .filter_map(|s| match &s.op {
-                SeatOp::Move {
-                    window_id,
-                    start_x,
-                    start_y,
-                } => Some((*window_id, start_x + s.op_dx, start_y + s.op_dy)),
-                _ => None,
-            })
-            .collect();
-
-        for (wid, drag_x, drag_y) in move_drags {
-            // Check if this window is the only one in its frame
-            let is_single = self.workspaces.workspaces.iter().any(|ws| {
-                ws.root
-                    .find_frame_with_window(wid)
-                    .and_then(|fid| ws.root.find_frame(fid))
-                    .is_some_and(|f| f.windows.len() == 1)
-            });
-            if is_single
-                && let Some(win) = self.windows.iter().find(|w| w.id == wid)
-            {
-                win.node.set_position(drag_x, drag_y);
-                win.node.place_top();
-            }
-        }
+        // During drag, the preview overlay shows where the window will land.
+        // The window stays in its tiled position — no visual window dragging.
     }
 
     /// Determine which resize axes are active based on pointer proximity

@@ -522,15 +522,13 @@ impl WindowManager {
         compositor: &WlCompositor,
         qh: &QueueHandle<AppData>,
     ) {
-        // Check if there's an active move drag
+        // Check if there's an active move drag — use pointer position for accuracy
         let drag_pos: Option<(i32, i32)> = self.seats.values().find_map(|s| {
             if s.op_release {
                 return None;
             }
             match &s.op {
-                SeatOp::Move { start_x, start_y, .. } => {
-                    Some((start_x + s.op_dx, start_y + s.op_dy))
-                }
+                SeatOp::Move { .. } => Some((s.pointer_x, s.pointer_y)),
                 _ => None,
             }
         });
