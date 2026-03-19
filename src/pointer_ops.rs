@@ -198,13 +198,17 @@ impl WindowManager {
                 s.op_prev_dx = s.op_dx;
                 s.op_prev_dy = s.op_dy;
                 if ddx != 0 || ddy != 0 {
+                    // Compute current pointer position from pre-drag position + total delta.
+                    // pointer_x/y is stale during active ops (River sends op_delta, not position).
+                    let cur_x = s.pointer_x + s.op_dx;
+                    let cur_y = s.pointer_y + s.op_dy;
                     Some(ResizeCmd {
                         dx: ddx,
                         dy: ddy,
                         resize_h: rh,
                         resize_v: rv,
-                        pointer_x: s.pointer_x,
-                        pointer_y: s.pointer_y,
+                        pointer_x: cur_x,
+                        pointer_y: cur_y,
                     })
                 } else {
                     None

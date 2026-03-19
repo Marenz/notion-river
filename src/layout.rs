@@ -612,9 +612,10 @@ impl SplitNode {
                     return true;
                 }
 
-                // No child handled it — check if we should
-                // Only adjust if pointer is within threshold of our boundary
-                let threshold = gap + 40;
+                // No child handled it — this is the nearest boundary.
+                // For simple layouts (2 cells), always adjust.
+                // For complex layouts, use threshold to pick the right boundary.
+                let threshold = gap + 200; // generous threshold during active drag
                 if dist < threshold {
                     let delta = match orientation {
                         Orientation::Horizontal => dx,
