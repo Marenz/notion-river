@@ -55,6 +55,9 @@ pub struct ControlState {
     pub path: PathBuf,
     pub pending: Arc<Mutex<Vec<ControlRequest>>>,
     pub snapshot: Arc<Mutex<Snapshot>>,
+    /// Write end of a self-pipe. Written to when a command arrives,
+    /// read by the main loop to trigger manage_dirty.
+    pub notify_fd: std::os::fd::RawFd,
 }
 
 impl ControlState {
@@ -64,6 +67,14 @@ impl ControlState {
 
         let pending = Arc::new(Mutex::new(Vec::new()));
         let snapshot = Arc::new(Mutex::new(Snapshot::default()));
+
+        // Self-pipe for signaling the main event loop
+        let mut fds = [0i32; 2];
+        unsafe { libc::pipe(fds.as_mut_ptr()) };
+        let read_fd = fds[0];
+        let write_fd = fds[1];
+        // Make read end non-blocking
+        unsafe { libc::fcntl(read_fd, libc::F_SETFL, libc::O_NONBLOCK) };
 
         let pending_thread = Arc::clone(&pending);
         let snapshot_thread = Arc::clone(&snapshot);
@@ -90,6 +101,8 @@ impl ControlState {
                     }
                 };
                 handle_client(&mut stream, &pending_thread, &snapshot_thread);
+                // Signal the main loop to trigger a manage cycle
+                unsafe { libc::write(write_fd, b"x".as_ptr() as _, 1) };
             }
         });
 
@@ -97,7 +110,14 @@ impl ControlState {
             path,
             pending,
             snapshot,
+            notify_fd: read_fd,
         }
+    }
+
+    /// Drain the notification pipe (call after checking for pending requests).
+    pub fn drain_notify(&self) {
+        let mut buf = [0u8; 64];
+        unsafe { libc::read(self.notify_fd, buf.as_mut_ptr() as _, buf.len()) };
     }
 
     pub fn take_pending(&self) -> Vec<ControlRequest> {

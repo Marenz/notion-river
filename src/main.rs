@@ -24,6 +24,7 @@ mod window_actions;
 mod wm;
 mod workspace;
 
+use std::os::unix::io::AsRawFd;
 use wayland_client::Connection;
 
 use crate::wm::AppData;
@@ -99,13 +100,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SHUTDOWN.store(true, Ordering::Relaxed);
     }
 
-    // Main event loop.
+    // Main event loop — poll both Wayland fd and control socket notify fd.
+    let wayland_fd = event_queue.prepare_read().map(|g| { let fd = g.connection_fd().as_raw_fd(); drop(g); fd }).unwrap_or(-1);
+    let control_fd = app_data.wm.control.notify_fd;
+
     loop {
         if SHUTDOWN.load(Ordering::Relaxed) {
             log::info!("Signal received, saving state and exiting");
             crate::state::save_state(&app_data.wm.workspaces, &app_data.wm.windows);
             std::process::exit(0);
         }
-        event_queue.blocking_dispatch(&mut app_data)?;
+
+        // Flush outgoing requests
+        conn.flush()?;
+
+        // Poll both fds
+        let mut fds = [
+            libc::pollfd { fd: wayland_fd, events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: control_fd, events: libc::POLLIN, revents: 0 },
+        ];
+        unsafe { libc::poll(fds.as_mut_ptr(), 2, 1000) }; // 1s timeout for shutdown check
+
+        // If control socket has data, drain it and trigger manage_dirty
+        if fds[1].revents & libc::POLLIN != 0 {
+            app_data.wm.control.drain_notify();
+            if let Some(ref wm_proxy) = app_data.river_wm {
+                wm_proxy.manage_dirty();
+            }
+        }
+
+        // Process Wayland events (non-blocking dispatch)
+        event_queue.dispatch_pending(&mut app_data)?;
+        if let Some(guard) = event_queue.prepare_read() {
+            if fds[0].revents & libc::POLLIN != 0 {
+                guard.read()?;
+            } else {
+                drop(guard);
+            }
+            event_queue.dispatch_pending(&mut app_data)?;
+        }
     }
 }
