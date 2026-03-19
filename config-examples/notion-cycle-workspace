@@ -1,0 +1,48 @@
+#!/bin/sh
+# Cycle through workspaces on the focused output.
+# Usage: notion-cycle-workspace next|prev
+
+direction="$1"
+json=$(notion-ctl list-workspaces)
+
+current=$(echo "$json" | python3 -c "
+import json, sys
+ws = json.load(sys.stdin)
+for i, w in enumerate(ws):
+    if w['focused']:
+        print(i)
+        break
+")
+
+total=$(echo "$json" | python3 -c "
+import json, sys
+ws = json.load(sys.stdin)
+# Get workspaces on the same output as focused
+focused = next(w for w in ws if w['focused'])
+output = focused.get('output')
+same = [w for w in ws if w.get('output') == output or (not w.get('output') and not output)]
+# Actually just cycle all
+print(len(ws))
+")
+
+names=$(echo "$json" | python3 -c "
+import json, sys
+ws = json.load(sys.stdin)
+for w in ws:
+    print(w['name'])
+")
+
+if [ -z "$current" ] || [ -z "$total" ]; then
+    exit 1
+fi
+
+if [ "$direction" = "next" ]; then
+    target=$(( (current + 1) % total ))
+elif [ "$direction" = "prev" ]; then
+    target=$(( (current - 1 + total) % total ))
+else
+    exit 1
+fi
+
+name=$(echo "$names" | sed -n "$((target + 1))p")
+[ -n "$name" ] && notion-ctl switch-workspace "$name"
