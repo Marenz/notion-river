@@ -615,13 +615,11 @@ impl SplitNode {
                 // Find the child's closest boundary distance (if it has one)
                 let child_closest = child.closest_boundary_dist(child_area, px, py, gap);
 
-                if let Some(child_dist) = child_closest {
-                    if child_dist < dist {
-                        // Child has a closer boundary — recurse
-                        if child.adjust_ratio_at(child_area, px, py, dx, dy, gap) {
-                            return true;
-                        }
-                    }
+                if let Some(child_dist) = child_closest
+                    && child_dist < dist
+                    && child.adjust_ratio_at(child_area, px, py, dx, dy, gap)
+                {
+                    return true;
                 }
 
                 // This boundary is closest (or no child boundary exists) — adjust it
