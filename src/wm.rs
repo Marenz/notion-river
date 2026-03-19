@@ -196,6 +196,7 @@ pub enum SeatOp {
         #[allow(dead_code)]
         start_y: i32,
     },
+    #[allow(dead_code)]
     Resize {
         window_id: u64,
         #[allow(dead_code)]
