@@ -673,11 +673,10 @@ fn draw_text(
     }
 }
 
-/// Check if a pixel at (dx, dy) from a corner is inside the rounded area.
 // ── Drag preview overlay ─────────────────────────────────────────────────
 
 /// Visual overlay showing drop zones during window drag.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DragPreview {
     surface: Option<WlSurface>,
     shell_surface: Option<RiverShellSurfaceV1>,
@@ -685,19 +684,6 @@ pub struct DragPreview {
     buffer: Option<WlBuffer>,
     pool: Option<WlShmPool>,
     visible: bool,
-}
-
-impl Default for DragPreview {
-    fn default() -> Self {
-        Self {
-            surface: None,
-            shell_surface: None,
-            node: None,
-            buffer: None,
-            pool: None,
-            visible: false,
-        }
-    }
 }
 
 /// Color with alpha for preview zones (ARGB premultiplied)
