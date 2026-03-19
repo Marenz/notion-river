@@ -262,15 +262,6 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             }
             Event::DecorationHint { hint } => {
                 log::info!("Window {} decoration_hint: {:?}", window.id, hint);
-                // Windows that only support CSD are typically popups/notifications.
-                // Auto-float them since they don't want WM-managed tiling.
-                use crate::protocol::river_window_v1::DecorationHint;
-                if hint == wayland_client::WEnum::Value(DecorationHint::OnlySupportsCsd)
-                    && !window.floating
-                {
-                    window.floating = true;
-                    log::info!("Auto-floating CSD-only window {}", window.id);
-                }
             }
             Event::PointerMoveRequested { seat } => {
                 window.pointer_move_requested = Some(seat);
