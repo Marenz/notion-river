@@ -622,13 +622,21 @@ impl SplitNode {
                     return true;
                 }
 
-                // This boundary is closest (or no child boundary exists) — adjust it
-                let delta = match orientation {
-                    Orientation::Horizontal => dx,
-                    Orientation::Vertical => dy,
+                // This boundary is closest — set ratio so boundary is at pointer position.
+                // This is absolute (not delta-based) so it doesn't lag behind slow windows.
+                let new_ratio = match orientation {
+                    Orientation::Horizontal => {
+                        let usable = (area.width - gap) as f32;
+                        if usable > 0.0 { (px - area.x) as f32 / usable } else { *ratio }
+                    }
+                    Orientation::Vertical => {
+                        let usable = (area.height - gap) as f32;
+                        if usable > 0.0 { (py - area.y) as f32 / usable } else { *ratio }
+                    }
                 };
-                if delta.abs() > 0.0001 {
-                    *ratio = (*ratio + delta).clamp(0.1, 0.9);
+                let clamped = new_ratio.clamp(0.1, 0.9);
+                if (clamped - *ratio).abs() > 0.001 {
+                    *ratio = clamped;
                     return true;
                 }
 
