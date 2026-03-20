@@ -262,6 +262,12 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             }
             Event::DecorationHint { hint } => {
                 log::info!("Window {} decoration_hint: {:?}", window.id, hint);
+                if let wayland_client::WEnum::Value(h) = hint {
+                    window.prefers_ssd = matches!(
+                        h,
+                        crate::protocol::river_window_v1::DecorationHint::PrefersSsd
+                    );
+                }
             }
             Event::PointerMoveRequested { seat } => {
                 window.pointer_move_requested = Some(seat);

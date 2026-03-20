@@ -186,9 +186,8 @@ impl AppBindings {
             }
         }
 
-        // Second pass: any bound frame on a hidden workspace, but only if
-        // no bound frame already contains this app. If the app is already
-        // placed somewhere, this is a secondary window (dialog, popup, etc.)
+        // Second pass: check if the app is already placed in a bound frame
+        // (visible or not). If so, this is a secondary window.
         let any_bound_frame_has_app = locations.iter().any(|loc| {
             workspaces
                 .workspaces

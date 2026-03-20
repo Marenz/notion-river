@@ -140,6 +140,8 @@ pub struct ManagedWindow {
     /// Whether this window is floating.
     pub floating: bool,
     pub fullscreen: bool,
+    /// Whether the window prefers server-side decorations.
+    pub prefers_ssd: bool,
     /// Floating position.
     pub float_x: i32,
     pub float_y: i32,
@@ -698,18 +700,19 @@ impl WindowManager {
 
             // Auto-float secondary windows from bound apps: if the app
             // already has a window in the bound frame, float this one.
-            if !window.floating && !window.app_id.is_empty() {
-                if matches!(
+            if !window.floating
+                && !window.app_id.is_empty()
+                && matches!(
                     self.app_bindings.find_target(&window.app_id, &self.workspaces),
                     crate::app_bindings::FindTargetResult::AlreadyPlaced
-                ) {
-                    window.floating = true;
-                    log::info!(
-                        "Auto-floating secondary window '{}' (id={}, bound app already placed)",
-                        window.app_id,
-                        window.id,
-                    );
-                }
+                )
+            {
+                window.floating = true;
+                log::info!(
+                    "Auto-floating secondary window '{}' (id={}, bound app already placed)",
+                    window.app_id,
+                    window.id,
+                );
             }
 
             if window.floating {
@@ -1158,6 +1161,7 @@ impl ManagedWindow {
             frame_id: None,
             floating: false,
             fullscreen: false,
+            prefers_ssd: false,
             float_x: 100,
             float_y: 100,
             pointer_move_requested: None,

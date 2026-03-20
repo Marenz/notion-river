@@ -202,10 +202,10 @@ fn handle_client(
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("/tmp"))
                 .join("notion-river-workspaces");
-            if let Ok(current) = std::fs::read_to_string(&ipc_path) {
-                if stream.write_all(current.as_bytes()).is_err() {
-                    return;
-                }
+            if let Ok(current) = std::fs::read_to_string(&ipc_path)
+                && stream.write_all(current.as_bytes()).is_err()
+            {
+                return;
             }
             crate::ipc::SubscriptionKind::AllWorkspaces
         };
