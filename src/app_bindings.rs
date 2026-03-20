@@ -17,6 +17,16 @@ use std::path::PathBuf;
 use crate::layout::FrameId;
 use crate::workspace::{WorkspaceId, WorkspaceManager};
 
+/// Result of looking up a binding target for an app.
+pub enum FindTargetResult {
+    /// A valid placement target was found.
+    Target(WorkspaceId, FrameId),
+    /// The app already has a window in a bound frame (secondary window).
+    AlreadyPlaced,
+    /// No binding exists or bound frame not found.
+    NoBinding,
+}
+
 /// A bound location for an app: workspace name + frame index within that workspace.
 /// We use workspace name + frame index (not FrameId) because FrameIds change on restart.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,11 +135,6 @@ impl AppBindings {
 
     /// Find the best frame to place a new window with the given app_id.
     /// Returns (WorkspaceId, FrameId) or None if no binding exists.
-    /// Check if any binding exists for this app_id (exact or wildcard).
-    pub fn has_binding(&self, app_id: &str) -> bool {
-        self.find_locations(app_id).is_some()
-    }
-
     /// Find locations for an app_id, supporting wildcard prefixes (e.g. "steam_app_*").
     fn find_locations(&self, app_id: &str) -> Option<&Vec<BoundLocation>> {
         // Exact match first
@@ -147,15 +152,17 @@ impl AppBindings {
         None
     }
 
+    /// Result of find_target: either a placement target, the app is already
+    /// placed (secondary window), or no valid frame was found.
     pub fn find_target(
         &self,
         app_id: &str,
         workspaces: &WorkspaceManager,
-    ) -> Option<(WorkspaceId, FrameId)> {
-        let locations = self.find_locations(app_id)?;
-        if locations.is_empty() {
-            return None;
-        }
+    ) -> FindTargetResult {
+        let locations = match self.find_locations(app_id) {
+            Some(l) if !l.is_empty() => l,
+            _ => return FindTargetResult::NoBinding,
+        };
 
         // First pass: find a bound frame on a visible workspace that doesn't
         // already have this app_id in it
@@ -168,13 +175,12 @@ impl AppBindings {
             {
                 let frame_ids = ws.root.all_frame_ids();
                 if let Some(&fid) = frame_ids.get(loc.frame_index) {
-                    // Check if this frame already has the app
                     let already_has = ws
                         .root
                         .find_frame(fid)
                         .is_some_and(|f| f.windows.iter().any(|w| w.app_id == app_id));
                     if !already_has {
-                        return Some((ws.id, fid));
+                        return FindTargetResult::Target(ws.id, fid);
                     }
                 }
             }
@@ -183,7 +189,6 @@ impl AppBindings {
         // Second pass: any bound frame on a hidden workspace, but only if
         // no bound frame already contains this app. If the app is already
         // placed somewhere, this is a secondary window (dialog, popup, etc.)
-        // and should go to the focused frame instead.
         let any_bound_frame_has_app = locations.iter().any(|loc| {
             workspaces
                 .workspaces
@@ -196,7 +201,7 @@ impl AppBindings {
                 .is_some_and(|f| f.windows.iter().any(|w| w.app_id == app_id))
         });
         if any_bound_frame_has_app {
-            return None;
+            return FindTargetResult::AlreadyPlaced;
         }
 
         for loc in locations {
@@ -207,12 +212,12 @@ impl AppBindings {
             {
                 let frame_ids = ws.root.all_frame_ids();
                 if let Some(&fid) = frame_ids.get(loc.frame_index) {
-                    return Some((ws.id, fid));
+                    return FindTargetResult::Target(ws.id, fid);
                 }
             }
         }
 
-        None
+        FindTargetResult::NoBinding
     }
 
     /// Get the frame index of a FrameId within a workspace.

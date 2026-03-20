@@ -116,6 +116,8 @@ pub struct WindowManager {
     pub output_profiles: crate::output_profiles::OutputProfiles,
     /// Control socket state for window/workspace switching.
     pub control: crate::control::ControlState,
+    /// Currently focused floating window, if any. Takes priority over tiled focus.
+    pub focused_floating: Option<u64>,
 }
 
 /// A window tracked by the WM.
@@ -269,6 +271,7 @@ impl WindowManager {
             drag_preview: crate::decorations::DragPreview::default(),
             output_profiles: crate::output_profiles::OutputProfiles::load(),
             control,
+            focused_floating: None,
         }
     }
 
@@ -525,13 +528,25 @@ impl WindowManager {
         compositor: &WlCompositor,
         qh: &QueueHandle<AppData>,
     ) {
-        // Check if there's an active move drag — use pointer position for accuracy
+        // Check if there's an active move drag on a tiled window
         let drag_pos: Option<(i32, i32)> = self.seats.values().find_map(|s| {
             if s.op_release {
                 return None;
             }
             match &s.op {
-                SeatOp::Move { .. } => Some((s.pointer_x, s.pointer_y)),
+                SeatOp::Move { window_id, .. } => {
+                    // Only show drop preview for tiled windows, not floating
+                    let is_floating = self
+                        .windows
+                        .iter()
+                        .find(|w| w.id == *window_id)
+                        .is_some_and(|w| w.floating);
+                    if is_floating {
+                        None
+                    } else {
+                        Some((s.pointer_x, s.pointer_y))
+                    }
+                }
                 _ => None,
             }
         });
@@ -681,17 +696,13 @@ impl WindowManager {
                 log::info!("Auto-floating popup {} (untitled, app '{}' already open)", window.id, window.app_id);
             }
 
-            // Auto-float secondary windows from bound apps: if the app has a
-            // binding but already has a window in the bound frame, this new
-            // window is a dialog/popup and should float.
-            if !window.floating
-                && !window.app_id.is_empty()
-                && self.app_bindings.has_binding(&window.app_id)
-            {
-                let target = self
-                    .app_bindings
-                    .find_target(&window.app_id, &self.workspaces);
-                if target.is_none() {
+            // Auto-float secondary windows from bound apps: if the app
+            // already has a window in the bound frame, float this one.
+            if !window.floating && !window.app_id.is_empty() {
+                if matches!(
+                    self.app_bindings.find_target(&window.app_id, &self.workspaces),
+                    crate::app_bindings::FindTargetResult::AlreadyPlaced
+                ) {
                     window.floating = true;
                     log::info!(
                         "Auto-floating secondary window '{}' (id={}, bound app already placed)",
@@ -702,7 +713,6 @@ impl WindowManager {
             }
 
             if window.floating {
-                window.proxy.use_csd();
                 // River requires propose_dimensions() for new windows to render.
                 let (fw, fh) = if window.width > 0 && window.height > 0 {
                     (window.width, window.height)
@@ -751,7 +761,8 @@ impl WindowManager {
                     fid
                 );
                 (ws_id.0, fid)
-            } else if let Some((ws_id, fid)) = binding_target {
+            } else if let crate::app_bindings::FindTargetResult::Target(ws_id, fid) = binding_target
+            {
                 log::info!(
                     "Placing window '{}' in bound frame on workspace '{}'",
                     window.app_id,
@@ -961,35 +972,69 @@ impl WindowManager {
                 break;
             }
             if let Some(wid) = interacted_id {
-                // Find which frame this window is in and make it the active tab
-                for ws in &mut self.workspaces.workspaces {
-                    if let Some(frame_id) = ws.root.find_frame_with_window(*wid) {
-                        if let Some(frame) = ws.root.find_frame_mut(frame_id)
-                            && let Some(tab_idx) =
-                                frame.windows.iter().position(|w| w.window_id == *wid)
-                        {
-                            frame.active_tab = tab_idx;
+                // Check if this is a floating window
+                let is_floating = self
+                    .windows
+                    .iter()
+                    .find(|w| w.id == *wid)
+                    .is_some_and(|w| w.floating);
+
+                if is_floating {
+                    self.focused_floating = Some(*wid);
+                } else {
+                    // Clicking a tiled window clears floating focus
+                    self.focused_floating = None;
+                    // Find which frame this window is in and make it the active tab
+                    for ws in &mut self.workspaces.workspaces {
+                        if let Some(frame_id) = ws.root.find_frame_with_window(*wid) {
+                            if let Some(frame) = ws.root.find_frame_mut(frame_id)
+                                && let Some(tab_idx) =
+                                    frame.windows.iter().position(|w| w.window_id == *wid)
+                            {
+                                frame.active_tab = tab_idx;
+                            }
+                            ws.focused_frame = frame_id;
+                            self.workspaces.focused_workspace = ws.id;
+                            break;
                         }
-                        ws.focused_frame = frame_id;
-                        self.workspaces.focused_workspace = ws.id;
-                        break;
                     }
                 }
             }
         }
 
-        // Focus-follows-mouse
+        // Focus-follows-mouse (including floating windows)
         if self.config.general.focus_follows_mouse && !has_keyboard_action {
-            let inputs: Vec<crate::focus::FocusInput> = self
-                .seats
-                .values()
-                .map(|seat| crate::focus::FocusInput {
-                    hovered_window_id: seat.hovered.as_ref().map(|w| w.id().protocol_id() as u64),
-                    pointer_x: seat.pointer_x,
-                    pointer_y: seat.pointer_y,
-                })
-                .collect();
-            self.apply_focus_follows_mouse(&inputs);
+            // Check if pointer is hovering a floating window
+            let hovered_floating: Option<u64> = self.seats.values().find_map(|seat| {
+                let wid = seat.hovered.as_ref().map(|w| w.id().protocol_id() as u64)?;
+                let is_floating = self
+                    .windows
+                    .iter()
+                    .find(|w| w.id == wid)
+                    .is_some_and(|w| w.floating);
+                is_floating.then_some(wid)
+            });
+
+            if let Some(fid) = hovered_floating {
+                self.focused_floating = Some(fid);
+            } else {
+                // Pointer is over a tiled area — clear floating focus
+                self.focused_floating = None;
+
+                let inputs: Vec<crate::focus::FocusInput> = self
+                    .seats
+                    .values()
+                    .map(|seat| crate::focus::FocusInput {
+                        hovered_window_id: seat
+                            .hovered
+                            .as_ref()
+                            .map(|w| w.id().protocol_id() as u64),
+                        pointer_x: seat.pointer_x,
+                        pointer_y: seat.pointer_y,
+                    })
+                    .collect();
+                self.apply_focus_follows_mouse(&inputs);
+            }
         }
 
         for (action, _) in actions {
@@ -997,18 +1042,30 @@ impl WindowManager {
         }
 
         // Handle seat op releases
-        // First collect move-drop data before clearing ops
+        // First collect move-drop data before clearing ops (tiled windows only)
         let move_drops: Vec<(u64, i32, i32)> = self
             .seats
             .values()
             .filter(|s| s.op_release)
             .filter_map(|s| match &s.op {
-                SeatOp::Move { window_id, .. } => Some((*window_id, s.pointer_x, s.pointer_y)),
+                SeatOp::Move { window_id, .. } => {
+                    // Only do frame-drop for tiled windows
+                    let is_floating = self
+                        .windows
+                        .iter()
+                        .find(|w| w.id == *window_id)
+                        .is_some_and(|w| w.floating);
+                    if is_floating {
+                        None
+                    } else {
+                        Some((*window_id, s.pointer_x, s.pointer_y))
+                    }
+                }
                 _ => None,
             })
             .collect();
 
-        // Process move drops
+        // Process move drops (tiled only)
         let gap = self.config.general.gap as i32;
         for (window_id, drop_x, drop_y) in move_drops {
             self.handle_move_drop(window_id, drop_x, drop_y, gap);

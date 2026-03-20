@@ -524,12 +524,16 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
 
                     if is_move {
                         log::info!("Pointer move start on window {} at ({},{})", win.id, sx, sy);
+                        if win.floating {
+                            state.wm.focused_floating = Some(win.id);
+                        }
                         Some(SeatOp::Move {
                             window_id: win.id,
                             start_x: sx,
                             start_y: sy,
                         })
-                    } else {
+                    } else if !win.floating {
+                        // Resize only works on tiled windows (split boundary adjustment)
                         let frame_id = state
                             .wm
                             .workspaces
@@ -558,6 +562,8 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                             resize_h: rh,
                             resize_v: rv,
                         })
+                    } else {
+                        None // No resize for floating windows (for now)
                     }
                 } else if !is_move {
                     // Empty space resize

@@ -97,21 +97,41 @@ impl WindowManager {
             }
         }
 
-        // Focus the active window in the focused frame
-        let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
-        let frame_id = ws.focused_frame;
-        if let Some(frame) = ws.root.find_frame(frame_id) {
-            if let Some(active_win) = frame.active_window() {
-                let wid = active_win.window_id;
-                if let Some(win) = self.windows.iter().find(|w| w.id == wid) {
-                    for seat in self.seats.values() {
-                        seat.proxy.focus_window(&win.proxy);
-                    }
-                }
-            } else {
-                // Empty frame — clear focus
+        // Focus: floating window takes priority if one is active
+        // Clean up focused_floating if the window no longer exists or isn't floating
+        if let Some(fid) = self.focused_floating {
+            let still_valid = self
+                .windows
+                .iter()
+                .find(|w| w.id == fid)
+                .is_some_and(|w| w.floating && !w.closed);
+            if !still_valid {
+                self.focused_floating = None;
+            }
+        }
+
+        if let Some(float_id) = self.focused_floating {
+            if let Some(win) = self.windows.iter().find(|w| w.id == float_id) {
                 for seat in self.seats.values() {
-                    seat.proxy.clear_focus();
+                    seat.proxy.focus_window(&win.proxy);
+                }
+            }
+        } else {
+            let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+            let frame_id = ws.focused_frame;
+            if let Some(frame) = ws.root.find_frame(frame_id) {
+                if let Some(active_win) = frame.active_window() {
+                    let wid = active_win.window_id;
+                    if let Some(win) = self.windows.iter().find(|w| w.id == wid) {
+                        for seat in self.seats.values() {
+                            seat.proxy.focus_window(&win.proxy);
+                        }
+                    }
+                } else {
+                    // Empty frame — clear focus
+                    for seat in self.seats.values() {
+                        seat.proxy.clear_focus();
+                    }
                 }
             }
         }
@@ -305,11 +325,21 @@ impl WindowManager {
             self.empty_frames.cleanup(&empty_ids);
         }
 
-        // Position floating windows
+        // Position and style floating windows
+        let float_border_color = parse_hex_color(&self.config.appearance.active_border);
         for win in &self.windows {
             if win.floating {
                 win.node.set_position(win.float_x, win.float_y);
                 win.node.place_top();
+                let all_edges = Edges::Left | Edges::Right | Edges::Top | Edges::Bottom;
+                win.proxy.set_borders(
+                    all_edges,
+                    border,
+                    float_border_color.0,
+                    float_border_color.1,
+                    float_border_color.2,
+                    float_border_color.3,
+                );
             }
         }
     }

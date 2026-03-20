@@ -26,18 +26,26 @@ impl WindowManager {
             Action::None => {}
 
             Action::Close => {
-                // Close window if frame has one; if frame is empty, unsplit it
-                let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
-                let frame_id = ws.focused_frame;
-                if let Some(frame) = ws.root.find_frame(frame_id) {
-                    if let Some(win_ref) = frame.active_window() {
-                        let window_id = win_ref.window_id;
-                        if let Some(win) = self.windows.iter().find(|w| w.id == window_id) {
-                            win.proxy.close();
+                // Close floating window if one is focused
+                if let Some(float_id) = self.focused_floating {
+                    if let Some(win) = self.windows.iter().find(|w| w.id == float_id) {
+                        win.proxy.close();
+                    }
+                    self.focused_floating = None;
+                } else {
+                    // Close window if frame has one; if frame is empty, unsplit it
+                    let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+                    let frame_id = ws.focused_frame;
+                    if let Some(frame) = ws.root.find_frame(frame_id) {
+                        if let Some(win_ref) = frame.active_window() {
+                            let window_id = win_ref.window_id;
+                            if let Some(win) = self.windows.iter().find(|w| w.id == window_id) {
+                                win.proxy.close();
+                            }
+                        } else {
+                            // Frame is empty — remove it (unsplit)
+                            self.perform_unsplit();
                         }
-                    } else {
-                        // Frame is empty — remove it (unsplit)
-                        self.perform_unsplit();
                     }
                 }
             }

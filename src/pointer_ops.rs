@@ -169,41 +169,85 @@ impl WindowManager {
     }
 
     pub(crate) fn handle_seat_ops(&mut self) {
-        // Collect resize ops with pointer position
-        struct ResizeCmd {
+        // Collect move ops for floating windows
+        struct FloatMoveCmd {
+            window_id: u64,
+            start_x: i32,
+            start_y: i32,
+            dx: i32,
+            dy: i32,
+        }
+        struct TiledResizeCmd {
             pointer_x: i32,
             pointer_y: i32,
         }
-        let resize_ops: Vec<ResizeCmd> = self
-            .seats
-            .values_mut()
-            .filter(|s| !s.op_release)
-            .filter_map(|s| {
-                match &s.op {
-                    SeatOp::Resize { .. } | SeatOp::ResizeEmpty { .. } => {}
-                    _ => return None,
-                };
 
-                let ddx = s.op_dx - s.op_prev_dx;
-                let ddy = s.op_dy - s.op_prev_dy;
-                s.op_prev_dx = s.op_dx;
-                s.op_prev_dy = s.op_dy;
-                if ddx != 0 || ddy != 0 {
+        let mut float_moves: Vec<FloatMoveCmd> = Vec::new();
+        let mut tiled_resizes: Vec<TiledResizeCmd> = Vec::new();
+
+        for s in self.seats.values_mut().filter(|s| !s.op_release) {
+            let ddx = s.op_dx - s.op_prev_dx;
+            let ddy = s.op_dy - s.op_prev_dy;
+            s.op_prev_dx = s.op_dx;
+            s.op_prev_dy = s.op_dy;
+            if ddx == 0 && ddy == 0 {
+                continue;
+            }
+
+            match &s.op {
+                SeatOp::Move {
+                    window_id,
+                    start_x,
+                    start_y,
+                } => {
+                    // Check if the window is floating
+                    let is_floating = self
+                        .windows
+                        .iter()
+                        .find(|w| w.id == *window_id)
+                        .is_some_and(|w| w.floating);
+                    if is_floating {
+                        float_moves.push(FloatMoveCmd {
+                            window_id: *window_id,
+                            start_x: *start_x,
+                            start_y: *start_y,
+                            dx: s.op_dx,
+                            dy: s.op_dy,
+                        });
+                    }
+                    // Tiled moves show preview overlay — handled elsewhere
+                }
+                SeatOp::Resize { .. } => {
                     let cur_x = s.pointer_x + s.op_dx;
                     let cur_y = s.pointer_y + s.op_dy;
-                    Some(ResizeCmd {
+                    tiled_resizes.push(TiledResizeCmd {
                         pointer_x: cur_x,
                         pointer_y: cur_y,
-                    })
-                } else {
-                    None
+                    });
                 }
-            })
-            .collect();
+                SeatOp::ResizeEmpty { .. } => {
+                    let cur_x = s.pointer_x + s.op_dx;
+                    let cur_y = s.pointer_y + s.op_dy;
+                    tiled_resizes.push(TiledResizeCmd {
+                        pointer_x: cur_x,
+                        pointer_y: cur_y,
+                    });
+                }
+                _ => {}
+            }
+        }
 
+        // Apply floating moves
+        for cmd in float_moves {
+            if let Some(win) = self.windows.iter_mut().find(|w| w.id == cmd.window_id) {
+                win.float_x = cmd.start_x + cmd.dx;
+                win.float_y = cmd.start_y + cmd.dy;
+            }
+        }
+
+        // Apply tiled resizes
         let gap = self.config.general.gap as i32;
-
-        for cmd in resize_ops {
+        for cmd in tiled_resizes {
             let ws_idx = self.workspaces.focused_workspace.0;
             let area = {
                 let ws = &self.workspaces.workspaces[ws_idx];
@@ -217,9 +261,6 @@ impl WindowManager {
                     .adjust_ratio_at(area, cmd.pointer_x, cmd.pointer_y, gap);
             }
         }
-
-        // During drag, the preview overlay shows where the window will land.
-        // The window stays in its tiled position — no visual window dragging.
     }
 
     /// Determine which resize axes are active based on pointer proximity
