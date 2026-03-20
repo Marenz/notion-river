@@ -125,6 +125,11 @@ impl AppBindings {
 
     /// Find the best frame to place a new window with the given app_id.
     /// Returns (WorkspaceId, FrameId) or None if no binding exists.
+    /// Check if any binding exists for this app_id (exact or wildcard).
+    pub fn has_binding(&self, app_id: &str) -> bool {
+        self.find_locations(app_id).is_some()
+    }
+
     /// Find locations for an app_id, supporting wildcard prefixes (e.g. "steam_app_*").
     fn find_locations(&self, app_id: &str) -> Option<&Vec<BoundLocation>> {
         // Exact match first
@@ -175,7 +180,25 @@ impl AppBindings {
             }
         }
 
-        // Second pass: any bound frame (even on hidden workspace), first defined wins
+        // Second pass: any bound frame on a hidden workspace, but only if
+        // no bound frame already contains this app. If the app is already
+        // placed somewhere, this is a secondary window (dialog, popup, etc.)
+        // and should go to the focused frame instead.
+        let any_bound_frame_has_app = locations.iter().any(|loc| {
+            workspaces
+                .workspaces
+                .iter()
+                .find(|w| w.name == loc.workspace)
+                .and_then(|ws| {
+                    let fid = *ws.root.all_frame_ids().get(loc.frame_index)?;
+                    ws.root.find_frame(fid)
+                })
+                .is_some_and(|f| f.windows.iter().any(|w| w.app_id == app_id))
+        });
+        if any_bound_frame_has_app {
+            return None;
+        }
+
         for loc in locations {
             if let Some(ws) = workspaces
                 .workspaces

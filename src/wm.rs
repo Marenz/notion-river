@@ -334,11 +334,11 @@ impl WindowManager {
             Vec::new();
 
         for (app_id, locations) in &self.app_bindings.bindings {
-            // Find all windows with this app_id
+            // Find all non-floating windows with this app_id
             let window_ids: Vec<u64> = self
                 .windows
                 .iter()
-                .filter(|w| w.app_id == *app_id)
+                .filter(|w| w.app_id == *app_id && !w.floating)
                 .map(|w| w.id)
                 .collect();
 
@@ -681,8 +681,49 @@ impl WindowManager {
                 log::info!("Auto-floating popup {} (untitled, app '{}' already open)", window.id, window.app_id);
             }
 
+            // Auto-float secondary windows from bound apps: if the app has a
+            // binding but already has a window in the bound frame, this new
+            // window is a dialog/popup and should float.
+            if !window.floating
+                && !window.app_id.is_empty()
+                && self.app_bindings.has_binding(&window.app_id)
+            {
+                let target = self
+                    .app_bindings
+                    .find_target(&window.app_id, &self.workspaces);
+                if target.is_none() {
+                    window.floating = true;
+                    log::info!(
+                        "Auto-floating secondary window '{}' (id={}, bound app already placed)",
+                        window.app_id,
+                        window.id,
+                    );
+                }
+            }
+
             if window.floating {
                 window.proxy.use_csd();
+                // River requires propose_dimensions() for new windows to render.
+                let (fw, fh) = if window.width > 0 && window.height > 0 {
+                    (window.width, window.height)
+                } else {
+                    (0, 0)
+                };
+                window.proxy.propose_dimensions(fw, fh);
+
+                // Center floating window on the focused output's visible area.
+                let focused_ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+                if let Some(output) = focused_ws
+                    .active_output
+                    .and_then(|oid| self.workspaces.output(oid))
+                {
+                    let area = output.usable_rect();
+                    let win_w = if fw > 0 { fw } else { 640 };
+                    let win_h = if fh > 0 { fh } else { 480 };
+                    window.float_x = area.x + (area.width - win_w) / 2;
+                    window.float_y = area.y + (area.height - win_h) / 2;
+                }
+
                 window.new = false;
                 continue;
             }
@@ -698,6 +739,10 @@ impl WindowManager {
                 )
             });
 
+            let binding_target = self
+                .app_bindings
+                .find_target(&window.app_id, &self.workspaces);
+
             let (target_ws_idx, frame_id) = if let Some((ws_id, fid)) = restored {
                 log::info!(
                     "Restoring window '{}' to workspace '{}' frame {:?}",
@@ -706,10 +751,7 @@ impl WindowManager {
                     fid
                 );
                 (ws_id.0, fid)
-            } else if let Some((ws_id, fid)) = self
-                .app_bindings
-                .find_target(&window.app_id, &self.workspaces)
-            {
+            } else if let Some((ws_id, fid)) = binding_target {
                 log::info!(
                     "Placing window '{}' in bound frame on workspace '{}'",
                     window.app_id,

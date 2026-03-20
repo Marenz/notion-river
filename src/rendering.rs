@@ -67,10 +67,22 @@ impl WindowManager {
             }
         }
 
+        // Manage floating windows: propose dimensions + show
+        for win in &self.windows {
+            if win.floating {
+                let (fw, fh) = if win.width > 0 && win.height > 0 {
+                    (win.width, win.height)
+                } else {
+                    (0, 0)
+                };
+                win.proxy.propose_dimensions(fw, fh);
+                win.proxy.show();
+            }
+        }
+
         // Hide windows on non-visible workspaces
         for win in &self.windows {
             if win.floating {
-                win.proxy.show();
                 continue;
             }
             if let Some(frame_id) = win.frame_id {
