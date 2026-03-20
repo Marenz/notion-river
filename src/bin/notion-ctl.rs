@@ -1,5 +1,5 @@
 use std::env;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ fn socket_path() -> PathBuf {
 
 fn usage() {
     eprintln!(
-        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl focus-window <id>\n  notion-ctl switch-workspace <name>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>"
+        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl subscribe-workspaces\n  notion-ctl subscribe-workspace <name>\n  notion-ctl focus-window <id>\n  notion-ctl switch-workspace <name>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>"
     );
 }
 
@@ -23,9 +23,19 @@ fn main() {
         std::process::exit(2);
     }
 
+    let is_subscribe = args[0] == "subscribe-workspaces" || args[0] == "subscribe-workspace";
+
     let cmd = match args[0].as_str() {
         "list-windows" => "list-windows".to_string(),
         "list-workspaces" => "list-workspaces".to_string(),
+        "subscribe-workspaces" => "subscribe-workspaces".to_string(),
+        "subscribe-workspace" => {
+            if args.len() < 2 {
+                usage();
+                std::process::exit(2);
+            }
+            format!("subscribe-workspace {}", args[1..].join(" "))
+        }
         "focus-window" => {
             if args.len() != 2 {
                 usage();
@@ -80,20 +90,33 @@ fn main() {
         }
     };
 
-    if let Err(e) = stream.write_all(cmd.as_bytes()) {
+    // Send command with newline (required for subscribe, backwards compatible for others).
+    if let Err(e) = stream.write_all(format!("{cmd}\n").as_bytes()) {
         eprintln!("failed to write command: {e}");
         std::process::exit(1);
     }
-    let _ = stream.shutdown(std::net::Shutdown::Write);
 
-    let mut response = String::new();
-    match stream.read_to_string(&mut response) {
-        Ok(_) => {
-            print!("{response}");
+    if is_subscribe {
+        // Streaming mode: read and print lines as they arrive.
+        let reader = BufReader::new(stream);
+        for line in reader.lines() {
+            match line {
+                Ok(line) => println!("{line}"),
+                Err(_) => break,
+            }
         }
-        Err(e) => {
-            eprintln!("failed to read response: {e}");
-            std::process::exit(1);
+    } else {
+        // Legacy one-shot mode.
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let mut response = String::new();
+        match stream.read_to_string(&mut response) {
+            Ok(_) => {
+                print!("{response}");
+            }
+            Err(e) => {
+                eprintln!("failed to read response: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }

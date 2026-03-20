@@ -1,7 +1,9 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use crate::ipc::Subscriber;
 
 use serde::Serialize;
 
@@ -61,7 +63,7 @@ pub struct ControlState {
 }
 
 impl ControlState {
-    pub fn new() -> Self {
+    pub fn new(subscribers: Arc<Mutex<Vec<Subscriber>>>) -> Self {
         let path = socket_path();
         let _ = std::fs::remove_file(&path);
 
@@ -78,6 +80,7 @@ impl ControlState {
 
         let pending_thread = Arc::clone(&pending);
         let snapshot_thread = Arc::clone(&snapshot);
+        let subscribers_thread = Arc::clone(&subscribers);
         let path_thread = path.clone();
 
         std::thread::spawn(move || {
@@ -93,14 +96,19 @@ impl ControlState {
             };
 
             for stream in listener.incoming() {
-                let mut stream = match stream {
+                let stream = match stream {
                     Ok(s) => s,
                     Err(e) => {
                         log::warn!("Control socket accept failed: {e}");
                         continue;
                     }
                 };
-                handle_client(&mut stream, &pending_thread, &snapshot_thread);
+                handle_client(
+                    stream,
+                    &pending_thread,
+                    &snapshot_thread,
+                    &subscribers_thread,
+                );
                 // Signal the main loop to trigger a manage cycle
                 unsafe { libc::write(write_fd, b"x".as_ptr() as _, 1) };
             }
@@ -138,23 +146,83 @@ impl Drop for ControlState {
 }
 
 fn handle_client(
-    stream: &mut UnixStream,
+    stream: UnixStream,
     pending: &Arc<Mutex<Vec<ControlRequest>>>,
     snapshot: &Arc<Mutex<Snapshot>>,
+    subscribers: &Arc<Mutex<Vec<Subscriber>>>,
 ) {
+    // Try line-based read first (for subscribe-workspaces), fall back to
+    // read-to-EOF for legacy clients that shutdown(Write) before we read.
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(100)));
+
+    let mut reader = BufReader::new(stream);
     let mut buf = String::new();
-    if stream.read_to_string(&mut buf).is_err() {
-        let _ = stream.write_all(b"ERR read\n");
-        return;
+    match reader.read_line(&mut buf) {
+        Ok(0) => {
+            let _ = reader.get_mut().write_all(b"ERR empty\n");
+            return;
+        }
+        Ok(_) => {} // Got a line
+        Err(_) => {
+            // Timeout or error — legacy client that shuts down write end.
+            let _ = reader.read_to_string(&mut buf);
+        }
     }
-    let line = buf.trim();
+
+    let line = buf.trim().to_string();
     if line.is_empty() {
-        let _ = stream.write_all(b"ERR empty\n");
+        let _ = reader.get_mut().write_all(b"ERR empty\n");
         return;
     }
 
     let mut parts = line.split_whitespace();
     let cmd = parts.next().unwrap_or("");
+
+    // Handle subscribe commands: keep connection open for streaming.
+    if cmd == "subscribe-workspaces" || cmd == "subscribe-workspace" {
+        let mut stream = reader.into_inner();
+        let _ = stream.set_read_timeout(None);
+
+        let kind = if cmd == "subscribe-workspace" {
+            let ws_name = parts.collect::<Vec<_>>().join(" ");
+            if ws_name.is_empty() {
+                let _ = stream.write_all(b"ERR missing workspace name\n");
+                return;
+            }
+            // Send initial state for this workspace.
+            let snap = snapshot.lock().expect("control snapshot poisoned").clone();
+            let initial = single_ws_json_from_snapshot(&snap, &ws_name);
+            if stream.write_all(format!("{initial}\n").as_bytes()).is_err() {
+                return;
+            }
+            crate::ipc::SubscriptionKind::SingleWorkspace(ws_name)
+        } else {
+            // Send current full state.
+            let ipc_path = std::env::var("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/tmp"))
+                .join("notion-river-workspaces");
+            if let Ok(current) = std::fs::read_to_string(&ipc_path) {
+                if stream.write_all(current.as_bytes()).is_err() {
+                    return;
+                }
+            }
+            crate::ipc::SubscriptionKind::AllWorkspaces
+        };
+
+        subscribers.lock().unwrap().push(Subscriber {
+            stream,
+            kind,
+            last_json: String::new(),
+        });
+        log::info!("New workspace subscriber connected");
+        return;
+    }
+
+    // All other commands: extract stream for response writing.
+    let mut stream = reader.into_inner();
+    let _ = stream.set_read_timeout(None);
+
     match cmd {
         "list-windows" => {
             let snap = snapshot.lock().expect("control snapshot poisoned").clone();
@@ -299,6 +367,28 @@ fn handle_client(
             let _ = stream.write_all(b"ERR unknown\n");
         }
     }
+}
+
+/// Generate waybar JSON for a single workspace from the control snapshot.
+/// Used for initial state when a subscriber connects (before the main thread runs).
+fn single_ws_json_from_snapshot(snap: &Snapshot, name: &str) -> String {
+    for ws in &snap.workspaces {
+        if ws.name != name {
+            continue;
+        }
+        let cls = if ws.focused {
+            "focused"
+        } else if ws.visible {
+            "visible"
+        } else {
+            "hidden"
+        };
+        let output = ws.output.as_deref().unwrap_or("?");
+        return format!(
+            r#"{{"text": "{name}", "tooltip": "{name} on {output}", "class": "{cls}"}}"#
+        );
+    }
+    format!(r#"{{"text": "{name}", "class": "empty"}}"#)
 }
 
 pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {

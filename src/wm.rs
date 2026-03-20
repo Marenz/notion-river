@@ -246,6 +246,8 @@ impl WindowManager {
         };
 
         let colors = config.appearance.colors();
+        let ipc = crate::ipc::IpcState::new();
+        let control = crate::control::ControlState::new(std::sync::Arc::clone(&ipc.subscribers));
         Self {
             config,
             colors,
@@ -262,11 +264,11 @@ impl WindowManager {
             saved_active_tabs,
             suppress_interaction: false,
             layer_shell_has_focus: false,
-            ipc: crate::ipc::IpcState::new(),
+            ipc,
             app_bindings: crate::app_bindings::AppBindings::load(),
             drag_preview: crate::decorations::DragPreview::default(),
             output_profiles: crate::output_profiles::OutputProfiles::load(),
-            control: crate::control::ControlState::new(),
+            control,
         }
     }
 
