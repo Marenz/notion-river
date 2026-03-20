@@ -153,8 +153,8 @@ pub fn load_state() -> Option<SavedState> {
     match serde_json::from_str(&json) {
         Ok(state) => {
             log::info!("Loaded saved state from {}", path.display());
-            // Delete the state file after loading (one-shot restore)
-            let _ = std::fs::remove_file(&path);
+            // Keep the state file on disk — if the WM crashes before saving
+            // again, the file is still there for the next restart.
             Some(state)
         }
         Err(e) => {

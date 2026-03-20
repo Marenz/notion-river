@@ -2,7 +2,7 @@
 //! visibility) and position/border/decoration drawing.
 
 use wayland_client::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
-use wayland_client::QueueHandle;
+use wayland_client::{Proxy, QueueHandle};
 
 use crate::decorations::TAB_BAR_HEIGHT;
 use crate::layout::FrameId;
@@ -290,6 +290,22 @@ impl WindowManager {
                         })
                         .unwrap_or(false);
 
+                    // Compute hovered tab index if pointer is on this decoration.
+                    // surface_x is in surface-local coords (unscaled).
+                    let hovered_tab = self.hover_surface_id.and_then(|sid| {
+                        let dec = self.decorations.decorations.get(&cmd.window_id)?;
+                        if dec.surface.id().protocol_id() != sid {
+                            return None;
+                        }
+                        let num_tabs = frame.windows.len();
+                        if num_tabs <= 1 {
+                            return None;
+                        }
+                        let tab_width = cmd.rect_width as f64 / num_tabs as f64;
+                        let idx = (self.hover_surface_x / tab_width) as usize;
+                        Some(idx.min(num_tabs - 1))
+                    });
+
                     let win = &self.windows[cmd.win_idx];
                     self.decorations.draw_tab_bar(
                         cmd.window_id,
@@ -299,6 +315,7 @@ impl WindowManager {
                         cmd.is_focused,
                         is_bound,
                         cmd.fractional_scale,
+                        hovered_tab,
                         &self.colors,
                         shm,
                         compositor,

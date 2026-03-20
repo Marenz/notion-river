@@ -19,10 +19,10 @@ use crate::workspace::{WorkspaceId, WorkspaceManager};
 
 /// Result of looking up a binding target for an app.
 pub enum FindTargetResult {
-    /// A valid placement target was found.
+    /// A valid placement target was found (empty bound frame).
     Target(WorkspaceId, FrameId),
-    /// The app already has a window in a bound frame (secondary window).
-    AlreadyPlaced,
+    /// The app already has a window in a bound frame — place as additional tab.
+    AlreadyPlaced(WorkspaceId, FrameId),
     /// No binding exists or bound frame not found.
     NoBinding,
 }
@@ -187,20 +187,24 @@ impl AppBindings {
         }
 
         // Second pass: check if the app is already placed in a bound frame
-        // (visible or not). If so, this is a secondary window.
-        let any_bound_frame_has_app = locations.iter().any(|loc| {
-            workspaces
+        // (visible or not). Return that frame so the new window tabs in.
+        for loc in locations {
+            if let Some(ws) = workspaces
                 .workspaces
                 .iter()
                 .find(|w| w.name == loc.workspace)
-                .and_then(|ws| {
-                    let fid = *ws.root.all_frame_ids().get(loc.frame_index)?;
-                    ws.root.find_frame(fid)
-                })
-                .is_some_and(|f| f.windows.iter().any(|w| w.app_id == app_id))
-        });
-        if any_bound_frame_has_app {
-            return FindTargetResult::AlreadyPlaced;
+            {
+                let frame_ids = ws.root.all_frame_ids();
+                if let Some(&fid) = frame_ids.get(loc.frame_index) {
+                    let has_app = ws
+                        .root
+                        .find_frame(fid)
+                        .is_some_and(|f| f.windows.iter().any(|w| w.app_id == app_id));
+                    if has_app {
+                        return FindTargetResult::AlreadyPlaced(ws.id, fid);
+                    }
+                }
+            }
         }
 
         for loc in locations {

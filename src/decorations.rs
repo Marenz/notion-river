@@ -81,6 +81,7 @@ impl DecorationManager {
         is_focused_frame: bool,
         is_bound: bool,
         fractional_scale: f64,
+        hovered_tab: Option<usize>,
         colors: &Colors,
         shm: &WlShm,
         compositor: &WlCompositor,
@@ -104,7 +105,8 @@ impl DecorationManager {
         // Compute a simple hash to avoid unnecessary redraws
         let content_hash = compute_hash(frame, is_focused_frame, width)
             ^ (buffer_scale as u64 * 0x9e3779b9)
-            ^ (is_bound as u64 * 0x517cc1b7);
+            ^ (is_bound as u64 * 0x517cc1b7)
+            ^ (hovered_tab.unwrap_or(usize::MAX) as u64 * 0x6c62272e);
 
         let surface_to_window = &mut self.surface_to_window;
         let dec = self.decorations.entry(window_id).or_insert_with(|| {
@@ -188,6 +190,7 @@ impl DecorationManager {
                 frame,
                 is_focused_frame,
                 is_bound,
+                hovered_tab,
                 colors,
             );
 
@@ -471,6 +474,19 @@ fn compute_hash(frame: &Frame, is_focused: bool, width: i32) -> u64 {
     hasher.finish()
 }
 
+/// Lighten an ARGB8888 color by blending toward white.
+fn lighten(color: u32, amount: u8) -> u32 {
+    let a = (color >> 24) & 0xFF;
+    let r = (color >> 16) & 0xFF;
+    let g = (color >> 8) & 0xFF;
+    let b = color & 0xFF;
+    let amt = amount as u32;
+    let r = (r + (255 - r) * amt / 255).min(255);
+    let g = (g + (255 - g) * amt / 255).min(255);
+    let b = (b + (255 - b) * amt / 255).min(255);
+    (a << 24) | (r << 16) | (g << 8) | b
+}
+
 /// Draw the tab bar pixels.
 fn draw_tab_bar_pixels(
     pixels: &mut [u32],
@@ -479,6 +495,7 @@ fn draw_tab_bar_pixels(
     frame: &Frame,
     is_focused: bool,
     is_bound: bool,
+    hovered_tab: Option<usize>,
     colors: &Colors,
 ) {
     let num_tabs = frame.windows.len();
@@ -491,10 +508,13 @@ fn draw_tab_bar_pixels(
 
     for tab_idx in 0..num_tabs {
         let is_active = tab_idx == frame.active_tab;
+        let is_hovered = hovered_tab == Some(tab_idx) && !is_active;
         let bg = if is_active && is_focused {
             colors.tab_focused_active
         } else if is_active {
             colors.tab_active
+        } else if is_hovered {
+            lighten(colors.tab_inactive, 40)
         } else {
             colors.tab_inactive
         };
@@ -554,6 +574,8 @@ fn draw_tab_bar_pixels(
             let title = &title;
             let text_color = if is_active {
                 colors.tab_text_active
+            } else if is_hovered {
+                lighten(colors.tab_text_inactive, 60)
             } else {
                 colors.tab_text_inactive
             };

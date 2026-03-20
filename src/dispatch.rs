@@ -763,6 +763,8 @@ impl Dispatch<wayland_client::protocol::wl_pointer::WlPointer, ()> for AppData {
         match event {
             Event::Motion { surface_x, .. } => {
                 state.wl_pointer_surface_x = surface_x;
+                state.wm.hover_surface_x = surface_x;
+
                 if let Some(wm_proxy) = &state.river_wm {
                     wm_proxy.manage_dirty();
                 }
@@ -770,16 +772,20 @@ impl Dispatch<wayland_client::protocol::wl_pointer::WlPointer, ()> for AppData {
             Event::Enter {
                 surface, surface_x, ..
             } => {
-                state.wl_pointer_surface = Some(surface.id().protocol_id());
+                let sid = surface.id().protocol_id();
+                state.wl_pointer_surface = Some(sid);
                 state.wl_pointer_surface_x = surface_x;
+                state.wm.hover_surface_id = Some(sid);
+                state.wm.hover_surface_x = surface_x;
                 if let Some(wm_proxy) = &state.river_wm {
                     wm_proxy.manage_dirty();
                 }
             }
             Event::Leave { .. } => {
-                // Don't clear — keep the last known surface so pointer
-                // bindings can reference it (River grabs the pointer and
-                // sends Leave before the binding event arrives).
+                state.wm.hover_surface_id = None;
+                // Don't clear wl_pointer_surface — keep the last known surface
+                // so pointer bindings can reference it (River grabs the pointer
+                // and sends Leave before the binding event arrives).
             }
             Event::Button {
                 button,

@@ -118,6 +118,9 @@ pub struct WindowManager {
     pub control: crate::control::ControlState,
     /// Currently focused floating window, if any. Takes priority over tiled focus.
     pub focused_floating: Option<u64>,
+    /// Pointer hover state on decoration surfaces (for tab hover highlight).
+    pub hover_surface_id: Option<u32>,
+    pub hover_surface_x: f64,
 }
 
 /// A window tracked by the WM.
@@ -274,6 +277,8 @@ impl WindowManager {
             output_profiles: crate::output_profiles::OutputProfiles::load(),
             control,
             focused_floating: None,
+            hover_surface_id: None,
+            hover_surface_x: 0.0,
         }
     }
 
@@ -700,22 +705,10 @@ impl WindowManager {
                 log::info!("Auto-floating popup {} (untitled, app '{}' already open)", window.id, window.app_id);
             }
 
-            // Auto-float secondary windows from bound apps: if the app
-            // already has a window in the bound frame, float this one.
-            if !window.floating
-                && !window.app_id.is_empty()
-                && matches!(
-                    self.app_bindings.find_target(&window.app_id, &self.workspaces),
-                    crate::app_bindings::FindTargetResult::AlreadyPlaced
-                )
-            {
-                window.floating = true;
-                log::info!(
-                    "Auto-floating secondary window '{}' (id={}, bound app already placed)",
-                    window.app_id,
-                    window.id,
-                );
-            }
+            // Note: when find_target returns AlreadyPlaced, the window is placed
+            // as a tab in the bound frame (see below). We don't auto-float here
+            // because we can't reliably distinguish dialogs from legitimate
+            // second windows (e.g. Vivaldi's multiple browser windows).
 
             if window.floating {
                 // River requires propose_dimensions() for new windows to render.
@@ -774,7 +767,9 @@ impl WindowManager {
                     fid
                 );
                 (ws_id.0, fid)
-            } else if let crate::app_bindings::FindTargetResult::Target(ws_id, fid) = binding_target
+            } else if let crate::app_bindings::FindTargetResult::Target(ws_id, fid)
+            | crate::app_bindings::FindTargetResult::AlreadyPlaced(ws_id, fid) =
+                binding_target
             {
                 log::info!(
                     "Placing window '{}' in bound frame on workspace '{}'",
