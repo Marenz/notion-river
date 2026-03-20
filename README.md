@@ -1,94 +1,135 @@
-# notion-river
+<h1 align="center">notion-river</h1>
 
-A **static tiling** window manager for the [River](https://codeberg.org/river/river) Wayland compositor (0.4.x+), inspired by [Notion](https://notionwm.net/) (formerly Ion3).
+<p align="center">
+  <b>Static tiling window manager for <a href="https://codeberg.org/river/river">River</a></b><br>
+  <i>Inspired by <a href="https://notionwm.net/">Notion</a> (formerly Ion3)</i>
+</p>
 
-## What is "static tiling"?
+<p align="center">
+  <a href="#features">Features</a> &bull;
+  <a href="#how-it-works">How it Works</a> &bull;
+  <a href="#getting-started">Getting Started</a> &bull;
+  <a href="#keybindings">Keybindings</a> &bull;
+  <a href="#ipc">IPC</a> &bull;
+  <a href="#configuration">Configuration</a>
+</p>
+
+---
+
+## How it Works
 
 Unlike dynamic tiling WMs (i3, Sway, Hyprland) where the layout reflows every time a window opens or closes, notion-river uses **persistent frames**:
 
-- The screen is divided into a tree of frames (cells) that you create manually with split commands
-- Frames persist even when empty — they're the skeleton of your workspace
-- Windows are placed *into* frames as **tabs** — multiple windows share a frame, one visible at a time
-- Opening/closing a window never changes the layout — only explicit user actions (split, unsplit) do
+```
+ ┌──────────────┬──────────┐
+ │              │  Browser  │
+ │   Terminal   ├──────────┤
+ │              │  Editor   │
+ ├──────────────┤  (tab 2)  │
+ │   (empty)    │           │
+ └──────────────┴──────────┘
+```
 
-This gives you a predictable, stable workspace layout that doesn't rearrange itself.
+- **Frames** are the skeleton of your workspace — they exist independently of windows
+- Windows live *inside* frames as **tabs** (multiple windows per frame, one visible at a time)
+- Opening or closing a window **never changes the layout** — only your explicit split/unsplit commands do
+- Empty frames are visible as wireframe outlines, ready for new windows
+
+The result: a predictable, stable workspace that doesn't rearrange itself.
 
 ## Features
 
-- **Static tiling** with manual split/unsplit (horizontal, vertical, toggle)
-- **Tabbed frames** — multiple windows per frame, click tab bar to switch
-- **Empty frame indicators** — visible wireframe for empty cells
-- **App-to-frame bindings** — bind apps to specific frames (`Super+f` toggle, `Super+Shift+f` exclusive), with wildcard app_id matching and optional fixed dimensions
-- **Visual binding indicator** — bound frames show ⊙ in the tab bar
-- **Auto-float popups** — windows with DimensionsHint auto-float as popups
-- **Fullscreen toggle** — `Super+Return` toggles fullscreen
-- **Resize mode** — `Super+R` enters/exits, absolute direction semantics (Up always moves boundary up)
-- **Focus-follows-mouse** across frames and monitors (including empty frames)
-- **Cursor-follows-focus** on keyboard navigation
-- **Cross-monitor focus and window moving** with edge-position matching
-- **Pointer drag** — left-drag moves windows between frames (drags clicked tab, not active window), right-drag resizes splits
-- **Multi-monitor** with per-output workspace assignment and hotplug support
-- **Monitor hotplug** — output profiles remember workspace-to-monitor assignments; disconnect preserves workspaces (layout intact, just invisible), reconnect restores previous assignments automatically
-- **Layer-shell support** — waybar, notifications, rofi overlays
-- **Waybar integration** — workspace indicators with per-monitor grouping
-- **IPC control socket** — `notion-ctl` can list/focus windows, switch workspaces, bind/unbind apps, set fixed dimensions
-- **Window switcher** — rofi integration with combined drun+run+windows mode via `notion-ctl`
-- **HiDPI / fractional scaling** — wp_viewporter protocol, scale 1.5x via kanshi (clean fraction, no wlroots blur)
-- **XWayland support** — River rebuilt with `-Dxwayland` for legacy X11 apps (Steam, etc.)
-- **Cairo+Pango font rendering** — crisp tab bar labels
+### Tiling
+- **Static split tree** — manual horizontal/vertical splits with adjustable ratios
+- **Tabbed frames** — multiple windows per frame, click tab bar or `Super+n/p` to switch
+- **Empty frame indicators** — visible wireframe cells waiting for windows
+- **Cross-monitor focus & move** — seamless window movement between outputs with edge-position matching
+- **Resize mode** — `Super+R` enters resize mode with absolute direction semantics
+
+### Floating
+- **Auto-float dialogs** — secondary windows from bound apps float automatically
+- **Auto-float notifications** — untitled popups (e.g. Thunderbird) float in the top-right corner
+- **Drag to move** — `Super+LMB` moves floating windows
+- **Focus-follows-mouse** — hover over a floating window to focus it
+- **Keyboard control** — `Super+C` closes the focused floating window
+- **Borders** — floating windows get a colored border matching your theme
+
+### App Bindings
+- **Bind apps to frames** — `Super+F` toggles, `Super+Shift+F` makes exclusive
+- **Wildcard matching** — `steam_app_*` binds all Steam games to one frame
+- **Fixed dimensions** — force a resolution per binding (e.g. 1920x1080 for game streaming)
+- **Auto-enforcement** — bound windows are moved to the correct frame automatically
+- **Visual indicator** — bound frames show `⊙` in the tab bar
+
+### Waybar Integration
+- **Event-driven** — zero-polling workspace modules via IPC subscriptions
+- **Per-workspace click** — click a workspace name to switch to it
+- **Configurable appearance** — decoration colors from `config.toml`
+
+### Pointer
+- **Drag & drop** — `Super+LMB` moves windows between frames with visual split preview
+- **Resize splits** — `Super+RMB` adjusts split boundaries
+- **Tab-specific drag** — clicking a non-active tab and dragging moves *that* tab
+- **Focus-follows-mouse** — works across frames, monitors, and floating windows
+
+### Multi-Monitor
+- **Per-output workspaces** — each workspace assigned to a preferred output
+- **Hotplug support** — output profiles remember workspace assignments
+- **Graceful disconnect** — workspaces stay intact when a monitor disconnects
+- **Automatic restore** — reconnecting monitors restores previous layout
+
+### Other
+- **State persistence** — layout, windows, tabs, bindings survive reboots
+- **IPC control socket** — `notion-ctl` for scripting and rofi integration
+- **HiDPI** — Cairo+Pango rendering, wp_viewporter, clean 1.5x scaling
+- **XWayland** — support for legacy X11 apps (Steam, etc.)
+- **Physical key bindings** — work across keyboard layouts (Neo, Dvorak)
 - **Media keys** — volume, brightness, playback controls
-- **Physical key bindings** — work across keyboard layouts (Neo, Dvorak, etc.)
-- **Runtime keyboard layout switching** — `Ctrl+F12` toggles between de/neo and de
-- **Two built-in keybinding profiles** — `i3_neo` (Neo layout) and `notion` (Vim-style)
-- **State persistence** — layout, window placement, active tabs, app bindings, and output profiles saved in `~/.config/notion-river/` (survives reboots). Identifier-only restore matching.
-- **Split moves active window** — splitting a multi-tab frame moves the current window to the new frame
-- **TOML configuration**
+- **Configurable appearance** — tab bar colors, borders, underlines via TOML
 
-## Requirements
+## Getting Started
 
-- [River](https://codeberg.org/river/river) 0.4.x+ (built from source with `-Dxwayland=true`, uses `river-window-management-v1` protocol)
+### Requirements
+
+- [River](https://codeberg.org/river/river) 0.4.x+ (uses `river-window-management-v1` protocol)
 - Rust 1.75+
 - `kanshi` or `wlr-randr` for monitor configuration
 - `waybar` for status bar
 - `foot` or another Wayland terminal
-- `rofi` (with `-normal-window` flag) or `fuzzel` for app launcher
-- `wpctl` (PipeWire) for volume control
-- `playerctl` for media playback control
+- `rofi` for app launcher / window switcher
 
-## Building
+### Building
 
 ```sh
 git clone https://github.com/Marenz/notion-river
 cd notion-river
 cargo build --release
-cp target/release/notion-river ~/.local/bin/
+cp target/release/notion-river target/release/notion-ctl ~/.local/bin/
 ```
 
-## Setup
+### Setup
 
-1. Create the River init script at `~/.config/river/init`:
+1. **River init script** at `~/.config/river/init`:
+
 ```sh
 #!/bin/sh
-export XKB_DEFAULT_LAYOUT=us  # adjust to your layout
+export XKB_DEFAULT_LAYOUT=us
 export XDG_CURRENT_DESKTOP=river
 export MOZ_ENABLE_WAYLAND=1
 export RUST_LOG=info
 
-kanshi &  # monitor configuration
+kanshi &
 
-(sleep 3
-    waybar &
-    nm-applet --indicator &
-) &
+(sleep 3; waybar &; nm-applet --indicator &) &
 
-# Restart loop: WM always restarts (Super+Shift+R or crash)
 while true; do
     notion-river
     sleep 0.5
 done
 ```
 
-2. Create the config at `~/.config/notion-river/config.toml`:
+2. **WM config** at `~/.config/notion-river/config.toml`:
+
 ```toml
 active_profile = "notion"
 
@@ -104,8 +145,14 @@ terminal = "foot"
 launcher = ["rofi", "-show", "combi", "-normal-window"]
 
 [appearance]
-active_border = "#4c7899"
-inactive_border = "#333333"
+active_border = "#cba6f7"
+inactive_border = "#1e1a2e"
+tab_focused_active = "#5b4a8a"
+tab_active = "#3b2d5e"
+tab_inactive = "#1e1a2e"
+tab_underline_focused = "#cba6f7"
+tab_text_active = "#f5f0ff"
+tab_text_inactive = "#9085a8"
 
 [[workspaces]]
 name = "main"
@@ -121,14 +168,15 @@ name = "social"
 output = "DP-1"
 ```
 
-3. Start from a TTY:
+3. **Start from a TTY**:
+
 ```sh
 river -c ~/.config/river/init
 ```
 
 ## Keybindings
 
-### notion profile (Vim-style)
+### `notion` profile (Vim-style)
 
 | Binding | Action |
 |---|---|
@@ -137,20 +185,19 @@ river -c ~/.config/river/init
 | `Super+Shift+p` | Window switcher |
 | `Super+c` | Close window / unsplit empty frame |
 | `Super+h/j/k/l` | Focus left/down/up/right |
-| `Super+Shift+h/j/k/l` | Move window (across monitors too) |
+| `Super+Shift+h/j/k/l` | Move window (cross-monitor) |
 | `Super+s` | Split horizontal |
 | `Super+v` | Split vertical |
 | `Super+t` | Toggle split orientation |
 | `Super+x` | Remove empty frame |
 | `Super+Tab` / `Shift+Tab` | Next / previous tab |
 | `Super+1..6` | Switch workspace |
-| `Super+f` | Toggle app binding to current frame |
-| `Super+Shift+f` | Exclusive app binding to current frame |
+| `Super+f` | Toggle app binding |
+| `Super+Shift+f` | Exclusive app binding |
 | `Super+R` | Enter / exit resize mode |
 | `Super+Shift+R` | Restart WM (preserves windows) |
-| `Ctrl+F12` | Toggle keyboard layout (de/neo ↔ de) |
 
-### i3_neo profile (Neo layout)
+### `i3_neo` profile (Neo layout)
 
 | Binding | Action |
 |---|---|
@@ -162,83 +209,73 @@ river -c ~/.config/river/init
 | `Super+Shift+i/a/l/e` | Move window |
 | `Super+b` | Split horizontal |
 | `Super+v` | Split vertical |
-| `Super+t` | Toggle split |
 | `Super+n/p` | Next / previous tab |
-| `Super+1..4` | Workspaces (primary monitor) |
-| `Alt+1..3` | Workspaces (secondary monitor) |
-| `Super+f` | Toggle app binding to current frame |
-| `Super+Shift+f` | Exclusive app binding to current frame |
-| `Super+R` | Enter / exit resize mode |
-| `Super+Return` | Fullscreen toggle |
-| `Ctrl+F12` | Toggle keyboard layout (de/neo ↔ de) |
-
-### Resize mode
-
-Enter with `Super+R`. Arrow keys move split boundaries in absolute directions (Up always moves the boundary up, Down always moves it down, etc. — no relative-to-split-side confusion). Press `Super+R` again or `Escape` to exit.
+| `Super+1..4` | Workspaces (primary) |
+| `Alt+1..3` | Workspaces (secondary) |
 
 ### Mouse
 
-- `Mod+Left-drag` — move window to another frame (drags the clicked tab, not the active one)
-- `Mod+Right-drag` — resize split boundaries
-- Click tab bar to switch tabs
-- Focus follows mouse
+| Binding | Action |
+|---|---|
+| `Super+LMB drag` | Move window (tiled: between frames with preview; floating: reposition) |
+| `Super+RMB drag` | Resize split boundaries |
+| Click tab bar | Switch tab |
+| Hover | Focus follows mouse |
 
-### Media keys
+### Resize mode
 
-Volume up/down/mute, mic mute, play/pause, next/prev, brightness up/down.
-
-## App Bindings
-
-Bind an app to a specific frame so it always opens there:
-
-- **`Super+f`** on a focused window toggles a binding between that app and the current frame
-- **`Super+Shift+f`** creates an exclusive binding (frame only accepts that app)
-- Bindings persist in `~/.config/notion-river/bindings.json` (survives reboots)
-- **Wildcard matching**: `steam_app_*` matches all Steam game windows
-- **Fixed dimensions**: set a fixed resolution per binding (e.g. 1920x1080 for Steam streaming) — the window is forced to that size regardless of frame geometry
-- **Visual indicator**: bound frames show ⊙ in the tab bar
-- **Auto-enforcement**: `enforce_app_bindings` runs each manage cycle, automatically moving bound windows to the correct frame on the visible workspace
-
-### IPC binding commands
-
-```sh
-notion-ctl bind <app_id> <workspace> <frame_path>
-notion-ctl unbind <app_id>
-notion-ctl set-fixed-dimensions <app_id> <width>x<height>
-```
-
-## Status
-
-Usable as a daily driver. Multi-monitor with hotplug support and output profiles. App-to-frame bindings with wildcard matching and fixed dimensions. XWayland support for legacy apps. IPC control socket enables external tooling (rofi window switcher, app binding management). Tab bars use Cairo+Pango for crisp font rendering. HiDPI works at scale 1.5x via kanshi (clean fraction, no wlroots blur).
-
-### Planned
-
-- Drag-and-drop with visual split preview
-- Window rules (winprops) for auto-placement
+Enter with `Super+R`. Arrow keys move split boundaries in absolute directions (Up always moves the boundary up, regardless of which side of the split you're on). `Super+R` or `Escape` to exit.
 
 ## IPC
 
-The WM exposes a Unix socket at `$XDG_RUNTIME_DIR/notion-river.sock`.
-
-Commands:
+Unix socket at `$XDG_RUNTIME_DIR/notion-river.sock`. Use `notion-ctl`:
 
 ```sh
-notion-ctl list-windows
-notion-ctl list-workspaces
-notion-ctl focus-window <id>           # switches to hidden workspace if needed
-notion-ctl switch-workspace <name>
-notion-ctl bind <app_id> <ws> <path>   # bind app to frame
-notion-ctl unbind <app_id>             # remove binding
-notion-ctl set-fixed-dimensions <app_id> <w>x<h>  # fixed window size for binding
+notion-ctl list-windows                         # JSON list of all windows
+notion-ctl list-workspaces                      # JSON list of workspaces
+notion-ctl focus-window <id>                    # Focus window (switches workspace if needed)
+notion-ctl switch-workspace <name>              # Switch to workspace
+notion-ctl subscribe-workspaces                 # Stream all workspace state changes (waybar)
+notion-ctl subscribe-workspace <name>           # Stream single workspace state (waybar)
+notion-ctl bind <app_id> <ws> <frame> [WxH]    # Bind app to frame
+notion-ctl unbind <app_id>                      # Remove binding
+notion-ctl set-fixed-dimensions <app_id> <WxH>  # Fixed window size
 ```
 
-Window switcher helper (rofi with combined drun+run+windows mode):
+### Event-driven waybar
 
-```sh
-notion-rofi-windows
+Instead of polling, waybar modules use `subscribe-workspace` for zero-overhead updates:
+
+```jsonc
+"custom/ws-main": {
+    "exec": "notion-ctl subscribe-workspace main",
+    "return-type": "json",
+    "restart-interval": 3,
+    "on-click": "notion-ctl switch-workspace main"
+}
 ```
 
-This is bound to `Super+Shift+o` (`i3_neo`) and `Super+Shift+p` (`notion`).
+## Configuration
+
+### Appearance
+
+All tab bar and border colors are configurable in `config.toml` under `[appearance]`:
+
+| Key | Description |
+|---|---|
+| `active_border` | Border color for focused frame |
+| `inactive_border` | Border color for unfocused frames |
+| `tab_focused_active` | Tab background when focused + active |
+| `tab_active` | Tab background when active but unfocused |
+| `tab_inactive` | Tab background for non-active tabs |
+| `tab_separator` | Color between tabs |
+| `tab_underline_focused` | Underline on active tab (focused) |
+| `tab_underline_unfocused` | Underline on active tab (unfocused) |
+| `tab_text_active` | Text color for active tab |
+| `tab_text_inactive` | Text color for inactive tabs |
+| `empty_focused` | Empty frame indicator (focused) |
+| `empty_unfocused` | Empty frame indicator (unfocused) |
+| `monitor_colors` | Per-monitor accent colors for waybar |
 
 ## License
 

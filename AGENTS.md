@@ -62,7 +62,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `src/state.rs` — state persistence: save/restore layout tree, window placement, active tabs, visible workspaces to `~/.config/notion-river/`
 - `src/app_bindings.rs` — app-to-frame bindings: bind/unbind apps to frames, wildcard app_id matching, fixed dimensions, persistence to `~/.config/notion-river/bindings.json`, enforce_app_bindings auto-move
 - `src/output_profiles.rs` — output profile management: hashes connected output names, saves/restores workspace-to-output assignments in `~/.config/notion-river/output-profiles.json`
-- `src/ipc.rs` — waybar workspace status: writes JSON to `$XDG_RUNTIME_DIR/notion-river-workspaces`
+- `src/ipc.rs` — waybar workspace status: writes JSON to `$XDG_RUNTIME_DIR/notion-river-workspaces`, streams updates to IPC subscribers
 - `protocol/` — River protocol XML files (vendored)
 
 ## Key Concepts
@@ -79,11 +79,16 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Layer-shell**: river-layer-shell-v1 for waybar/rofi/notifications. non_exclusive_area adjusts tiling area.
 - **State persistence**: layout tree + window-to-frame mapping + active tabs + visible workspaces saved to JSON in `~/.config/notion-river/` on restart/signal (survives reboots). Windows matched by River's stable identifier only (no app_id fallback). Active tab correctly preserved via `add_window_quiet`.
 - **Title sync**: WindowRef titles updated from ManagedWindow every manage cycle for live tab bar updates.
-- **Control IPC**: `$XDG_RUNTIME_DIR/notion-river.sock` accepts `list-windows`, `list-workspaces`, `focus-window <id>`, `switch-workspace <name>`, `bind <app_id> <workspace> <frame_path>`, `unbind <app_id>`, `set-fixed-dimensions <app_id> <w>x<h>` for `notion-ctl` and rofi integration. `focus-window` switches to hidden workspaces if the target window is on one.
+- **Control IPC**: `$XDG_RUNTIME_DIR/notion-river.sock` accepts `list-windows`, `list-workspaces`, `subscribe-workspaces`, `subscribe-workspace <name>`, `focus-window <id>`, `switch-workspace <name>`, `bind <app_id> <workspace> <frame_path>`, `unbind <app_id>`, `set-fixed-dimensions <app_id> <w>x<h>` for `notion-ctl` and rofi integration. `focus-window` switches to hidden workspaces if the target window is on one.
+- **IPC subscriptions**: `subscribe-workspaces` and `subscribe-workspace <name>` keep the connection open and stream waybar JSON lines on every workspace state change. Used by waybar for event-driven (zero-polling) workspace modules. Subscribers are `Arc<Mutex<Vec<Subscriber>>>` shared between the IPC writer (main thread) and control socket (listener thread). Per-subscriber dedup avoids redundant writes.
 - **App bindings**: Apps can be bound to specific frames via `Super+f` (toggle) / `Super+Shift+f` (exclusive). Bindings persist in `~/.config/notion-river/bindings.json`. `enforce_app_bindings` auto-moves bound windows to visible workspace frames during manage cycle.
 - **Wildcard app_id matching**: Binding patterns like `steam_app_*` match all Steam games, useful for binding categories of apps.
 - **Fixed dimensions**: Per-binding fixed window dimensions (e.g. 1920x1080 for Steam streaming) — bound windows are forced to these dimensions regardless of frame size.
-- **Auto-float popups**: Windows with DimensionsHint are auto-floated as popup windows.
+- **Floating windows**: Windows can float above the tiled layout. River requires `propose_dimensions()` on every manage cycle for floating windows to render. Floating windows are positioned on the focused output's usable area — dialogs centered, notifications top-right. `focused_floating` tracks which floating window has keyboard focus, with focus-follows-mouse support.
+- **Auto-float popups**: Windows with DimensionsHint or a parent are auto-floated. Untitled windows from apps that already have a tiled window are auto-floated as notifications (top-right). Secondary windows from bound apps (where `find_target` returns `AlreadyPlaced`) are auto-floated as dialogs (centered).
+- **FindTargetResult**: Three-way enum for app binding placement: `Target(ws, frame)` = place here, `AlreadyPlaced` = app already in bound frame so float as secondary, `NoBinding` = no binding or frame missing.
+- **Floating move**: Super+LMB on floating windows updates `float_x`/`float_y` live (no frame drop). Drop zone preview suppressed for floating drags.
+- **Floating focus**: `focused_floating` in WindowManager tracks the active floating window. Takes priority over tiled focus for keyboard input and actions (Close, etc.). Cleared when clicking a tiled window or when the floating window closes/disappears.
 - **Fullscreen toggle**: `Super+Return` toggles fullscreen for the focused window.
 - **Resize mode**: `Super+R` enters/exits resize mode with absolute direction semantics (Up always moves the boundary up, regardless of which side).
 - **Tab drag specificity**: Dragging a tab in the tab bar drags that specific clicked tab, not the active window.
@@ -108,8 +113,10 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `~/.config/river/init` — River init script (env vars, kanshi, waybar, notion-river restart loop)
 - `~/.local/bin/start-river` — Session launcher (XKB layout, env vars, exec river)
 - `~/.config/kanshi/config` — Monitor layout (position, scale, transform)
-- `~/.config/waybar/config.jsonc` — Waybar modules (custom/workspaces with Pango markup, CPU, MEM, DSK, VOL, NET, tray)
-- `~/.config/waybar/style.css` — Waybar styling (Catppuccin-inspired)
+- `~/.config/waybar/config.jsonc` — Waybar modules (per-workspace event-driven modules via `notion-ctl subscribe-workspace <name>`, CPU, MEM, DSK, VOL, NET, tray)
+- `~/.config/waybar/style.css` — Waybar styling (Catppuccin Mocha, per-monitor colors, floating pill modules, rounded corners)
+- `~/.config/rofi/config.rasi` — Rofi config (Catppuccin Mocha Mauve theme)
+- `~/.config/rofi/catppuccin-mocha.rasi` — Rofi theme file
 - `~/.local/bin/notion-rofi-windows` — rofi window switcher using `notion-ctl`
 - `/usr/share/wayland-sessions/river-custom.desktop` — lightdm session entry
 

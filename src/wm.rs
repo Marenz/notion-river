@@ -689,12 +689,14 @@ impl WindowManager {
             // - Already floating (from parent/dimensions_hint in dispatch)
             // - Window has no title but another window with same app_id exists
             //   (catches Thunderbird notifications, dialog popups, etc.)
+            let mut is_notification = false;
             if !window.floating
                 && !window.app_id.is_empty()
                 && window.title.is_empty()
                 && existing_app_ids.contains(&window.app_id)
             {
                 window.floating = true;
+                is_notification = true;
                 log::info!("Auto-floating popup {} (untitled, app '{}' already open)", window.id, window.app_id);
             }
 
@@ -724,7 +726,8 @@ impl WindowManager {
                 };
                 window.proxy.propose_dimensions(fw, fh);
 
-                // Center floating window on the focused output's visible area.
+                // Position floating window on the focused output.
+                // Notifications go to top-right, dialogs go to center.
                 let focused_ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
                 if let Some(output) = focused_ws
                     .active_output
@@ -733,8 +736,15 @@ impl WindowManager {
                     let area = output.usable_rect();
                     let win_w = if fw > 0 { fw } else { 640 };
                     let win_h = if fh > 0 { fh } else { 480 };
-                    window.float_x = area.x + (area.width - win_w) / 2;
-                    window.float_y = area.y + (area.height - win_h) / 2;
+                    if is_notification {
+                        // Top-right corner with padding
+                        window.float_x = area.x + area.width - win_w - 20;
+                        window.float_y = area.y + 20;
+                    } else {
+                        // Center
+                        window.float_x = area.x + (area.width - win_w) / 2;
+                        window.float_y = area.y + (area.height - win_h) / 2;
+                    }
                 }
 
                 window.new = false;
