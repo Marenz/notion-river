@@ -27,11 +27,7 @@ use crate::wm::AppData;
 /// Height of the tab bar in pixels.
 pub const TAB_BAR_HEIGHT: i32 = 24;
 
-/// ARGB8888 colors (premultiplied alpha).
-const COLOR_TAB_ACTIVE: u32 = 0xFF4C7899;
-const COLOR_TAB_INACTIVE: u32 = 0xFF222222;
-const COLOR_FOCUSED_ACTIVE: u32 = 0xFF5294C4;
-const COLOR_SEPARATOR: u32 = 0xFF888888;
+use crate::config::Colors;
 
 /// A decoration attached above a specific window.
 pub struct WindowDecoration {
@@ -85,6 +81,7 @@ impl DecorationManager {
         is_focused_frame: bool,
         is_bound: bool,
         fractional_scale: f64,
+        colors: &Colors,
         shm: &WlShm,
         compositor: &WlCompositor,
         viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
@@ -191,6 +188,7 @@ impl DecorationManager {
                 frame,
                 is_focused_frame,
                 is_bound,
+                colors,
             );
 
             unsafe {
@@ -267,8 +265,7 @@ impl DecorationManager {
 
 // ── Empty frame indicators using shell surfaces ──────────────────────────
 
-const COLOR_EMPTY_FOCUSED: u32 = 0xFF4C7899;
-const COLOR_EMPTY_UNFOCUSED: u32 = 0xFF444444;
+// Empty frame colors are passed via the Colors struct now.
 
 /// A shell surface indicator for an empty frame.
 pub struct EmptyFrameIndicator {
@@ -306,6 +303,7 @@ impl EmptyFrameManager {
         frame_id: FrameId,
         rect: Rect,
         is_focused: bool,
+        colors: &Colors,
         shm: &WlShm,
         compositor: &WlCompositor,
         wm_proxy: &RiverWindowManagerV1,
@@ -378,9 +376,9 @@ impl EmptyFrameManager {
             // receives pointer input events (Wayland ignores fully transparent areas).
             let border_w = 2usize;
             let color = if is_focused {
-                COLOR_EMPTY_FOCUSED
+                colors.empty_focused
             } else {
-                COLOR_EMPTY_UNFOCUSED
+                colors.empty_unfocused
             };
             // 0x01000000 = alpha=1 (out of 255), practically invisible but receives input
             let fill = 0x01000000u32;
@@ -481,10 +479,10 @@ fn draw_tab_bar_pixels(
     frame: &Frame,
     is_focused: bool,
     is_bound: bool,
+    colors: &Colors,
 ) {
     let num_tabs = frame.windows.len();
     if num_tabs == 0 {
-        // Shouldn't happen (only called for windows that exist) but fill transparent
         pixels.fill(0x00000000);
         return;
     }
@@ -494,11 +492,11 @@ fn draw_tab_bar_pixels(
     for tab_idx in 0..num_tabs {
         let is_active = tab_idx == frame.active_tab;
         let bg = if is_active && is_focused {
-            COLOR_FOCUSED_ACTIVE
+            colors.tab_focused_active
         } else if is_active {
-            COLOR_TAB_ACTIVE
+            colors.tab_active
         } else {
-            COLOR_TAB_INACTIVE
+            colors.tab_inactive
         };
 
         let x_start = tab_idx * tab_width;
@@ -508,7 +506,7 @@ fn draw_tab_bar_pixels(
             (tab_idx + 1) * tab_width
         };
 
-        let radius = (height / 6).max(2); // corner radius
+        let radius = (height / 6).max(2);
 
         for y in 0..height {
             for x in x_start..x_end {
@@ -527,12 +525,12 @@ fn draw_tab_bar_pixels(
                 }
 
                 let color = if x == x_end - 1 && tab_idx < num_tabs - 1 {
-                    COLOR_SEPARATOR
+                    colors.tab_separator
                 } else if y >= height - 2 && is_active {
                     if is_focused {
-                        0xFFFFFFFF
+                        colors.tab_underline_focused
                     } else {
-                        0xFF888888
+                        colors.tab_underline_unfocused
                     }
                 } else {
                     bg
@@ -554,7 +552,11 @@ fn draw_tab_bar_pixels(
                 base_title.to_string()
             };
             let title = &title;
-            let text_color = if is_active { 0xFFFFFFFF } else { 0xFFAAAAAA };
+            let text_color = if is_active {
+                colors.tab_text_active
+            } else {
+                colors.tab_text_inactive
+            };
             let padding = 4 * height / TAB_BAR_HEIGHT as usize;
             draw_text(
                 pixels,
