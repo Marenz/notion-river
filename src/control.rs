@@ -36,6 +36,10 @@ pub struct WindowInfo {
     pub title: String,
     pub app_id: String,
     pub focused: bool,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -395,11 +399,29 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
     let mut windows = Vec::new();
     let focused_ws = wm.workspaces.focused_workspace;
     let focused_frame = wm.workspaces.workspaces[focused_ws.0].focused_frame;
+    let gap = wm.config.general.gap as i32;
 
     for ws in &wm.workspaces.workspaces {
         let ws_name = ws.name.clone();
+
+        // Compute frame geometries from the layout tree
+        let area = ws
+            .active_output
+            .and_then(|oid| wm.workspaces.output(oid))
+            .map(|o| o.usable_rect());
+        let frame_rects: std::collections::HashMap<crate::layout::FrameId, crate::layout::Rect> =
+            if let Some(area) = area {
+                ws.root
+                    .calculate_layout(area, gap)
+                    .into_iter()
+                    .collect()
+            } else {
+                std::collections::HashMap::new()
+            };
+
         for frame_id in ws.root.all_frame_ids() {
             if let Some(frame) = ws.root.find_frame(frame_id) {
+                let rect = frame_rects.get(&frame_id);
                 for win in &frame.windows {
                     windows.push(WindowInfo {
                         id: win.window_id,
@@ -412,6 +434,10 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
                             && frame
                                 .active_window()
                                 .is_some_and(|w| w.window_id == win.window_id),
+                        x: rect.map_or(0, |r| r.x),
+                        y: rect.map_or(0, |r| r.y),
+                        width: rect.map_or(0, |r| r.width),
+                        height: rect.map_or(0, |r| r.height),
                     });
                 }
             }
