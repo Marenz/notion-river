@@ -511,6 +511,7 @@ fn lighten(color: u32, amount: u8) -> u32 {
 }
 
 /// Draw the tab bar pixels.
+#[allow(clippy::too_many_arguments)]
 fn draw_tab_bar_pixels(
     pixels: &mut [u32],
     width: usize,
