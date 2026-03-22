@@ -1,5 +1,5 @@
 Name:           notion-river
-Version:        0.4.0
+Version:        %{?version}%{!?version:0.4.1}
 Release:        1%{?dist}
 Summary:        Notion/Ion3-style static tiling window manager for River
 License:        MIT
@@ -66,12 +66,15 @@ install -Dm644 config.example.toml %{buildroot}%{_datadir}/notion-river/examples
 %{_bindir}/notion-rofi-window-mode
 %{_bindir}/notion-volume
 %{_bindir}/notion-cycle-workspace
-%{_bindir}/river
+%ghost %{_bindir}/river
 %{_datadir}/wayland-sessions/notion-river.desktop
 %{_datadir}/notion-river/
 
 %changelog
-* Sat Mar 22 2026 Marenz <marenz@users.noreply.github.com> - 0.4.0-1
+* Sun Mar 22 2026 Marenz <marenz@users.noreply.github.com> - 0.4.1-1
+- Fix clippy lint, fix packaging
+
+* Sun Mar 22 2026 Marenz <marenz@users.noreply.github.com> - 0.4.0-1
 - Rounded top corners on every individual tab with transparent gaps
 - Configurable tab gradients (focused, unfocused active, inactive)
 - Split init script: generic river-init + user-specific autostart
