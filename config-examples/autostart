@@ -1,0 +1,31 @@
+#!/bin/sh
+# User-specific environment and autostarted applications.
+# Sourced by ~/.config/river/init — edit this file for your setup.
+# Copy to ~/.config/river/autostart
+
+# ── Keyboard layout ──
+# Uncomment and adjust for your layout:
+# export XKB_DEFAULT_LAYOUT=us
+# export XKB_DEFAULT_VARIANT=
+# export XKB_DEFAULT_MODEL=pc105
+
+# ── Monitor configuration ──
+# kanshi auto-configures outputs based on ~/.config/kanshi/config
+# Uncomment if you use kanshi:
+# kanshi &
+
+# ── Volume OSD ──
+# Uncomment if you use wob:
+# WOB_SOCK="$XDG_RUNTIME_DIR/wob.sock"
+# rm -f "$WOB_SOCK"
+# mkfifo "$WOB_SOCK"
+# tail -f "$WOB_SOCK" | wob &
+
+# ── Notification daemon ──
+# pgrep -x mako >/dev/null || mako &
+
+# ── Background services (only start if not already running) ──
+# (
+#     sleep 3
+#     pgrep -x waybar >/dev/null || waybar &
+# ) &

@@ -1,5 +1,5 @@
 Name:           notion-river
-Version:        0.1.0
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        Notion/Ion3-style static tiling window manager for River
 License:        MIT
@@ -53,6 +53,8 @@ test -f vendor/river/zig-out/bin/river && install -Dm755 vendor/river/zig-out/bi
 install -Dm644 notion-river.desktop %{buildroot}%{_datadir}/wayland-sessions/notion-river.desktop
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples
 install -Dm644 config-examples/start-river %{buildroot}%{_datadir}/notion-river/examples/start-river
+install -Dm755 config-examples/river-init %{buildroot}%{_datadir}/notion-river/examples/river-init
+install -Dm644 config-examples/autostart %{buildroot}%{_datadir}/notion-river/examples/autostart
 install -Dm644 config.example.toml %{buildroot}%{_datadir}/notion-river/examples/config.toml
 
 %files
@@ -69,5 +71,11 @@ install -Dm644 config.example.toml %{buildroot}%{_datadir}/notion-river/examples
 %{_datadir}/notion-river/
 
 %changelog
+* Sat Mar 22 2026 Marenz <marenz@users.noreply.github.com> - 0.4.0-1
+- Rounded top corners on every individual tab with transparent gaps
+- Configurable tab gradients (focused, unfocused active, inactive)
+- Split init script: generic river-init + user-specific autostart
+- Import Wayland env into systemd for portal support (file dialogs)
+
 * Wed Mar 18 2026 Marenz <marenz@users.noreply.github.com> - 0.1.0-1
 - Initial package

@@ -140,6 +140,18 @@ pub struct AppearanceConfig {
     pub tab_underline_focused: String,
     /// Active tab underline in unfocused frame (hex).
     pub tab_underline_unfocused: String,
+    /// Focused active tab gradient start color (hex, left side). Empty to disable gradient.
+    pub tab_gradient_start: String,
+    /// Focused active tab gradient end color (hex, right side). Empty to disable gradient.
+    pub tab_gradient_end: String,
+    /// Unfocused active tab gradient start color (hex, left side). Empty to disable gradient.
+    pub tab_active_gradient_start: String,
+    /// Unfocused active tab gradient end color (hex, right side). Empty to disable gradient.
+    pub tab_active_gradient_end: String,
+    /// Inactive tab gradient start color (hex, left side). Empty to disable gradient.
+    pub tab_inactive_gradient_start: String,
+    /// Inactive tab gradient end color (hex, right side). Empty to disable gradient.
+    pub tab_inactive_gradient_end: String,
     /// Active tab text color (hex).
     pub tab_text_active: String,
     /// Inactive tab text color (hex).
@@ -168,6 +180,12 @@ pub struct Colors {
     pub tab_separator: u32,
     pub tab_underline_focused: u32,
     pub tab_underline_unfocused: u32,
+    pub tab_gradient_start: Option<u32>,
+    pub tab_gradient_end: Option<u32>,
+    pub tab_active_gradient_start: Option<u32>,
+    pub tab_active_gradient_end: Option<u32>,
+    pub tab_inactive_gradient_start: Option<u32>,
+    pub tab_inactive_gradient_end: Option<u32>,
     pub tab_text_active: u32,
     pub tab_text_inactive: u32,
     pub empty_focused: u32,
@@ -202,6 +220,36 @@ impl AppearanceConfig {
             tab_active: hex_to_argb(&self.tab_active),
             tab_focused_active: hex_to_argb(&self.tab_focused_active),
             tab_inactive: hex_to_argb(&self.tab_inactive),
+            tab_gradient_start: if self.tab_gradient_start.is_empty() {
+                None
+            } else {
+                Some(hex_to_argb(&self.tab_gradient_start))
+            },
+            tab_gradient_end: if self.tab_gradient_end.is_empty() {
+                None
+            } else {
+                Some(hex_to_argb(&self.tab_gradient_end))
+            },
+            tab_active_gradient_start: if self.tab_active_gradient_start.is_empty() {
+                None
+            } else {
+                Some(hex_to_argb(&self.tab_active_gradient_start))
+            },
+            tab_active_gradient_end: if self.tab_active_gradient_end.is_empty() {
+                None
+            } else {
+                Some(hex_to_argb(&self.tab_active_gradient_end))
+            },
+            tab_inactive_gradient_start: if self.tab_inactive_gradient_start.is_empty() {
+                None
+            } else {
+                Some(hex_to_argb(&self.tab_inactive_gradient_start))
+            },
+            tab_inactive_gradient_end: if self.tab_inactive_gradient_end.is_empty() {
+                None
+            } else {
+                Some(hex_to_argb(&self.tab_inactive_gradient_end))
+            },
             tab_separator: hex_to_argb(&self.tab_separator),
             tab_underline_focused: hex_to_argb(&self.tab_underline_focused),
             tab_underline_unfocused: hex_to_argb(&self.tab_underline_unfocused),
@@ -263,6 +311,12 @@ impl Default for AppearanceConfig {
             tab_active: "#7c6f9b".to_string(),
             tab_focused_active: "#9b8ec4".to_string(),
             tab_inactive: "#1e1b26".to_string(),
+            tab_gradient_start: "#5a2ab5".to_string(),
+            tab_gradient_end: "#a8407f".to_string(),
+            tab_active_gradient_start: "#3a2850".to_string(),
+            tab_active_gradient_end: "#201828".to_string(),
+            tab_inactive_gradient_start: "#3a2850".to_string(),
+            tab_inactive_gradient_end: "#201828".to_string(),
             tab_separator: "#5e5775".to_string(),
             tab_underline_focused: "#cdb4ff".to_string(),
             tab_underline_unfocused: "#7c6f9b".to_string(),

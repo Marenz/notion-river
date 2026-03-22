@@ -474,6 +474,29 @@ fn compute_hash(frame: &Frame, is_focused: bool, width: i32) -> u64 {
     hasher.finish()
 }
 
+/// Gradient between two ARGB colors for the focused active tab.
+/// `local_x` is the pixel offset within the tab, `tab_w` is the tab width.
+/// Uses a quadratic curve so the start color dominates (~65/35 bias).
+fn gradient_color(local_x: usize, tab_w: usize, start: u32, end: u32) -> u32 {
+    let r0 = ((start >> 16) & 0xFF) as f32;
+    let g0 = ((start >> 8) & 0xFF) as f32;
+    let b0 = (start & 0xFF) as f32;
+    let r1 = ((end >> 16) & 0xFF) as f32;
+    let g1 = ((end >> 8) & 0xFF) as f32;
+    let b1 = (end & 0xFF) as f32;
+
+    let t = if tab_w <= 1 {
+        0.0
+    } else {
+        let linear = local_x as f32 / (tab_w - 1) as f32;
+        (linear * linear).min(1.0)
+    };
+    let r = (r0 + (r1 - r0) * t) as u32;
+    let g = (g0 + (g1 - g0) * t) as u32;
+    let b = (b0 + (b1 - b0) * t) as u32;
+    0xFF000000 | (r << 16) | (g << 8) | b
+}
+
 /// Lighten an ARGB8888 color by blending toward white.
 fn lighten(color: u32, amount: u8) -> u32 {
     let a = (color >> 24) & 0xFF;
@@ -504,12 +527,58 @@ fn draw_tab_bar_pixels(
         return;
     }
 
-    let tab_width = width / num_tabs;
+    // Start fully transparent — gaps between tabs will show through
+    pixels.fill(0x00000000);
+
+    let radius = (height / 6).max(2);
+    // Gap between adjacent tabs (half the radius, at least 1 pixel)
+    let gap = if num_tabs > 1 { (radius / 2).max(1) } else { 0 };
+
+    // Compute tab regions: distribute width evenly with gaps between tabs
+    let total_gaps = if num_tabs > 1 {
+        gap * (num_tabs - 1)
+    } else {
+        0
+    };
+    let usable = width.saturating_sub(total_gaps);
+    let base_tab_w = usable / num_tabs;
 
     for tab_idx in 0..num_tabs {
         let is_active = tab_idx == frame.active_tab;
         let is_hovered = hovered_tab == Some(tab_idx) && !is_active;
-        let bg = if is_active && is_focused {
+
+        // Determine gradient endpoints or flat color for this tab
+        let grad = if is_active && is_focused {
+            match (colors.tab_gradient_start, colors.tab_gradient_end) {
+                (Some(s), Some(e)) => Some((s, e)),
+                _ => None,
+            }
+        } else if is_active {
+            // Unfocused active tab
+            match (
+                colors.tab_active_gradient_start,
+                colors.tab_active_gradient_end,
+            ) {
+                (Some(s), Some(e)) => Some((s, e)),
+                _ => None,
+            }
+        } else {
+            // Inactive tabs
+            let base = match (
+                colors.tab_inactive_gradient_start,
+                colors.tab_inactive_gradient_end,
+            ) {
+                (Some(s), Some(e)) => Some((s, e)),
+                _ => None,
+            };
+            if is_hovered {
+                base.map(|(s, e)| (lighten(s, 40), lighten(e, 40)))
+            } else {
+                base
+            }
+        };
+
+        let flat_bg = if is_active && is_focused {
             colors.tab_focused_active
         } else if is_active {
             colors.tab_active
@@ -519,41 +588,39 @@ fn draw_tab_bar_pixels(
             colors.tab_inactive
         };
 
-        let x_start = tab_idx * tab_width;
+        let x_start = tab_idx * (base_tab_w + gap);
         let x_end = if tab_idx == num_tabs - 1 {
             width
         } else {
-            (tab_idx + 1) * tab_width
+            x_start + base_tab_w
         };
-
-        let radius = (height / 6).max(2);
+        let tab_w = x_end - x_start;
 
         for y in 0..height {
             for x in x_start..x_end {
-                // Round top corners of first and last tab
-                let in_corner = (tab_idx == 0
-                    && x - x_start < radius
+                // Round top corners of every tab
+                let local_left = x - x_start;
+                let local_right = x_end - 1 - x;
+                let in_corner = (local_left < radius
                     && y < radius
-                    && !in_rounded_corner(x - x_start, y, radius))
-                    || (tab_idx == num_tabs - 1
-                        && x_end - 1 - x < radius
+                    && !in_rounded_corner(local_left, y, radius))
+                    || (local_right < radius
                         && y < radius
-                        && !in_rounded_corner(x_end - 1 - x, y, radius));
+                        && !in_rounded_corner(local_right, y, radius));
                 if in_corner {
-                    pixels[y * width + x] = 0x00000000;
-                    continue;
+                    continue; // already transparent
                 }
 
-                let color = if x == x_end - 1 && tab_idx < num_tabs - 1 {
-                    colors.tab_separator
-                } else if y >= height - 2 && is_active {
+                let color = if y >= height - 2 && is_active {
                     if is_focused {
                         colors.tab_underline_focused
                     } else {
                         colors.tab_underline_unfocused
                     }
+                } else if let Some((start, end)) = grad {
+                    gradient_color(local_left, tab_w, start, end)
                 } else {
-                    bg
+                    flat_bg
                 };
                 pixels[y * width + x] = color;
             }
