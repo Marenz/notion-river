@@ -69,11 +69,13 @@ impl WindowManager {
 
         // Manage floating windows: propose dimensions + show
         // Recenter windows that just got their first real dimensions.
+        // Auto-focus newly positioned floating windows.
         let focused_ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
         let float_area = focused_ws
             .active_output
             .and_then(|oid| self.workspaces.output(oid))
             .map(|o| o.usable_rect());
+        let mut newly_positioned_float: Option<u64> = None;
         for win in &mut self.windows {
             if win.floating {
                 if win.width > 0 && win.height > 0 {
@@ -84,6 +86,7 @@ impl WindowManager {
                             win.float_y = area.y + (area.height - win.height) / 2;
                         }
                         win.float_positioned = true;
+                        newly_positioned_float = Some(win.id);
                     }
                     win.proxy.propose_dimensions(win.width, win.height);
                     win.proxy.show();
@@ -91,6 +94,17 @@ impl WindowManager {
                     // Client hasn't committed dimensions yet — propose 0,0 to let
                     // the client pick, but don't show until we have real dimensions.
                     win.proxy.propose_dimensions(0, 0);
+                }
+            }
+        }
+        // Auto-focus the most recently positioned floating window + warp cursor to it
+        if let Some(fid) = newly_positioned_float {
+            self.focused_floating = Some(fid);
+            if let Some(win) = self.windows.iter().find(|w| w.id == fid) {
+                let cx = win.float_x + win.width / 2;
+                let cy = win.float_y + win.height / 2;
+                for seat in self.seats.values() {
+                    seat.proxy.pointer_warp(cx, cy);
                 }
             }
         }
