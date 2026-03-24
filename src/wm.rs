@@ -148,6 +148,8 @@ pub struct ManagedWindow {
     /// Floating position.
     pub float_x: i32,
     pub float_y: i32,
+    /// Whether this floating window has been positioned with its real dimensions.
+    pub float_positioned: bool,
     pub pointer_move_requested: Option<RiverSeatV1>,
     pub pointer_resize_requested: Option<RiverSeatV1>,
     pub pointer_resize_requested_edges: Edges,
@@ -173,6 +175,9 @@ pub struct Seat {
     pub op_prev_dx: i32,
     pub op_prev_dy: i32,
     pub op_release: bool,
+    /// Pointer position at the start of the current op (for absolute positioning).
+    pub op_start_pointer_x: i32,
+    pub op_start_pointer_y: i32,
     /// Current absolute pointer position (from pointer_position event).
     pub pointer_x: i32,
     pub pointer_y: i32,
@@ -738,6 +743,8 @@ impl WindowManager {
                         window.float_x = area.x + (area.width - win_w) / 2;
                         window.float_y = area.y + (area.height - win_h) / 2;
                     }
+                    // Mark as positioned only if we used real dimensions
+                    window.float_positioned = fw > 0 && fh > 0;
                 }
 
                 window.new = false;
@@ -1142,6 +1149,8 @@ impl Seat {
             op_prev_dx: 0,
             op_prev_dy: 0,
             op_release: false,
+            op_start_pointer_x: 0,
+            op_start_pointer_y: 0,
             pointer_x: 0,
             pointer_y: 0,
         }
@@ -1169,6 +1178,7 @@ impl ManagedWindow {
             prefers_ssd: false,
             float_x: 100,
             float_y: 100,
+            float_positioned: false,
             pointer_move_requested: None,
             pointer_resize_requested: None,
             pointer_resize_requested_edges: Edges::None,

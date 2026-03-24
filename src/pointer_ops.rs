@@ -218,16 +218,16 @@ impl WindowManager {
                     // Tiled moves show preview overlay — handled elsewhere
                 }
                 SeatOp::Resize { .. } => {
-                    let cur_x = s.pointer_x + s.op_dx;
-                    let cur_y = s.pointer_y + s.op_dy;
+                    let cur_x = s.op_start_pointer_x + s.op_dx;
+                    let cur_y = s.op_start_pointer_y + s.op_dy;
                     tiled_resizes.push(TiledResizeCmd {
                         pointer_x: cur_x,
                         pointer_y: cur_y,
                     });
                 }
                 SeatOp::ResizeEmpty { .. } => {
-                    let cur_x = s.pointer_x + s.op_dx;
-                    let cur_y = s.pointer_y + s.op_dy;
+                    let cur_x = s.op_start_pointer_x + s.op_dx;
+                    let cur_y = s.op_start_pointer_y + s.op_dy;
                     tiled_resizes.push(TiledResizeCmd {
                         pointer_x: cur_x,
                         pointer_y: cur_y,

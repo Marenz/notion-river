@@ -618,6 +618,8 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                     seat.op_dy = 0;
                     seat.op_prev_dx = 0;
                     seat.op_prev_dy = 0;
+                    seat.op_start_pointer_x = seat.pointer_x;
+                    seat.op_start_pointer_y = seat.pointer_y;
                     seat.op = op;
                 }
             }
