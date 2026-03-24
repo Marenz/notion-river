@@ -1,18 +1,63 @@
 {
     "layer": "top",
     "position": "top",
-    "height": 30,
+    "height": 34,
+    "margin-top": 0,
+    "margin-left": 8,
+    "margin-right": 8,
 
-    "modules-left": ["custom/workspaces"],
+    // Workspace modules — one per workspace, using notion-ctl subscribe-workspace
+    // for event-driven (zero-polling) updates. Adjust names to match your config.toml.
+    "modules-left": [
+        "custom/ws-main", "custom/ws-secondary", "custom/ws-utility",
+        "custom/ws-sep",
+        "custom/ws-social", "custom/ws-work", "custom/ws-term"
+    ],
     "modules-center": ["clock"],
-    "modules-right": ["pulseaudio", "network", "cpu", "memory", "custom/swap", "disk", "tray"],
+    "modules-right": ["pulseaudio", "network", "cpu", "memory", "custom/swap", "custom/disk-root", "custom/disk-home", "tray"],
+    // To add NVIDIA GPU modules, append "custom/gpu", "custom/vram" before disk-root above
+    // and uncomment the gpu/vram module definitions below.
 
-    "custom/workspaces": {
-        "exec": "cat /run/user/1000/notion-river-workspaces 2>/dev/null || echo '{\"text\": \"...\"}'",
+    "custom/ws-main": {
+        "exec": "notion-ctl subscribe-workspace main",
         "return-type": "json",
-        "format": "{}",
-        "markup": true,
-        "interval": 1
+        "restart-interval": 3,
+        "on-click": "notion-ctl switch-workspace main"
+    },
+    "custom/ws-secondary": {
+        "exec": "notion-ctl subscribe-workspace secondary",
+        "return-type": "json",
+        "restart-interval": 3,
+        "on-click": "notion-ctl switch-workspace secondary"
+    },
+    "custom/ws-utility": {
+        "exec": "notion-ctl subscribe-workspace utility",
+        "return-type": "json",
+        "restart-interval": 3,
+        "on-click": "notion-ctl switch-workspace utility"
+    },
+    "custom/ws-sep": {
+        "format": "│",
+        "interval": "once",
+        "tooltip": false
+    },
+    "custom/ws-social": {
+        "exec": "notion-ctl subscribe-workspace social",
+        "return-type": "json",
+        "restart-interval": 3,
+        "on-click": "notion-ctl switch-workspace social"
+    },
+    "custom/ws-work": {
+        "exec": "notion-ctl subscribe-workspace work",
+        "return-type": "json",
+        "restart-interval": 3,
+        "on-click": "notion-ctl switch-workspace work"
+    },
+    "custom/ws-term": {
+        "exec": "notion-ctl subscribe-workspace term",
+        "return-type": "json",
+        "restart-interval": 3,
+        "on-click": "notion-ctl switch-workspace term"
     },
 
     "clock": {
@@ -63,19 +108,32 @@
     "custom/swap": {
         "exec": "free -m | awk '/Swap:/{pct=int($3/$2*100); if(pct>80) cls=\"critical\"; else if(pct>50) cls=\"warning\"; else cls=\"normal\"; printf \"{\\\"text\\\":\\\"SWP %s%%\\\",\\\"class\\\":\\\"%s\\\",\\\"tooltip\\\":\\\"Swap: %dM/%dM\\\"}\\n\", pct, cls, $3, $2}'",
         "return-type": "json",
-        "interval": 10
+        "interval": 30
     },
 
-    "disk": {
-        "format": "DSK {percentage_used}% {icon}",
-        "format-icons": ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"],
-        "tooltip-format": "Disk {used} / {total}",
-        "path": "/",
-        "interval": 30,
-        "states": {
-            "warning": 80,
-            "critical": 95
-        }
+    // Uncomment for NVIDIA GPU monitoring (requires nvidia-smi):
+    // "custom/gpu": {
+    //     "exec": "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits | awk '{pct=$1; icons=\"▁▂▃▄▅▆▇█\"; i=int(pct/12.5); if(i>7)i=7; icon=substr(icons,i+1,1); if(pct>=90)cls=\"critical\"; else if(pct>=70)cls=\"warning\"; else cls=\"normal\"; printf \"{\\\"text\\\":\\\"GPU %d%% %s\\\",\\\"class\\\":\\\"%s\\\",\\\"tooltip\\\":\\\"GPU utilization: %d%%\\\"}\\n\", pct, icon, cls, pct}'",
+    //     "return-type": "json",
+    //     "interval": 3
+    // },
+    //
+    // "custom/vram": {
+    //     "exec": "nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits | awk -F', ' '{pct=int($1/$2*100); icons=\"▁▂▃▄▅▆▇█\"; i=int(pct/12.5); if(i>7)i=7; icon=substr(icons,i+1,1); if(pct>=90)cls=\"critical\"; else if(pct>=70)cls=\"warning\"; else cls=\"normal\"; printf \"{\\\"text\\\":\\\"VRAM %d%% %s\\\",\\\"class\\\":\\\"%s\\\",\\\"tooltip\\\":\\\"VRAM: %dM / %dM\\\"}\\n\", pct, icon, cls, $1, $2}'",
+    //     "return-type": "json",
+    //     "interval": 3
+    // },
+
+    "custom/disk-root": {
+        "exec": "df -h / | awk 'NR==2{pct=$5+0; icons=\"▁▂▃▄▅▆▇█\"; i=int(pct/12.5); if(i>7)i=7; icon=substr(icons,i+1,1); if(pct>=95)cls=\"critical\"; else if(pct>=80)cls=\"warning\"; else cls=\"normal\"; printf \"{\\\"text\\\":\\\"/ %d%% (%s) %s\\\",\\\"class\\\":\\\"%s\\\",\\\"tooltip\\\":\\\"Root: %s / %s\\\"}\\n\", pct, $4, icon, cls, $3, $2}'",
+        "return-type": "json",
+        "interval": 30
+    },
+
+    "custom/disk-home": {
+        "exec": "df -h /home | awk 'NR==2{pct=$5+0; icons=\"▁▂▃▄▅▆▇█\"; i=int(pct/12.5); if(i>7)i=7; icon=substr(icons,i+1,1); if(pct>=95)cls=\"critical\"; else if(pct>=80)cls=\"warning\"; else cls=\"normal\"; printf \"{\\\"text\\\":\\\"~ %d%% (%s) %s\\\",\\\"class\\\":\\\"%s\\\",\\\"tooltip\\\":\\\"Home: %s / %s\\\"}\\n\", pct, $4, icon, cls, $3, $2}'",
+        "return-type": "json",
+        "interval": 30
     },
 
     "tray": {

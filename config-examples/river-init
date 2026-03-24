@@ -12,6 +12,23 @@ export RUST_LOG=info
 # ── Import env into systemd so portals (file dialogs etc.) work ──
 systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP
 
+# ── Install example configs on first run ──
+EXAMPLES="/usr/share/notion-river/examples"
+if [ -d "$EXAMPLES/waybar" ] && [ ! -d "${XDG_CONFIG_HOME:-$HOME/.config}/waybar" ]; then
+    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/waybar"
+    cp "$EXAMPLES/waybar/"* "${XDG_CONFIG_HOME:-$HOME/.config}/waybar/"
+    echo "Installed waybar config from $EXAMPLES/waybar/"
+fi
+if [ -f "$EXAMPLES/config.toml" ] && [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/notion-river/config.toml" ]; then
+    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/notion-river"
+    cp "$EXAMPLES/config.toml" "${XDG_CONFIG_HOME:-$HOME/.config}/notion-river/config.toml"
+    echo "Installed notion-river config from $EXAMPLES/config.toml"
+fi
+if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/river/autostart" ] && [ -f "$EXAMPLES/autostart" ]; then
+    cp "$EXAMPLES/autostart" "${XDG_CONFIG_HOME:-$HOME/.config}/river/autostart"
+    echo "Installed river autostart from $EXAMPLES/autostart"
+fi
+
 # ── Source user-specific autostart (keyboard layout, apps, etc.) ──
 AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/river/autostart"
 if [ -f "$AUTOSTART" ]; then

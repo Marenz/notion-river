@@ -83,6 +83,9 @@ jobs:
           cp config-examples/river-init "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/autostart "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"
+          mkdir -p "${PKGDIR}/usr/share/notion-river/examples/waybar"
+          cp config-examples/waybar/config.jsonc "${PKGDIR}/usr/share/notion-river/examples/waybar/"
+          cp config-examples/waybar/style.css "${PKGDIR}/usr/share/notion-river/examples/waybar/"
 
           chmod 755 "${PKGDIR}/usr/bin/"*
           chmod 755 "${PKGDIR}/usr/share/notion-river/examples/"*
