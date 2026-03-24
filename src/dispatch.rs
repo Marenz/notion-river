@@ -234,6 +234,15 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     && !window.floating
                 {
                     window.floating = true;
+                    // If already placed in a frame, remove it (late DimensionsHint)
+                    if let Some(frame_id) = window.frame_id {
+                        for ws in &mut state.wm.workspaces.workspaces {
+                            if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                                frame.remove_window(window.id);
+                            }
+                        }
+                        window.frame_id = None;
+                    }
                     log::info!(
                         "Auto-floating window {} ({}x{}-{}x{})",
                         window.id,
@@ -254,9 +263,18 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 window.title = title.unwrap_or_default();
             }
             Event::Parent { parent } => {
-                if parent.is_some() {
+                if parent.is_some() && !window.floating {
                     // Child windows (dialogs, popups) should float
                     window.floating = true;
+                    // If already placed in a frame, remove it (late Parent event)
+                    if let Some(frame_id) = window.frame_id {
+                        for ws in &mut state.wm.workspaces.workspaces {
+                            if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                                frame.remove_window(window.id);
+                            }
+                        }
+                        window.frame_id = None;
+                    }
                     log::info!("Window {} has parent, setting floating", window.id);
                 }
             }
