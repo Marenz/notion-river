@@ -74,6 +74,17 @@ install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-r
 %{_datadir}/notion-river/
 
 %changelog
+* Tue Mar 24 2026 Marenz <marenz@users.noreply.github.com> - 0.5.0-1
+- Fix resize lag: pointer now tracks 1:1 during RMB resize
+- Fix floating window ghost titlebar on first appearance
+- Fix late-float race: dialogs no longer appear as tabs in tiled frames
+- Remove stale IPC socket on startup (fixes workspace switching after restart)
+- Log rotation: previous run preserved as .prev for crash investigation
+- New: subscribe-output IPC command for dynamic per-output workspace modules
+- Updated waybar examples with GPU, VRAM, temperature, disk modules
+- Auto-install example configs on first run
+- Per-output waybar config (portrait screen optimization)
+
 * Sun Mar 22 2026 Marenz <marenz@users.noreply.github.com> - 0.4.1-1
 - Fix clippy lint, fix packaging
 
