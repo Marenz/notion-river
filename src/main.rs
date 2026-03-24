@@ -44,11 +44,16 @@ impl std::io::Write for LineFlush {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Log to /tmp/notion-river.log since River's child stderr goes to a socket.
+    // Log rotation: current run → notion-river.log, previous run → notion-river.log.prev
+    // On startup, rotate so the previous run's log is always preserved for crash investigation.
+    let log_path = "/tmp/notion-river.log";
+    let prev_path = "/tmp/notion-river.log.prev";
+    let _ = std::fs::rename(log_path, prev_path);
     let log_target = std::fs::OpenOptions::new()
         .create(true)
-        .append(true)
-        .open("/tmp/notion-river.log");
+        .write(true)
+        .truncate(true)
+        .open(log_path);
 
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
