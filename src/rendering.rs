@@ -68,15 +68,30 @@ impl WindowManager {
         }
 
         // Manage floating windows: propose dimensions + show
-        for win in &self.windows {
+        // Recenter windows that just got their first real dimensions.
+        let focused_ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+        let float_area = focused_ws
+            .active_output
+            .and_then(|oid| self.workspaces.output(oid))
+            .map(|o| o.usable_rect());
+        for win in &mut self.windows {
             if win.floating {
-                let (fw, fh) = if win.width > 0 && win.height > 0 {
-                    (win.width, win.height)
+                if win.width > 0 && win.height > 0 {
+                    // Recenter if the window hasn't been positioned with real dims yet
+                    if !win.float_positioned {
+                        if let Some(area) = float_area {
+                            win.float_x = area.x + (area.width - win.width) / 2;
+                            win.float_y = area.y + (area.height - win.height) / 2;
+                        }
+                        win.float_positioned = true;
+                    }
+                    win.proxy.propose_dimensions(win.width, win.height);
+                    win.proxy.show();
                 } else {
-                    (0, 0)
-                };
-                win.proxy.propose_dimensions(fw, fh);
-                win.proxy.show();
+                    // Client hasn't committed dimensions yet — propose 0,0 to let
+                    // the client pick, but don't show until we have real dimensions.
+                    win.proxy.propose_dimensions(0, 0);
+                }
             }
         }
 
@@ -342,10 +357,10 @@ impl WindowManager {
             self.empty_frames.cleanup(&empty_ids);
         }
 
-        // Position and style floating windows
+        // Position and style floating windows (only if they have real dimensions)
         let float_border_color = parse_hex_color(&self.config.appearance.active_border);
         for win in &self.windows {
-            if win.floating {
+            if win.floating && win.width > 0 && win.height > 0 {
                 win.node.set_position(win.float_x, win.float_y);
                 win.node.place_top();
                 let all_edges = Edges::Left | Edges::Right | Edges::Top | Edges::Bottom;
