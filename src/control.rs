@@ -88,6 +88,8 @@ impl ControlState {
         let path_thread = path.clone();
 
         std::thread::spawn(move || {
+            // Remove stale socket from a previous run
+            let _ = std::fs::remove_file(&path_thread);
             let listener = match UnixListener::bind(&path_thread) {
                 Ok(l) => l,
                 Err(e) => {
