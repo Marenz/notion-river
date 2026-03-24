@@ -56,6 +56,9 @@ install -Dm644 config-examples/start-river %{buildroot}%{_datadir}/notion-river/
 install -Dm755 config-examples/river-init %{buildroot}%{_datadir}/notion-river/examples/river-init
 install -Dm644 config-examples/autostart %{buildroot}%{_datadir}/notion-river/examples/autostart
 install -Dm644 config.example.toml %{buildroot}%{_datadir}/notion-river/examples/config.toml
+install -dm755 %{buildroot}%{_datadir}/notion-river/examples/waybar
+install -Dm644 config-examples/waybar/config.jsonc %{buildroot}%{_datadir}/notion-river/examples/waybar/config.jsonc
+install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-river/examples/waybar/style.css
 
 %files
 %license LICENSE
