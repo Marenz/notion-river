@@ -46,8 +46,11 @@ pub struct WindowInfo {
 pub struct WorkspaceInfo {
     pub name: String,
     pub output: Option<String>,
+    /// The preferred output from config (stable, doesn't change on workspace switch).
+    pub preferred_output: Option<String>,
     pub focused: bool,
     pub visible: bool,
+    pub has_windows: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -185,11 +188,30 @@ fn handle_client(
     let cmd = parts.next().unwrap_or("");
 
     // Handle subscribe commands: keep connection open for streaming.
-    if cmd == "subscribe-workspaces" || cmd == "subscribe-workspace" {
+    if cmd == "subscribe-workspaces"
+        || cmd == "subscribe-workspace"
+        || cmd == "subscribe-output"
+    {
         let mut stream = reader.into_inner();
         let _ = stream.set_read_timeout(None);
 
-        let kind = if cmd == "subscribe-workspace" {
+        let kind = if cmd == "subscribe-output" {
+            let output_name = parts.collect::<Vec<_>>().join(" ");
+            if output_name.is_empty() {
+                let _ = stream.write_all(b"ERR missing output name\n");
+                return;
+            }
+            // Send initial state for this output's workspaces.
+            let snap = snapshot.lock().expect("control snapshot poisoned").clone();
+            let initial = output_ws_json_from_snapshot(&snap, &output_name);
+            if stream
+                .write_all(format!("{initial}\n").as_bytes())
+                .is_err()
+            {
+                return;
+            }
+            crate::ipc::SubscriptionKind::Output(output_name)
+        } else if cmd == "subscribe-workspace" {
             let ws_name = parts.collect::<Vec<_>>().join(" ");
             if ws_name.is_empty() {
                 let _ = stream.write_all(b"ERR missing workspace name\n");
@@ -377,6 +399,74 @@ fn handle_client(
 
 /// Generate waybar JSON for a single workspace from the control snapshot.
 /// Used for initial state when a subscriber connects (before the main thread runs).
+fn output_ws_json_from_snapshot(snap: &Snapshot, output_name: &str) -> String {
+    let mut parts = Vec::new();
+    let mut focused_name = String::new();
+
+    // Determine color for this output based on its index among preferred outputs
+    let default_colors: &[&str] = &["#cba6f7", "#94e2d5", "#e5cfa6", "#d68ba8"];
+    let mut output_names: Vec<String> = Vec::new();
+    for ws in &snap.workspaces {
+        let name = ws
+            .preferred_output
+            .as_deref()
+            .unwrap_or("none")
+            .to_string();
+        if !output_names.contains(&name) {
+            output_names.push(name);
+        }
+    }
+    let color_idx = output_names
+        .iter()
+        .position(|n| n == output_name)
+        .unwrap_or(0);
+    let color = default_colors[color_idx % default_colors.len()];
+    let focused_bg = "#2a2636";
+
+    for ws in &snap.workspaces {
+        // Match by preferred_output (stable config value) so hidden workspaces are included.
+        let ws_output = ws
+            .preferred_output
+            .as_deref()
+            .or(ws.output.as_deref())
+            .unwrap_or("");
+        if ws_output != output_name {
+            continue;
+        }
+        if ws.focused {
+            focused_name = ws.name.clone();
+        }
+        let ws_text = if ws.focused {
+            format!(
+                "<span color='{color}' background='{focused_bg}' bgalpha='80%'><b> {} </b></span>",
+                ws.name
+            )
+        } else if ws.visible {
+            format!("<span alpha='85%' color='{color}'>{}</span>", ws.name)
+        } else if ws.has_windows {
+            format!("<span alpha='60%' color='{color}'>{}</span>", ws.name)
+        } else {
+            format!("<span alpha='35%' color='{color}'>{}</span>", ws.name)
+        };
+        parts.push(ws_text);
+    }
+
+    // Also include workspaces whose preferred_output matches but aren't currently visible
+    // The snapshot's output field reflects active_output, not preferred_output.
+    // We handle this in the streaming updates via ipc.rs which has full workspace data.
+
+    if parts.is_empty() {
+        return format!(
+            r#"{{"text": "", "tooltip": "No workspaces on {output_name}", "class": "empty"}}"#
+        );
+    }
+
+    let text = parts.join("  ").replace('"', "&quot;");
+    format!(
+        r#"{{"text": "{text}", "tooltip": "{output_name}: {focused_name}", "class": "workspaces"}}"#
+    )
+}
+
 fn single_ws_json_from_snapshot(snap: &Snapshot, name: &str) -> String {
     for ws in &snap.workspaces {
         if ws.name != name {
@@ -456,8 +546,14 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
                 .active_output
                 .and_then(|oid| wm.workspaces.output(oid))
                 .and_then(|o| o.name.clone()),
+            preferred_output: ws.preferred_output.clone(),
             focused: ws.id == focused_ws,
             visible: ws.active_output.is_some(),
+            has_windows: ws
+                .root
+                .all_frame_ids()
+                .iter()
+                .any(|fid| ws.root.find_frame(*fid).is_some_and(|f| !f.is_empty())),
         })
         .collect();
 

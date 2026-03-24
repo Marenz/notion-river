@@ -24,6 +24,8 @@ pub enum SubscriptionKind {
     AllWorkspaces,
     /// A single named workspace with class-based styling.
     SingleWorkspace(String),
+    /// All workspaces on a specific output as Pango-markup widget.
+    Output(String),
 }
 
 /// A connected subscriber.
@@ -77,6 +79,9 @@ impl IpcState {
             let json = match &sub.kind {
                 SubscriptionKind::AllWorkspaces => all_json.clone(),
                 SubscriptionKind::SingleWorkspace(name) => single_workspace_json(workspaces, name),
+                SubscriptionKind::Output(output) => {
+                    output_workspaces_json(workspaces, output, appearance)
+                }
             };
             // Only send if this subscriber's output actually changed.
             if json == sub.last_json {
@@ -122,6 +127,91 @@ pub fn single_workspace_json(workspaces: &WorkspaceManager, name: &str) -> Strin
     }
     // Workspace not found
     format!(r#"{{"text": "{name}", "class": "empty"}}"#)
+}
+
+/// Generate waybar JSON for all workspaces on a specific output.
+/// Returns Pango markup text with workspace names styled by state, suitable for
+/// a single waybar custom module per output.
+pub fn output_workspaces_json(
+    workspaces: &WorkspaceManager,
+    output_name: &str,
+    appearance: &AppearanceConfig,
+) -> String {
+    let monitor_colors: Vec<&str> = if appearance.monitor_colors.is_empty() {
+        DEFAULT_MONITOR_COLORS.to_vec()
+    } else {
+        appearance
+            .monitor_colors
+            .iter()
+            .map(|s| s.as_str())
+            .collect()
+    };
+
+    // Find the color index for this output
+    let mut output_names: Vec<String> = Vec::new();
+    for ws in &workspaces.workspaces {
+        let name = ws.preferred_output.as_deref().unwrap_or("none").to_string();
+        if !output_names.contains(&name) {
+            output_names.push(name);
+        }
+    }
+    let color_idx = output_names
+        .iter()
+        .position(|n| n == output_name)
+        .unwrap_or(0);
+    let color = monitor_colors[color_idx % monitor_colors.len()];
+    let focused_bg = &appearance.waybar_focused_bg;
+
+    let mut parts = Vec::new();
+    let mut focused_name = String::new();
+    for ws in &workspaces.workspaces {
+        let ws_output = ws.preferred_output.as_deref().unwrap_or("none");
+        if ws_output != output_name {
+            continue;
+        }
+
+        let is_focused = ws.id == workspaces.focused_workspace;
+        let is_visible = ws.active_output.is_some();
+        let has_windows = ws
+            .root
+            .all_frame_ids()
+            .iter()
+            .any(|fid| ws.root.find_frame(*fid).is_some_and(|f| !f.is_empty()));
+
+        if is_focused {
+            focused_name = ws.name.clone();
+        }
+
+        let ws_text = if is_focused {
+            format!(
+                "<span color='{color}' background='{focused_bg}' bgalpha='80%'><b> {} </b></span>",
+                ws.name
+            )
+        } else if is_visible {
+            format!("<span alpha='85%' color='{color}'>{}</span>", ws.name)
+        } else if has_windows {
+            format!("<span alpha='60%' color='{color}'>{}</span>", ws.name)
+        } else {
+            format!("<span alpha='35%' color='{color}'>{}</span>", ws.name)
+        };
+        parts.push(ws_text);
+    }
+
+    if parts.is_empty() {
+        return format!(
+            r#"{{"text": "", "tooltip": "No workspaces on {output_name}", "class": "empty"}}"#
+        );
+    }
+
+    let text = parts.join("  ");
+    let text = text.replace('"', "&quot;");
+    let cls = if focused_name.is_empty() {
+        "visible"
+    } else {
+        "focused"
+    };
+
+    format!(r#"{{"text": "{text}", "tooltip": "{output_name}: {focused_name}", "class": "{cls}"}}"#)
 }
 
 /// Fallback monitor colors if none configured.
