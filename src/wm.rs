@@ -112,6 +112,7 @@ pub struct WindowManager {
     pub app_bindings: crate::app_bindings::AppBindings,
     /// Drag preview overlay.
     pub drag_preview: crate::decorations::DragPreview,
+    pub resize_highlight: crate::decorations::ResizeHighlight,
     /// Per-output-config workspace assignment memory.
     pub output_profiles: crate::output_profiles::OutputProfiles,
     /// Control socket state for window/workspace switching.
@@ -224,6 +225,10 @@ pub enum SeatOp {
         /// Which axes to resize (determined by proximity to split boundaries).
         resize_h: bool,
         resize_v: bool,
+        /// Path to the horizontal split boundary grabbed at drag start.
+        h_boundary_path: Option<Vec<bool>>,
+        /// Path to the vertical split boundary grabbed at drag start.
+        v_boundary_path: Option<Vec<bool>>,
     },
     /// Resize split boundary from an empty frame area.
     #[allow(dead_code)]
@@ -231,6 +236,10 @@ pub enum SeatOp {
         frame_id: FrameId,
         resize_h: bool,
         resize_v: bool,
+        /// Path to the horizontal split boundary grabbed at drag start.
+        h_boundary_path: Option<Vec<bool>>,
+        /// Path to the vertical split boundary grabbed at drag start.
+        v_boundary_path: Option<Vec<bool>>,
     },
 }
 
@@ -279,6 +288,7 @@ impl WindowManager {
             ipc,
             app_bindings: crate::app_bindings::AppBindings::load(),
             drag_preview: crate::decorations::DragPreview::default(),
+            resize_highlight: crate::decorations::ResizeHighlight::default(),
             output_profiles: crate::output_profiles::OutputProfiles::load(),
             control,
             focused_floating: None,
@@ -528,6 +538,7 @@ impl WindowManager {
         // Show/hide drag preview overlay
         if let (Some(shm), Some(compositor)) = (shm, compositor) {
             self.update_drag_preview(proxy, shm, compositor, qh);
+            self.update_resize_highlight(proxy, shm, compositor, qh);
         }
 
         proxy.render_finish();
@@ -573,6 +584,66 @@ impl WindowManager {
         }
 
         self.drag_preview.hide();
+    }
+
+    fn update_resize_highlight(
+        &mut self,
+        wm_proxy: &RiverWindowManagerV1,
+        shm: &WlShm,
+        compositor: &WlCompositor,
+        qh: &QueueHandle<AppData>,
+    ) {
+        // Find an active resize op's boundary paths
+        let active_paths = self.seats.values().find_map(|s| {
+            if s.op_release {
+                return None;
+            }
+            match &s.op {
+                SeatOp::Resize {
+                    h_boundary_path,
+                    v_boundary_path,
+                    ..
+                }
+                | SeatOp::ResizeEmpty {
+                    h_boundary_path,
+                    v_boundary_path,
+                    ..
+                } => {
+                    // Pick the first available path (prefer H, fallback V)
+                    let path = h_boundary_path.as_ref().or(v_boundary_path.as_ref());
+                    path.cloned()
+                }
+                _ => None,
+            }
+        });
+
+        if let Some(path) = active_paths {
+            let gap = self.config.general.gap as i32;
+            let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+            if let Some(area) = ws
+                .active_output
+                .and_then(|oid| self.workspaces.output(oid))
+                .map(|o| o.usable_rect())
+                && let Some((boundary_pos, orient)) = ws.root.boundary_at_path(area, &path, gap)
+            {
+                let color =
+                    crate::config::hex_to_argb(&self.config.appearance.resize_highlight);
+                self.resize_highlight.show(
+                    &orient,
+                    boundary_pos,
+                    &area,
+                    color,
+                    4, // thickness in pixels
+                    compositor,
+                    wm_proxy,
+                    shm,
+                    qh,
+                );
+                return;
+            }
+        }
+
+        self.resize_highlight.hide();
     }
 
     // ── Window lifecycle ─────────────────────────────────────────────────
