@@ -112,7 +112,8 @@ pub struct WindowManager {
     pub app_bindings: crate::app_bindings::AppBindings,
     /// Drag preview overlay.
     pub drag_preview: crate::decorations::DragPreview,
-    pub resize_highlight: crate::decorations::ResizeHighlight,
+    pub resize_highlight_h: crate::decorations::ResizeHighlight,
+    pub resize_highlight_v: crate::decorations::ResizeHighlight,
     /// Per-output-config workspace assignment memory.
     pub output_profiles: crate::output_profiles::OutputProfiles,
     /// Control socket state for window/workspace switching.
@@ -288,7 +289,8 @@ impl WindowManager {
             ipc,
             app_bindings: crate::app_bindings::AppBindings::load(),
             drag_preview: crate::decorations::DragPreview::default(),
-            resize_highlight: crate::decorations::ResizeHighlight::default(),
+            resize_highlight_h: crate::decorations::ResizeHighlight::default(),
+            resize_highlight_v: crate::decorations::ResizeHighlight::default(),
             output_profiles: crate::output_profiles::OutputProfiles::load(),
             control,
             focused_floating: None,
@@ -532,8 +534,8 @@ impl WindowManager {
         viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
         qh: &QueueHandle<AppData>,
     ) {
-        self.apply_layout_positions(proxy, shm, compositor, viewporter, qh);
         self.handle_seat_ops();
+        self.apply_layout_positions(proxy, shm, compositor, viewporter, qh);
 
         // Show/hide drag preview overlay
         if let (Some(shm), Some(compositor)) = (shm, compositor) {
@@ -593,57 +595,71 @@ impl WindowManager {
         compositor: &WlCompositor,
         qh: &QueueHandle<AppData>,
     ) {
-        // Find an active resize op's boundary paths
-        let active_paths = self.seats.values().find_map(|s| {
-            if s.op_release {
-                return None;
-            }
-            match &s.op {
-                SeatOp::Resize {
-                    h_boundary_path,
-                    v_boundary_path,
-                    ..
+        // Find active resize op's boundary paths (both axes)
+        #[allow(clippy::type_complexity)]
+        let active_paths: Option<(Option<Vec<bool>>, Option<Vec<bool>>)> =
+            self.seats.values().find_map(|s| {
+                if s.op_release {
+                    return None;
                 }
-                | SeatOp::ResizeEmpty {
-                    h_boundary_path,
-                    v_boundary_path,
-                    ..
-                } => {
-                    // Pick the first available path (prefer H, fallback V)
-                    let path = h_boundary_path.as_ref().or(v_boundary_path.as_ref());
-                    path.cloned()
+                match &s.op {
+                    SeatOp::Resize {
+                        h_boundary_path,
+                        v_boundary_path,
+                        ..
+                    }
+                    | SeatOp::ResizeEmpty {
+                        h_boundary_path,
+                        v_boundary_path,
+                        ..
+                    } => Some((h_boundary_path.clone(), v_boundary_path.clone())),
+                    _ => None,
                 }
-                _ => None,
-            }
-        });
+            });
 
-        if let Some(path) = active_paths {
+        let mut showed_h = false;
+        let mut showed_v = false;
+
+        if let Some((h_path, v_path)) = active_paths {
             let gap = self.config.general.gap as i32;
             let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
             if let Some(area) = ws
                 .active_output
                 .and_then(|oid| self.workspaces.output(oid))
                 .map(|o| o.usable_rect())
-                && let Some((boundary_pos, orient)) = ws.root.boundary_at_path(area, &path, gap)
             {
                 let color =
                     crate::config::hex_to_argb(&self.config.appearance.resize_highlight);
-                self.resize_highlight.show(
-                    &orient,
-                    boundary_pos,
-                    &area,
-                    color,
-                    4, // thickness in pixels
-                    compositor,
-                    wm_proxy,
-                    shm,
-                    qh,
-                );
-                return;
+
+                // Show H boundary highlight (reads current boundary pos from the tree,
+                // which reflects the already-adjusted ratio — no lag)
+                if let Some(ref hp) = h_path
+                    && let Some((pos, orient)) = ws.root.boundary_at_path(area, hp, gap)
+                {
+                    self.resize_highlight_h.show(
+                        &orient, pos, &area, color, 4, compositor, wm_proxy, shm, qh,
+                    );
+                    showed_h = true;
+                }
+
+                // Show V boundary highlight
+                if let Some(ref vp) = v_path
+                    && let Some((pos, orient)) = ws.root.boundary_at_path(area, vp, gap)
+                {
+                    self.resize_highlight_v.show(
+                        &orient, pos, &area, color, 4, compositor, wm_proxy, shm, qh,
+                    );
+                    showed_v = true;
+                }
             }
         }
 
-        self.resize_highlight.hide();
+        if !showed_h {
+            self.resize_highlight_h.hide();
+        }
+        if !showed_v {
+            self.resize_highlight_v.hide();
+        }
     }
 
     // ── Window lifecycle ─────────────────────────────────────────────────
