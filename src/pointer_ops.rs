@@ -180,6 +180,8 @@ impl WindowManager {
         struct TiledResizeCmd {
             pointer_x: i32,
             pointer_y: i32,
+            h_boundary_path: Option<Vec<bool>>,
+            v_boundary_path: Option<Vec<bool>>,
         }
 
         let mut float_moves: Vec<FloatMoveCmd> = Vec::new();
@@ -217,20 +219,32 @@ impl WindowManager {
                     }
                     // Tiled moves show preview overlay — handled elsewhere
                 }
-                SeatOp::Resize { .. } => {
+                SeatOp::Resize {
+                    h_boundary_path,
+                    v_boundary_path,
+                    ..
+                } => {
                     let cur_x = s.op_start_pointer_x + s.op_dx;
                     let cur_y = s.op_start_pointer_y + s.op_dy;
                     tiled_resizes.push(TiledResizeCmd {
                         pointer_x: cur_x,
                         pointer_y: cur_y,
+                        h_boundary_path: h_boundary_path.clone(),
+                        v_boundary_path: v_boundary_path.clone(),
                     });
                 }
-                SeatOp::ResizeEmpty { .. } => {
+                SeatOp::ResizeEmpty {
+                    h_boundary_path,
+                    v_boundary_path,
+                    ..
+                } => {
                     let cur_x = s.op_start_pointer_x + s.op_dx;
                     let cur_y = s.op_start_pointer_y + s.op_dy;
                     tiled_resizes.push(TiledResizeCmd {
                         pointer_x: cur_x,
                         pointer_y: cur_y,
+                        h_boundary_path: h_boundary_path.clone(),
+                        v_boundary_path: v_boundary_path.clone(),
                     });
                 }
                 _ => {}
@@ -257,8 +271,32 @@ impl WindowManager {
             };
             if let Some(area) = area {
                 let ws = &mut self.workspaces.workspaces[ws_idx];
-                ws.root
-                    .adjust_ratio_at(area, cmd.pointer_x, cmd.pointer_y, gap);
+                let has_paths = cmd.h_boundary_path.is_some() || cmd.v_boundary_path.is_some();
+                if !has_paths {
+                    // Fallback: no paths, use closest boundary (legacy behavior)
+                    ws.root
+                        .adjust_ratio_at(area, cmd.pointer_x, cmd.pointer_y, gap);
+                } else {
+                    // Adjust each axis independently using its stored path
+                    if let Some(ref h_path) = cmd.h_boundary_path {
+                        ws.root.adjust_ratio_at_path(
+                            area,
+                            h_path,
+                            cmd.pointer_x,
+                            cmd.pointer_y,
+                            gap,
+                        );
+                    }
+                    if let Some(ref v_path) = cmd.v_boundary_path {
+                        ws.root.adjust_ratio_at_path(
+                            area,
+                            v_path,
+                            cmd.pointer_x,
+                            cmd.pointer_y,
+                            gap,
+                        );
+                    }
+                }
             }
         }
     }

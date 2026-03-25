@@ -163,6 +163,10 @@ pub struct AppearanceConfig {
     /// Unfocused empty frame border (hex).
     pub empty_unfocused: String,
 
+    // ── Resize highlight ──
+    /// Color for the resize boundary highlight (hex with alpha, e.g. "#cba6f780").
+    pub resize_highlight: String,
+
     // ── Waybar workspace colors (per-monitor) ──
     /// Colors for workspace indicators per monitor (hex, up to 4).
     pub monitor_colors: Vec<String>,
@@ -325,6 +329,8 @@ impl Default for AppearanceConfig {
 
             empty_focused: "#7c6f9b".to_string(),
             empty_unfocused: "#332e42".to_string(),
+
+            resize_highlight: "#cba6f780".to_string(),
 
             monitor_colors: vec![
                 "#b4a0e5".to_string(),

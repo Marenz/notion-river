@@ -567,11 +567,41 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                         let (rh, rv) = frame_id
                             .map(|fid| state.wm.detect_resize_axes(fid, ptr_x, ptr_y))
                             .unwrap_or((true, true));
+                        // Find the specific split boundaries closest to the pointer per axis
+                        let gap = state.wm.config.general.gap as i32;
+                        let (h_boundary_path, v_boundary_path) = {
+                            let ws = state.wm.workspaces.focused_workspace();
+                            ws.active_output
+                                .and_then(|oid| state.wm.workspaces.output(oid))
+                                .map(|o| {
+                                    let area = o.usable_rect();
+                                    let h_path = if rh {
+                                        ws.root
+                                            .find_closest_boundary_path_for_axis(
+                                                area, ptr_x, ptr_y, gap,
+                                                crate::layout::Orientation::Horizontal,
+                                            )
+                                            .map(|(p, _)| p)
+                                    } else {
+                                        None
+                                    };
+                                    let v_path = if rv {
+                                        ws.root
+                                            .find_closest_boundary_path_for_axis(
+                                                area, ptr_x, ptr_y, gap,
+                                                crate::layout::Orientation::Vertical,
+                                            )
+                                            .map(|(p, _)| p)
+                                    } else {
+                                        None
+                                    };
+                                    (h_path, v_path)
+                                })
+                                .unwrap_or((None, None))
+                        };
                         log::info!(
-                            "Pointer resize start on window {} (h={}, v={})",
-                            win.id,
-                            rh,
-                            rv
+                            "Pointer resize start on window {} (h={}, v={}, h_path={:?}, v_path={:?})",
+                            win.id, rh, rv, h_boundary_path, v_boundary_path
                         );
                         let edges = crate::protocol::river_window_v1::Edges::Right
                             | crate::protocol::river_window_v1::Edges::Bottom;
@@ -585,6 +615,8 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                             edges,
                             resize_h: rh,
                             resize_v: rv,
+                            h_boundary_path,
+                            v_boundary_path,
                         })
                     } else {
                         None // No resize for floating windows (for now)
@@ -612,16 +644,46 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                     });
                     frame_at_pointer.map(|frame_id| {
                         let (rh, rv) = state.wm.detect_resize_axes(frame_id, ptr_x, ptr_y);
+                        let (h_boundary_path, v_boundary_path) = {
+                            let ws = state.wm.workspaces.focused_workspace();
+                            ws.active_output
+                                .and_then(|oid| state.wm.workspaces.output(oid))
+                                .map(|o| {
+                                    let area = o.usable_rect();
+                                    let h_path = if rh {
+                                        ws.root
+                                            .find_closest_boundary_path_for_axis(
+                                                area, ptr_x, ptr_y, gap,
+                                                crate::layout::Orientation::Horizontal,
+                                            )
+                                            .map(|(p, _)| p)
+                                    } else {
+                                        None
+                                    };
+                                    let v_path = if rv {
+                                        ws.root
+                                            .find_closest_boundary_path_for_axis(
+                                                area, ptr_x, ptr_y, gap,
+                                                crate::layout::Orientation::Vertical,
+                                            )
+                                            .map(|(p, _)| p)
+                                    } else {
+                                        None
+                                    };
+                                    (h_path, v_path)
+                                })
+                                .unwrap_or((None, None))
+                        };
                         log::info!(
-                            "Pointer resize start on empty frame {:?} (h={}, v={})",
-                            frame_id,
-                            rh,
-                            rv
+                            "Pointer resize start on empty frame {:?} (h={}, v={}, h_path={:?}, v_path={:?})",
+                            frame_id, rh, rv, h_boundary_path, v_boundary_path
                         );
                         SeatOp::ResizeEmpty {
                             frame_id,
                             resize_h: rh,
                             resize_v: rv,
+                            h_boundary_path,
+                            v_boundary_path,
                         }
                     })
                 } else {

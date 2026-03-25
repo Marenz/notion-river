@@ -643,6 +643,311 @@ impl SplitNode {
         }
     }
 
+    /// Find the closest boundary path for a specific axis.
+    /// Returns the path to the closest split boundary that matches the given orientation.
+    pub fn find_closest_boundary_path_for_axis(
+        &self,
+        area: Rect,
+        px: i32,
+        py: i32,
+        gap: i32,
+        target_axis: Orientation,
+    ) -> Option<(Vec<bool>, i32)> {
+        // Returns (path, distance)
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => {
+                let half_gap = gap / 2;
+                let (first_area, second_area) = match orientation {
+                    Orientation::Horizontal => {
+                        let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                        let sw = area.width - gap - fw;
+                        (
+                            Rect::new(area.x, area.y, fw, area.height),
+                            Rect::new(area.x + fw + gap, area.y, sw, area.height),
+                        )
+                    }
+                    Orientation::Vertical => {
+                        let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                        let sh = area.height - gap - fh;
+                        (
+                            Rect::new(area.x, area.y, area.width, fh),
+                            Rect::new(area.x, area.y + fh + gap, area.width, sh),
+                        )
+                    }
+                };
+
+                // This node's boundary (only if it matches the target axis)
+                let this_result = if *orientation == target_axis {
+                    let boundary = match orientation {
+                        Orientation::Horizontal => {
+                            let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                            area.x + fw + half_gap
+                        }
+                        Orientation::Vertical => {
+                            let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                            area.y + fh + half_gap
+                        }
+                    };
+                    let dist = match orientation {
+                        Orientation::Horizontal => (px - boundary).abs(),
+                        Orientation::Vertical => (py - boundary).abs(),
+                    };
+                    Some((vec![], dist))
+                } else {
+                    None
+                };
+
+                // Check children
+                let child_first = first
+                    .find_closest_boundary_path_for_axis(first_area, px, py, gap, target_axis)
+                    .map(|(mut p, d)| {
+                        p.insert(0, true);
+                        (p, d)
+                    });
+                let child_second = second
+                    .find_closest_boundary_path_for_axis(second_area, px, py, gap, target_axis)
+                    .map(|(mut p, d)| {
+                        p.insert(0, false);
+                        (p, d)
+                    });
+
+                [this_result, child_first, child_second]
+                    .into_iter()
+                    .flatten()
+                    .min_by_key(|(_, d)| *d)
+            }
+        }
+    }
+
+    /// Find the path to the closest split boundary from the pointer position.
+    /// Returns a list of steps (true = first child, false = second child) to reach the
+    /// split node whose boundary is closest, plus its orientation.
+    #[allow(dead_code)]
+    pub fn find_closest_boundary_path(
+        &self,
+        area: Rect,
+        px: i32,
+        py: i32,
+        gap: i32,
+    ) -> Option<(Vec<bool>, Orientation)> {
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => {
+                let half_gap = gap / 2;
+                let boundary = match orientation {
+                    Orientation::Horizontal => {
+                        let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                        area.x + fw + half_gap
+                    }
+                    Orientation::Vertical => {
+                        let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                        area.y + fh + half_gap
+                    }
+                };
+                let dist = match orientation {
+                    Orientation::Horizontal => (px - boundary).abs(),
+                    Orientation::Vertical => (py - boundary).abs(),
+                };
+
+                let (first_area, second_area) = match orientation {
+                    Orientation::Horizontal => {
+                        let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                        let sw = area.width - gap - fw;
+                        (
+                            Rect::new(area.x, area.y, fw, area.height),
+                            Rect::new(area.x + fw + gap, area.y, sw, area.height),
+                        )
+                    }
+                    Orientation::Vertical => {
+                        let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                        let sh = area.height - gap - fh;
+                        (
+                            Rect::new(area.x, area.y, area.width, fh),
+                            Rect::new(area.x, area.y + fh + gap, area.width, sh),
+                        )
+                    }
+                };
+
+                // Check children for closer boundaries
+                let mut best_dist = dist;
+                let mut best_path: Vec<bool> = vec![];
+                let mut best_orient = *orientation;
+
+                if let Some((mut child_path, child_orient)) =
+                    first.find_closest_boundary_path(first_area, px, py, gap)
+                {
+                    let child_dist = first
+                        .closest_boundary_dist(first_area, px, py, gap)
+                        .unwrap_or(i32::MAX);
+                    if child_dist < best_dist {
+                        best_dist = child_dist;
+                        child_path.insert(0, true);
+                        best_path = child_path;
+                        best_orient = child_orient;
+                    }
+                }
+                if let Some((mut child_path, child_orient)) =
+                    second.find_closest_boundary_path(second_area, px, py, gap)
+                {
+                    let child_dist = second
+                        .closest_boundary_dist(second_area, px, py, gap)
+                        .unwrap_or(i32::MAX);
+                    if child_dist < best_dist {
+                        child_path.insert(0, false);
+                        best_path = child_path;
+                        best_orient = child_orient;
+                    }
+                }
+
+                Some((best_path, best_orient))
+            }
+        }
+    }
+
+    /// Adjust ratio at a specific split boundary identified by path.
+    /// The path is a sequence of steps (true = first child, false = second child).
+    /// An empty path means adjust this node's ratio.
+    pub fn adjust_ratio_at_path(
+        &mut self,
+        area: Rect,
+        path: &[bool],
+        px: i32,
+        py: i32,
+        gap: i32,
+    ) -> bool {
+        match self {
+            SplitNode::Leaf(_) => false,
+            SplitNode::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => {
+                if path.is_empty() {
+                    // This is the target split — set ratio based on pointer position
+                    let new_ratio = match orientation {
+                        Orientation::Horizontal => {
+                            let usable = (area.width - gap) as f32;
+                            if usable > 0.0 {
+                                (px - area.x) as f32 / usable
+                            } else {
+                                *ratio
+                            }
+                        }
+                        Orientation::Vertical => {
+                            let usable = (area.height - gap) as f32;
+                            if usable > 0.0 {
+                                (py - area.y) as f32 / usable
+                            } else {
+                                *ratio
+                            }
+                        }
+                    };
+                    let clamped = new_ratio.clamp(0.1, 0.9);
+                    if (clamped - *ratio).abs() > 0.001 {
+                        *ratio = clamped;
+                        return true;
+                    }
+                    false
+                } else {
+                    // Recurse into the specified child
+                    let (first_area, second_area) = match orientation {
+                        Orientation::Horizontal => {
+                            let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                            let sw = area.width - gap - fw;
+                            (
+                                Rect::new(area.x, area.y, fw, area.height),
+                                Rect::new(area.x + fw + gap, area.y, sw, area.height),
+                            )
+                        }
+                        Orientation::Vertical => {
+                            let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                            let sh = area.height - gap - fh;
+                            (
+                                Rect::new(area.x, area.y, area.width, fh),
+                                Rect::new(area.x, area.y + fh + gap, area.width, sh),
+                            )
+                        }
+                    };
+                    if path[0] {
+                        first.adjust_ratio_at_path(first_area, &path[1..], px, py, gap)
+                    } else {
+                        second.adjust_ratio_at_path(second_area, &path[1..], px, py, gap)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get the boundary position and orientation at a specific path.
+    /// Returns (boundary_position, orientation) or None if path is invalid.
+    pub fn boundary_at_path(
+        &self,
+        area: Rect,
+        path: &[bool],
+        gap: i32,
+    ) -> Option<(i32, Orientation)> {
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => {
+                let half_gap = gap / 2;
+                if path.is_empty() {
+                    let boundary = match orientation {
+                        Orientation::Horizontal => {
+                            let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                            area.x + fw + half_gap
+                        }
+                        Orientation::Vertical => {
+                            let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                            area.y + fh + half_gap
+                        }
+                    };
+                    Some((boundary, *orientation))
+                } else {
+                    let (first_area, second_area) = match orientation {
+                        Orientation::Horizontal => {
+                            let fw = ((area.width - gap) as f32 * *ratio) as i32;
+                            let sw = area.width - gap - fw;
+                            (
+                                Rect::new(area.x, area.y, fw, area.height),
+                                Rect::new(area.x + fw + gap, area.y, sw, area.height),
+                            )
+                        }
+                        Orientation::Vertical => {
+                            let fh = ((area.height - gap) as f32 * *ratio) as i32;
+                            let sh = area.height - gap - fh;
+                            (
+                                Rect::new(area.x, area.y, area.width, fh),
+                                Rect::new(area.x, area.y + fh + gap, area.width, sh),
+                            )
+                        }
+                    };
+                    if path[0] {
+                        first.boundary_at_path(first_area, &path[1..], gap)
+                    } else {
+                        second.boundary_at_path(second_area, &path[1..], gap)
+                    }
+                }
+            }
+        }
+    }
+
     /// Adjust ratio by frame id (used in tests and keyboard resize).
     #[cfg(test)]
     pub fn adjust_ratio(&mut self, target_id: FrameId, dx: f32, dy: f32) -> bool {

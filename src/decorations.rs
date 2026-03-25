@@ -920,6 +920,135 @@ impl DragPreview {
     }
 }
 
+// ── Resize boundary highlight ────────────────────────────────────────────
+
+/// Visual overlay highlighting the split boundary being resized.
+#[derive(Debug, Default)]
+pub struct ResizeHighlight {
+    surface: Option<WlSurface>,
+    shell_surface: Option<RiverShellSurfaceV1>,
+    node: Option<RiverNodeV1>,
+    buffer: Option<WlBuffer>,
+    pool: Option<WlShmPool>,
+    visible: bool,
+}
+
+impl ResizeHighlight {
+    /// Show the resize highlight at a specific boundary position.
+    /// `orientation` determines if the line is horizontal or vertical.
+    /// `boundary_pos` is the coordinate of the boundary (x for H, y for V).
+    /// `area` is the full workspace area to determine the line's extent.
+    #[allow(clippy::too_many_arguments)]
+    pub fn show(
+        &mut self,
+        orientation: &crate::layout::Orientation,
+        boundary_pos: i32,
+        area: &Rect,
+        color: u32,
+        thickness: i32,
+        compositor: &WlCompositor,
+        wm_proxy: &RiverWindowManagerV1,
+        shm: &WlShm,
+        qh: &QueueHandle<crate::wm::AppData>,
+    ) {
+        use crate::layout::Orientation;
+
+        if self.surface.is_none() {
+            let surface = compositor.create_surface(qh, ());
+            let shell_surface = wm_proxy.get_shell_surface(&surface, qh, ());
+            let node = shell_surface.get_node(qh, ());
+            self.surface = Some(surface);
+            self.shell_surface = Some(shell_surface);
+            self.node = Some(node);
+        }
+
+        let (px, py, pw, ph) = match orientation {
+            Orientation::Horizontal => {
+                (boundary_pos - thickness / 2, area.y, thickness, area.height)
+            }
+            Orientation::Vertical => (area.x, boundary_pos - thickness / 2, area.width, thickness),
+        };
+
+        if pw <= 0 || ph <= 0 {
+            return;
+        }
+
+        // Destroy old buffer
+        if let Some(buf) = self.buffer.take() {
+            buf.destroy();
+        }
+        if let Some(pool) = self.pool.take() {
+            pool.destroy();
+        }
+
+        let stride = pw * 4;
+        let size = stride * ph;
+        let fd = match create_shm_file(size as usize) {
+            Ok(fd) => fd,
+            Err(_) => return,
+        };
+
+        let map = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd.as_fd().as_raw_fd(),
+                0,
+            )
+        };
+        if map == libc::MAP_FAILED {
+            return;
+        }
+
+        let pixels = unsafe { std::slice::from_raw_parts_mut(map as *mut u32, (pw * ph) as usize) };
+        pixels.fill(color);
+
+        unsafe {
+            libc::munmap(map, size as usize);
+        }
+
+        let pool = shm.create_pool(fd.as_fd(), size, qh, ());
+        let buffer = pool.create_buffer(0, pw, ph, stride, wl_shm::Format::Argb8888, qh, ());
+
+        if let Some(ref surface) = self.surface {
+            surface.attach(Some(&buffer), 0, 0);
+            surface.damage_buffer(0, 0, pw, ph);
+        }
+        if let Some(ref ss) = self.shell_surface {
+            ss.sync_next_commit();
+        }
+        if let Some(ref surface) = self.surface {
+            surface.commit();
+        }
+        if let Some(ref node) = self.node {
+            node.set_position(px, py);
+            node.place_top();
+        }
+
+        self.buffer = Some(buffer);
+        self.pool = Some(pool);
+        self.visible = true;
+    }
+
+    pub fn hide(&mut self) {
+        if !self.visible {
+            return;
+        }
+        if let Some(ref surface) = self.surface {
+            surface.attach(None, 0, 0);
+        }
+        if let Some(ref ss) = self.shell_surface {
+            ss.sync_next_commit();
+        }
+        if let Some(ref surface) = self.surface {
+            surface.commit();
+        }
+        self.visible = false;
+    }
+}
+
 fn in_rounded_corner(dx: usize, dy: usize, radius: usize) -> bool {
     let rx = radius as f64 - dx as f64 - 0.5;
     let ry = radius as f64 - dy as f64 - 0.5;
