@@ -93,6 +93,7 @@ impl WindowManager {
                 {
                     self.app_bindings
                         .toggle_binding(&win_ref.app_id, &ws.name, fi);
+                    self.enforce_app_bindings();
                 }
             }
 
@@ -111,6 +112,7 @@ impl WindowManager {
                 {
                     self.app_bindings
                         .bind_exclusive(&win_ref.app_id, &ws.name, fi);
+                    self.enforce_app_bindings();
                 }
             }
 

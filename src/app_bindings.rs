@@ -236,9 +236,9 @@ impl AppBindings {
             .position(|id| *id == frame_id)
     }
 
-    /// Check if a frame has any bindings.
-    pub fn is_bound(&self, workspace: &str, frame_index: usize) -> bool {
-        self.bindings.values().any(|locs| {
+    /// Check if this app_id is bound to the specific frame location.
+    pub fn is_app_bound_at(&self, app_id: &str, workspace: &str, frame_index: usize) -> bool {
+        self.find_locations(app_id).is_some_and(|locs| {
             locs.iter()
                 .any(|l| l.workspace == workspace && l.frame_index == frame_index)
         })

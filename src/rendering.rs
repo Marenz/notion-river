@@ -306,8 +306,7 @@ impl WindowManager {
                     .find_map(|ws| ws.root.find_frame(cmd.frame_id));
 
                 if let Some(frame) = frame {
-                    // Check if this frame has an app binding
-                    let is_bound = self
+                    let frame_location = self
                         .workspaces
                         .workspaces
                         .iter()
@@ -315,9 +314,24 @@ impl WindowManager {
                             let ids = ws.root.all_frame_ids();
                             ids.iter()
                                 .position(|id| *id == cmd.frame_id)
-                                .map(|fi| self.app_bindings.is_bound(&ws.name, fi))
-                        })
-                        .unwrap_or(false);
+                                .map(|fi| (ws.name.as_str(), fi))
+                        });
+
+                    let bound_tabs: Vec<bool> = if let Some((workspace_name, frame_index)) = frame_location {
+                        frame
+                            .windows
+                            .iter()
+                            .map(|win_ref| {
+                                self.app_bindings.is_app_bound_at(
+                                    &win_ref.app_id,
+                                    workspace_name,
+                                    frame_index,
+                                )
+                            })
+                            .collect()
+                    } else {
+                        vec![false; frame.windows.len()]
+                    };
 
                     // Compute hovered tab index if pointer is on this decoration.
                     // surface_x is in surface-local coords (unscaled).
@@ -342,7 +356,7 @@ impl WindowManager {
                         frame,
                         cmd.rect_width,
                         cmd.is_focused,
-                        is_bound,
+                        &bound_tabs,
                         cmd.fractional_scale,
                         hovered_tab,
                         &self.colors,
