@@ -9,7 +9,7 @@ use crate::actions::Action;
 use crate::bindings::{get_profile_bindings, parse_all_bindings, Binding};
 use crate::config::Config;
 use crate::decorations::{DecorationManager, EmptyFrameManager};
-use crate::layout::{FrameId, WindowRef};
+use crate::layout::{FrameId, Rect, WindowRef};
 use crate::workspace::{OutputId, WorkspaceManager};
 
 use crate::protocol::{
@@ -147,6 +147,8 @@ pub struct ManagedWindow {
     pub fullscreen: bool,
     /// Whether the window prefers server-side decorations.
     pub prefers_ssd: bool,
+    /// How this floating window should be positioned and focused.
+    pub floating_kind: FloatingKind,
     /// Floating position.
     pub float_x: i32,
     pub float_y: i32,
@@ -155,6 +157,19 @@ pub struct ManagedWindow {
     pub pointer_move_requested: Option<RiverSeatV1>,
     pub pointer_resize_requested: Option<RiverSeatV1>,
     pub pointer_resize_requested_edges: Edges,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FloatingKind {
+    #[default]
+    Dialog,
+    Notification,
+}
+
+impl FloatingKind {
+    pub fn should_auto_focus(self) -> bool {
+        !matches!(self, Self::Notification)
+    }
 }
 
 /// Per-seat state.
@@ -353,14 +368,31 @@ impl WindowManager {
         proxy.manage_finish();
     }
 
-    /// Enforce app bindings: if a bound window is on a hidden workspace but
-    /// has a binding on a visible workspace, move it there.
-    fn enforce_app_bindings(&mut self) {
+    /// Enforce app bindings by moving bound windows into a visible bound frame
+    /// whenever one exists.
+    pub(crate) fn enforce_app_bindings(&mut self) {
         // Collect moves to avoid borrow issues: (window_id, src_frame_id, dst_ws_idx, dst_frame_id)
         let mut moves: Vec<(u64, crate::layout::FrameId, usize, crate::layout::FrameId)> =
             Vec::new();
 
         for (app_id, locations) in &self.app_bindings.bindings {
+            // Find the first visible bound frame for this app.
+            let target = locations.iter().find_map(|loc| {
+                let ws = self
+                    .workspaces
+                    .workspaces
+                    .iter()
+                    .find(|w| w.name == loc.workspace)?;
+                ws.active_output?;
+                let frame_ids = ws.root.all_frame_ids();
+                let fid = *frame_ids.get(loc.frame_index)?;
+                Some((ws.id.0, fid))
+            });
+
+            let Some((dst_ws_idx, dst_fid)) = target else {
+                continue;
+            };
+
             // Find all non-floating windows with this app_id
             let window_ids: Vec<u64> = self
                 .windows
@@ -372,37 +404,15 @@ impl WindowManager {
             for &wid in &window_ids {
                 // Find which workspace/frame this window is in
                 let current = self.workspaces.workspaces.iter().find_map(|ws| {
-                    ws.root
-                        .find_frame_with_window(wid)
-                        .map(|fid| (ws.id, fid, ws.active_output.is_some()))
+                    ws.root.find_frame_with_window(wid).map(|fid| (ws.id.0, fid))
                 });
 
-                let (_current_ws, current_frame, currently_visible) = match current {
+                let (current_ws_idx, current_frame) = match current {
                     Some(c) => c,
                     None => continue,
                 };
 
-                // If already visible, no action needed
-                if currently_visible {
-                    continue;
-                }
-
-                // Find a visible bound frame for this app
-                let target = locations.iter().find_map(|loc| {
-                    let ws = self
-                        .workspaces
-                        .workspaces
-                        .iter()
-                        .find(|w| w.name == loc.workspace)?;
-                    ws.active_output?;
-                    let frame_ids = ws.root.all_frame_ids();
-                    let fid = *frame_ids.get(loc.frame_index)?;
-                    Some((ws.id.0, fid))
-                });
-
-                if let Some((dst_ws_idx, dst_fid)) = target
-                    && dst_fid != current_frame
-                {
+                if current_ws_idx != dst_ws_idx || current_frame != dst_fid {
                     moves.push((wid, current_frame, dst_ws_idx, dst_fid));
                 }
             }
@@ -434,7 +444,7 @@ impl WindowManager {
                 if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
                     win.frame_id = Some(dst_fid);
                 }
-                log::info!("Auto-moved bound window {wid} to visible workspace");
+                log::info!("Auto-moved bound window {wid} to its visible bound frame");
             }
         }
     }
@@ -786,14 +796,13 @@ impl WindowManager {
             // - Already floating (from parent/dimensions_hint in dispatch)
             // - Window has no title but another window with same app_id exists
             //   (catches Thunderbird notifications, dialog popups, etc.)
-            let mut is_notification = false;
             if !window.floating
                 && !window.app_id.is_empty()
                 && window.title.is_empty()
                 && existing_app_ids.contains(&window.app_id)
             {
                 window.floating = true;
-                is_notification = true;
+                window.floating_kind = FloatingKind::Notification;
                 log::info!("Auto-floating popup {} (untitled, app '{}' already open)", window.id, window.app_id);
             }
 
@@ -819,17 +828,7 @@ impl WindowManager {
                     .and_then(|oid| self.workspaces.output(oid))
                 {
                     let area = output.usable_rect();
-                    let win_w = if fw > 0 { fw } else { 640 };
-                    let win_h = if fh > 0 { fh } else { 480 };
-                    if is_notification {
-                        // Top-right corner with padding
-                        window.float_x = area.x + area.width - win_w - 20;
-                        window.float_y = area.y + 20;
-                    } else {
-                        // Center
-                        window.float_x = area.x + (area.width - win_w) / 2;
-                        window.float_y = area.y + (area.height - win_h) / 2;
-                    }
+                    window.position_floating(area);
                     // Mark as positioned only if we used real dimensions
                     window.float_positioned = fw > 0 && fh > 0;
                 }
@@ -1083,6 +1082,35 @@ impl WindowManager {
 
                 if is_floating {
                     self.focused_floating = Some(*wid);
+                    // Switch to the parent app's workspace if it's on a hidden workspace
+                    if let Some(float_win) = self.windows.iter().find(|w| w.id == *wid) {
+                        let app_id = float_win.app_id.clone();
+                        // Find a tiled window with the same app_id
+                        let parent_ws = self.windows.iter().find_map(|w| {
+                            if w.id != *wid && w.app_id == app_id && !w.floating {
+                                w.frame_id.and_then(|fid| {
+                                    self.workspaces
+                                        .workspaces
+                                        .iter()
+                                        .find(|ws| ws.root.find_frame(fid).is_some())
+                                        .map(|ws| ws.id)
+                                })
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(ws_id) = parent_ws {
+                            let ws = &self.workspaces.workspaces[ws_id.0];
+                            if ws.active_output.is_none() {
+                                // Hidden workspace — switch to it
+                                let ws_name = ws.name.clone();
+                                self.workspaces.switch_workspace(&ws_name);
+                                log::info!(
+                                    "Floating click: switched to workspace '{ws_name}' for parent app '{app_id}'",
+                                );
+                            }
+                        }
+                    }
                 } else {
                     // Clicking a tiled window clears floating focus
                     self.focused_floating = None;
@@ -1263,12 +1291,33 @@ impl ManagedWindow {
             floating: false,
             fullscreen: false,
             prefers_ssd: false,
+            floating_kind: FloatingKind::Dialog,
             float_x: 100,
             float_y: 100,
             float_positioned: false,
             pointer_move_requested: None,
             pointer_resize_requested: None,
             pointer_resize_requested_edges: Edges::None,
+        }
+    }
+
+    fn floating_dimensions(&self) -> (i32, i32) {
+        let win_w = if self.width > 0 { self.width } else { 640 };
+        let win_h = if self.height > 0 { self.height } else { 480 };
+        (win_w, win_h)
+    }
+
+    pub fn position_floating(&mut self, area: Rect) {
+        let (win_w, win_h) = self.floating_dimensions();
+        match self.floating_kind {
+            FloatingKind::Notification => {
+                self.float_x = area.x + area.width - win_w - 20;
+                self.float_y = area.y + 20;
+            }
+            FloatingKind::Dialog => {
+                self.float_x = area.x + (area.width - win_w) / 2;
+                self.float_y = area.y + (area.height - win_h) / 2;
+            }
         }
     }
 }

@@ -234,6 +234,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     && !window.floating
                 {
                     window.floating = true;
+                    window.floating_kind = crate::wm::FloatingKind::Dialog;
                     // If already placed in a frame, remove it (late DimensionsHint)
                     if let Some(frame_id) = window.frame_id {
                         for ws in &mut state.wm.workspaces.workspaces {
@@ -266,6 +267,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 if parent.is_some() && !window.floating {
                     // Child windows (dialogs, popups) should float
                     window.floating = true;
+                    window.floating_kind = crate::wm::FloatingKind::Dialog;
                     // If already placed in a frame, remove it (late Parent event)
                     if let Some(frame_id) = window.frame_id {
                         for ws in &mut state.wm.workspaces.workspaces {

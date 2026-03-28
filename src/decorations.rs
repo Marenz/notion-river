@@ -79,7 +79,7 @@ impl DecorationManager {
         frame: &Frame,
         frame_width: i32,
         is_focused_frame: bool,
-        is_bound: bool,
+        bound_tabs: &[bool],
         fractional_scale: f64,
         hovered_tab: Option<usize>,
         colors: &Colors,
@@ -105,7 +105,7 @@ impl DecorationManager {
         // Compute a simple hash to avoid unnecessary redraws
         let content_hash = compute_hash(frame, is_focused_frame, width)
             ^ (buffer_scale as u64 * 0x9e3779b9)
-            ^ (is_bound as u64 * 0x517cc1b7)
+            ^ bound_tabs_hash(bound_tabs)
             ^ (hovered_tab.unwrap_or(usize::MAX) as u64 * 0x6c62272e);
 
         let surface_to_window = &mut self.surface_to_window;
@@ -189,7 +189,7 @@ impl DecorationManager {
                 height as usize,
                 frame,
                 is_focused_frame,
-                is_bound,
+                bound_tabs,
                 hovered_tab,
                 colors,
             );
@@ -474,6 +474,13 @@ fn compute_hash(frame: &Frame, is_focused: bool, width: i32) -> u64 {
     hasher.finish()
 }
 
+fn bound_tabs_hash(bound_tabs: &[bool]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bound_tabs.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Gradient between two ARGB colors for the focused active tab.
 /// `local_x` is the pixel offset within the tab, `tab_w` is the tab width.
 /// Uses a quadratic curve so the start color dominates (~65/35 bias).
@@ -518,7 +525,7 @@ fn draw_tab_bar_pixels(
     height: usize,
     frame: &Frame,
     is_focused: bool,
-    is_bound: bool,
+    bound_tabs: &[bool],
     hovered_tab: Option<usize>,
     colors: &Colors,
 ) {
@@ -634,7 +641,7 @@ fn draw_tab_bar_pixels(
             } else {
                 &win_ref.title
             };
-            let title = if is_bound && tab_idx == 0 {
+            let title = if bound_tabs.get(tab_idx).copied().unwrap_or(false) {
                 format!("⊙ {base_title}")
             } else {
                 base_title.to_string()
