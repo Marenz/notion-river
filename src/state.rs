@@ -7,13 +7,22 @@ use crate::layout::{Frame, FrameId, Orientation, SplitNode};
 use crate::workspace::{WorkspaceId, WorkspaceManager};
 
 const STATE_FILE: &str = "notion-river-state.json";
+const STATE_BACKUP: &str = "notion-river-state.backup.json";
 
-fn state_path() -> PathBuf {
+fn state_dir() -> PathBuf {
     let dir = dirs::config_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
         .join("notion-river");
     let _ = std::fs::create_dir_all(&dir);
-    dir.join(STATE_FILE)
+    dir
+}
+
+fn state_path() -> PathBuf {
+    state_dir().join(STATE_FILE)
+}
+
+fn backup_path() -> PathBuf {
+    state_dir().join(STATE_BACKUP)
 }
 
 // ── Serializable state ───────────────────────────────────────────────────
@@ -94,8 +103,15 @@ pub fn save_state(workspaces: &WorkspaceManager, windows: &[crate::wm::ManagedWi
     };
 
     let path = state_path();
+    let backup = backup_path();
     match serde_json::to_string_pretty(&state) {
         Ok(json) => {
+            // Rotate: current → backup, then write new current
+            if path.exists()
+                && let Err(e) = std::fs::copy(&path, &backup)
+            {
+                log::warn!("Failed to rotate state backup: {e}");
+            }
             if let Err(e) = std::fs::write(&path, json) {
                 log::error!("Failed to save state to {}: {e}", path.display());
             } else {
@@ -146,22 +162,57 @@ fn save_node(node: &SplitNode, windows: &[crate::wm::ManagedWindow]) -> SavedNod
 
 // ── Restore ──────────────────────────────────────────────────────────────
 
-/// Load saved state from disk. Returns None if no state file or parse error.
+/// Load saved state from disk. Tries the current file first; if it's missing
+/// or corrupt, falls back to the backup. Never deletes either file.
 pub fn load_state() -> Option<SavedState> {
     let path = state_path();
-    let json = std::fs::read_to_string(&path).ok()?;
-    match serde_json::from_str(&json) {
-        Ok(state) => {
+    let backup = backup_path();
+
+    // Try current
+    if let Some(state) = try_load_state(&path) {
+        if validate_state(&state) {
             log::info!("Loaded saved state from {}", path.display());
-            // Keep the state file on disk — if the WM crashes before saving
-            // again, the file is still there for the next restart.
-            Some(state)
+            return Some(state);
         }
+        log::warn!(
+            "State file {} failed validation, trying backup",
+            path.display()
+        );
+    }
+
+    // Fall back to backup
+    if let Some(state) = try_load_state(&backup) {
+        if validate_state(&state) {
+            log::info!("Loaded saved state from backup {}", backup.display());
+            return Some(state);
+        }
+        log::warn!("Backup state file also failed validation");
+    }
+
+    None
+}
+
+fn try_load_state(path: &PathBuf) -> Option<SavedState> {
+    let json = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str(&json) {
+        Ok(state) => Some(state),
         Err(e) => {
             log::error!("Failed to parse state file {}: {e}", path.display());
             None
         }
     }
+}
+
+/// Basic validation: at least one workspace must have a layout tree with
+/// splits or windows (not all empty single-frame workspaces).
+fn validate_state(state: &SavedState) -> bool {
+    if state.workspaces.is_empty() {
+        return false;
+    }
+    state
+        .workspaces
+        .iter()
+        .any(|ws| node_has_windows(&ws.root) || matches!(ws.root, SavedNode::Split { .. }))
 }
 
 /// Restore layout trees from saved state into the workspace manager.

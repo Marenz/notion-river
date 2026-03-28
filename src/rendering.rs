@@ -82,11 +82,12 @@ impl WindowManager {
                     // Recenter if the window hasn't been positioned with real dims yet
                     if !win.float_positioned {
                         if let Some(area) = float_area {
-                            win.float_x = area.x + (area.width - win.width) / 2;
-                            win.float_y = area.y + (area.height - win.height) / 2;
+                            win.position_floating(area);
                         }
                         win.float_positioned = true;
-                        newly_positioned_float = Some(win.id);
+                        if win.floating_kind.should_auto_focus() {
+                            newly_positioned_float = Some(win.id);
+                        }
                     }
                     win.proxy.propose_dimensions(win.width, win.height);
                     win.proxy.show();
