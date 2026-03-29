@@ -2,12 +2,19 @@
 # Notion River session launcher for display managers (lightdm, etc).
 # Installed to /usr/bin/ by the package.
 
-# Default XKB layout — users should override in ~/.config/river/init
-export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us}"
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=river
 export MOZ_ENABLE_WAYLAND=1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
+
+# Source user's autostart for env vars (XKB layout etc.) BEFORE starting River
+AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/river/autostart"
+if [ -f "$AUTOSTART" ]; then
+    . "$AUTOSTART"
+fi
+
+# Defaults if autostart didn't set them
+export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us}"
 
 # Use user's init script if it exists, otherwise run notion-river directly
 if [ -x "$HOME/.config/river/init" ]; then
