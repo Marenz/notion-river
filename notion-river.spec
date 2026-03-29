@@ -74,6 +74,15 @@ install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-r
 %{_datadir}/notion-river/
 
 %changelog
+* Sun Mar 29 2026 Marenz <marenz@users.noreply.github.com> - 0.5.1-1
+- Lock resize to grabbed boundary (no more jumping in 3+ way splits)
+- Per-axis corner resize (both H and V boundaries adjusted simultaneously)
+- Visual resize highlight: configurable semi-transparent line on grabbed boundary
+- Reorder render cycle to eliminate resize highlight lag
+- Auto-focus and warp cursor to newly positioned floating windows
+- Click floating notification switches to parent app's workspace
+- Fix app binding retabbing and show bind markers per tab
+
 * Tue Mar 24 2026 Marenz <marenz@users.noreply.github.com> - 0.5.0-1
 - Fix resize lag: pointer now tracks 1:1 during RMB resize
 - Fix floating window ghost titlebar on first appearance
