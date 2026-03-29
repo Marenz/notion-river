@@ -14,7 +14,7 @@ systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP
 
 # ── Install example configs on first run ──
 EXAMPLES="/usr/share/notion-river/examples"
-if [ -d "$EXAMPLES/waybar" ] && [ ! -d "${XDG_CONFIG_HOME:-$HOME/.config}/waybar" ]; then
+if [ -d "$EXAMPLES/waybar" ] && [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/waybar/config.jsonc" ]; then
     mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/waybar"
     cp "$EXAMPLES/waybar/"* "${XDG_CONFIG_HOME:-$HOME/.config}/waybar/"
     echo "Installed waybar config from $EXAMPLES/waybar/"
