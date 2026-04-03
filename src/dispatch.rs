@@ -511,13 +511,24 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                         .map(|o| o.fractional_scale())
                         .unwrap_or(1.0)
                         .max(1.0);
+                    // Match the fallback used in rendering (decorations.rs):
+                    // use 2.0 when scale is unknown to avoid tab index mismatch
+                    let scale = if scale > 1.0 { scale } else { 2.0 };
                     let tab_width = (frame_width as f64 * scale) / frame.windows.len() as f64;
                     let tab_idx = (surface_x / tab_width) as usize;
                     let tab_idx = tab_idx.min(frame.windows.len() - 1);
                     Some(frame.windows[tab_idx].window_id)
                 });
 
-                let effective_id = tab_window_id.or(hovered_id);
+                // For move operations, always use hovered_id (the active/visible
+                // window). Tab-specific resolution only matters for resize where
+                // you might want to resize a specific non-active tab's split.
+                // For moves, the user wants to drag the window they can see.
+                let effective_id = if is_move {
+                    hovered_id
+                } else {
+                    tab_window_id.or(hovered_id)
+                };
                 let hovered_win =
                     effective_id.and_then(|hid| state.wm.windows.iter().find(|w| w.id == hid));
 
