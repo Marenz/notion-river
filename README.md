@@ -128,6 +128,40 @@ while true; do
 done
 ```
 
+### Output Change Hook
+
+If `~/.config/notion-river/hooks/on-outputs-changed` exists and is executable,
+`notion-river` runs it whenever the current output layout changes and stabilizes.
+
+The hook receives JSON on stdin describing the current outputs:
+
+```json
+{
+  "outputs": [
+    {
+      "name": "DP-7",
+      "x": 3840,
+      "y": 0,
+      "width": 1440,
+      "height": 2560,
+      "usable_x": 3840,
+      "usable_y": 0,
+      "usable_width": 1440,
+      "usable_height": 2560,
+      "scale": 1.5,
+      "wl_scale": 2,
+      "physical_width": 2160,
+      "physical_height": 3840
+    }
+  ]
+}
+```
+
+The environment variable `NOTION_RIVER_HOOK=outputs-changed` is also set.
+
+This is intended for integrations such as updating `kanshi` profiles after live
+monitor changes.
+
 2. **WM config** at `~/.config/notion-river/config.toml`:
 
 ```toml

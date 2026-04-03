@@ -15,8 +15,8 @@
 if [ -n "$WAYLAND_DISPLAY" ]; then
 
     # ── Monitor configuration ──
-    # kanshi auto-configures outputs based on ~/.config/kanshi/config
-    # kanshi &
+    # kanshi is managed by the packaged systemd --user service.
+    # Configure profiles in ~/.config/kanshi/config.
 
     # ── Volume OSD ──
     # WOB_SOCK="$XDG_RUNTIME_DIR/wob.sock"

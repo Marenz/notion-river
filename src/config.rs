@@ -68,7 +68,7 @@ pub struct CommandsConfig {
 /// Output specifier for workspace assignment.
 ///
 /// Supports semantic names with fallback chains:
-/// - `"primary"` — the most centered monitor
+/// - `"center"` — the most centered monitor
 /// - `"portrait"` — a monitor in portrait orientation (height > width)
 /// - `"laptop"` — the built-in display (eDP-*)
 /// - `"X,Y"` — exact logical position (e.g. `"0,0"`)
@@ -76,14 +76,13 @@ pub struct CommandsConfig {
 ///
 /// In TOML, can be a single string or an array for fallback:
 /// ```toml
-/// output = "primary"
+/// output = "center"
 /// output = ["portrait", "laptop"]
 /// ```
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum OutputSpec {
-    Single(String),
     Fallback(Vec<String>),
+    Single(String),
 }
 
 impl OutputSpec {
@@ -93,6 +92,40 @@ impl OutputSpec {
             OutputSpec::Single(s) => vec![s.as_str()],
             OutputSpec::Fallback(v) => v.iter().map(|s| s.as_str()).collect(),
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OutputSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = OutputSpec;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a string or array of strings")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<OutputSpec, E> {
+                Ok(OutputSpec::Single(value.to_owned()))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<OutputSpec, A::Error> {
+                let mut values = Vec::new();
+                while let Some(value) = seq.next_element::<String>()? {
+                    values.push(value);
+                }
+                Ok(OutputSpec::Fallback(values))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 
@@ -435,6 +468,103 @@ impl Config {
             log::info!("No config at {}, using defaults", path.display());
         }
         Config::default()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_output_spec_single_string() {
+        let toml_str = r#"
+            [[workspaces]]
+            name = "main"
+            output = "center"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let ws = &config.workspaces[0];
+        assert!(matches!(&ws.output, Some(OutputSpec::Single(s)) if s == "center"));
+        assert_eq!(ws.output.as_ref().unwrap().matchers(), vec!["center"]);
+    }
+
+    #[test]
+    fn parse_output_spec_array() {
+        let toml_str = r#"
+            [[workspaces]]
+            name = "term"
+            output = ["portrait", "laptop"]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let ws = &config.workspaces[0];
+        assert!(
+            matches!(&ws.output, Some(OutputSpec::Fallback(v)) if v == &["portrait", "laptop"])
+        );
+        assert_eq!(
+            ws.output.as_ref().unwrap().matchers(),
+            vec!["portrait", "laptop"]
+        );
+    }
+
+    #[test]
+    fn parse_output_spec_omitted() {
+        let toml_str = r#"
+            [[workspaces]]
+            name = "extra"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.workspaces[0].output.is_none());
+    }
+
+    #[test]
+    fn parse_output_spec_connector_name() {
+        let toml_str = r#"
+            [[workspaces]]
+            name = "main"
+            output = "DP-3"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.workspaces[0].output.as_ref().unwrap().matchers(),
+            vec!["DP-3"]
+        );
+    }
+
+    #[test]
+    fn parse_mixed_config() {
+        let toml_str = r#"
+            [[workspaces]]
+            name = "main"
+            output = "center"
+            initial_layout = "hsplit"
+
+            [[workspaces]]
+            name = "social"
+            output = ["portrait", "laptop"]
+
+            [[workspaces]]
+            name = "work"
+            output = "laptop"
+
+            [[workspaces]]
+            name = "extra"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.workspaces.len(), 4);
+        assert_eq!(
+            config.workspaces[0].output.as_ref().unwrap().matchers(),
+            vec!["center"]
+        );
+        assert_eq!(
+            config.workspaces[1].output.as_ref().unwrap().matchers(),
+            vec!["portrait", "laptop"]
+        );
+        assert_eq!(
+            config.workspaces[2].output.as_ref().unwrap().matchers(),
+            vec!["laptop"]
+        );
+        assert!(config.workspaces[3].output.is_none());
     }
 }
 
