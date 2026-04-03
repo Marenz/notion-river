@@ -65,11 +65,44 @@ pub struct CommandsConfig {
     pub launcher: Vec<String>,
 }
 
+/// Output specifier for workspace assignment.
+///
+/// Supports semantic names with fallback chains:
+/// - `"primary"` — the most centered monitor
+/// - `"portrait"` — a monitor in portrait orientation (height > width)
+/// - `"laptop"` — the built-in display (eDP-*)
+/// - `"X,Y"` — exact logical position (e.g. `"0,0"`)
+/// - `"DP-3"` — connector name (legacy fallback)
+///
+/// In TOML, can be a single string or an array for fallback:
+/// ```toml
+/// output = "primary"
+/// output = ["portrait", "laptop"]
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum OutputSpec {
+    Single(String),
+    Fallback(Vec<String>),
+}
+
+impl OutputSpec {
+    /// Return the ordered list of matchers to try.
+    pub fn matchers(&self) -> Vec<&str> {
+        match self {
+            OutputSpec::Single(s) => vec![s.as_str()],
+            OutputSpec::Fallback(v) => v.iter().map(|s| s.as_str()).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceConfig {
     pub name: String,
-    /// Which output this workspace is assigned to (by name, e.g. "HDMI-0").
-    pub output: Option<String>,
+    /// Which output this workspace is assigned to. Accepts semantic names
+    /// ("primary", "portrait", "laptop"), positions ("X,Y"), connector names,
+    /// or a fallback array: `["portrait", "laptop"]`.
+    pub output: Option<OutputSpec>,
     /// Initial layout: "hsplit" or "vsplit". Default is a single frame.
     #[serde(default)]
     pub initial_layout: Option<String>,

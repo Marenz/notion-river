@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::layout::{Frame, FrameId, Orientation, SplitNode};
-use crate::workspace::{WorkspaceId, WorkspaceManager};
+use crate::workspace::{output_geometry_key, WorkspaceId, WorkspaceManager};
 
 const STATE_FILE: &str = "notion-river-state.json";
 const STATE_BACKUP: &str = "notion-river-state.backup.json";
@@ -31,7 +31,8 @@ fn backup_path() -> PathBuf {
 pub struct SavedState {
     pub workspaces: Vec<SavedWorkspace>,
     pub focused_workspace: String,
-    /// Which workspace was visible on each output: (output_name, workspace_name)
+    /// Which workspace was visible on each output: (output_geometry_key, workspace_name).
+    /// Uses geometry keys like "2560x1440@0,0" instead of connector names for stability.
     #[serde(default)]
     pub visible_workspaces: Vec<(String, String)>,
 }
@@ -96,8 +97,9 @@ pub fn save_state(workspaces: &WorkspaceManager, windows: &[crate::wm::ManagedWi
             .iter()
             .filter_map(|ws| {
                 let output_id = ws.active_output?;
-                let output_name = workspaces.output(output_id)?.name.as_ref()?.clone();
-                Some((output_name, ws.name.clone()))
+                let output = workspaces.output(output_id)?;
+                let geo = output_geometry_key(output)?;
+                Some((geo, ws.name.clone()))
             })
             .collect(),
     };
