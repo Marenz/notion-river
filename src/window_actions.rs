@@ -406,31 +406,74 @@ impl WindowManager {
         let cur = self.workspaces.output(current_output)?;
         let cur_rect = cur.usable_rect();
 
-        // Find the adjacent output in the given direction
-        let target_output = self.workspaces.outputs.iter().find(|o| {
-            if o.id == current_output || o.removed {
-                return false;
-            }
-            let r = o.usable_rect();
-            match dir {
-                Direction::Right => {
-                    r.x >= cur_rect.x + cur_rect.width - gap
-                        && crate::layout::vertical_overlap(cur_rect, r) > 0
+        // Pick the nearest output whose center lies in the requested direction.
+        // This is more robust than requiring edges to line up exactly.
+        let cur_center_x = cur_rect.x + cur_rect.width / 2;
+        let cur_center_y = cur_rect.y + cur_rect.height / 2;
+        let target_output = self
+            .workspaces
+            .outputs
+            .iter()
+            .filter(|o| o.id != current_output && !o.removed)
+            .filter_map(|o| {
+                let r = o.usable_rect();
+                let center_x = r.x + r.width / 2;
+                let center_y = r.y + r.height / 2;
+                match dir {
+                    Direction::Right => {
+                        if center_x > cur_center_x {
+                            let overlap = crate::layout::vertical_overlap(cur_rect, r);
+                            return Some((
+                                o,
+                                center_x - cur_center_x,
+                                (center_y - cur_center_y).abs(),
+                                -overlap,
+                            ));
+                        }
+                        None
+                    }
+                    Direction::Left => {
+                        if center_x < cur_center_x {
+                            let overlap = crate::layout::vertical_overlap(cur_rect, r);
+                            return Some((
+                                o,
+                                cur_center_x - center_x,
+                                (center_y - cur_center_y).abs(),
+                                -overlap,
+                            ));
+                        }
+                        None
+                    }
+                    Direction::Down => {
+                        if center_y > cur_center_y {
+                            let overlap = crate::layout::horizontal_overlap(cur_rect, r);
+                            return Some((
+                                o,
+                                center_y - cur_center_y,
+                                (center_x - cur_center_x).abs(),
+                                -overlap,
+                            ));
+                        }
+                        None
+                    }
+                    Direction::Up => {
+                        if center_y < cur_center_y {
+                            let overlap = crate::layout::horizontal_overlap(cur_rect, r);
+                            return Some((
+                                o,
+                                cur_center_y - center_y,
+                                (center_x - cur_center_x).abs(),
+                                -overlap,
+                            ));
+                        }
+                        None
+                    }
                 }
-                Direction::Left => {
-                    r.x + r.width <= cur_rect.x + gap
-                        && crate::layout::vertical_overlap(cur_rect, r) > 0
-                }
-                Direction::Down => {
-                    r.y >= cur_rect.y + cur_rect.height - gap
-                        && crate::layout::horizontal_overlap(cur_rect, r) > 0
-                }
-                Direction::Up => {
-                    r.y + r.height <= cur_rect.y + gap
-                        && crate::layout::horizontal_overlap(cur_rect, r) > 0
-                }
-            }
-        })?;
+            })
+            .min_by_key(|(_, primary_distance, secondary_distance, neg_overlap)| {
+                (*primary_distance, *secondary_distance, *neg_overlap)
+            })
+            .map(|(o, _, _, _)| o)?;
 
         let target_oid = target_output.id;
         let target_area = target_output.usable_rect();
