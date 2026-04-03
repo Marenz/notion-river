@@ -120,6 +120,27 @@ impl OutputProfiles {
                 None => continue,
             };
 
+            let preferred_output_id = workspaces.workspaces[ws_id.0]
+                .preferred_output
+                .as_ref()
+                .and_then(|preferred_output| {
+                    workspaces
+                        .outputs
+                        .iter()
+                        .find(|o| o.name.as_deref() == Some(preferred_output.as_str()))
+                        .map(|o| o.id)
+                });
+
+            if preferred_output_id.is_some_and(|preferred_output_id| preferred_output_id != output_id)
+            {
+                log::info!(
+                    "Skipping profile assignment of '{}' to '{}' because its preferred output is available elsewhere",
+                    ws_name,
+                    output_name
+                );
+                continue;
+            }
+
             // Unassign whatever is on this output
             if let Some(&old_ws) = workspaces.output_workspace.get(&output_id)
                 && let Some(ws) = workspaces.workspaces.iter_mut().find(|w| w.id == old_ws)
