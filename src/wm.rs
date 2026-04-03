@@ -1114,18 +1114,25 @@ impl WindowManager {
                 } else {
                     // Clicking a tiled window clears floating focus
                     self.focused_floating = None;
-                    // Find which frame this window is in and make it the active tab
-                    for ws in &mut self.workspaces.workspaces {
-                        if let Some(frame_id) = ws.root.find_frame_with_window(*wid) {
-                            if let Some(frame) = ws.root.find_frame_mut(frame_id)
-                                && let Some(tab_idx) =
-                                    frame.windows.iter().position(|w| w.window_id == *wid)
-                            {
-                                frame.active_tab = tab_idx;
+                    // Suppress tab switching during move/drop — the move handler
+                    // will set focus after placing the window
+                    let has_active_move = self.seats.values().any(|s| {
+                        matches!(s.op, SeatOp::Move { .. }) || s.op_release
+                    });
+                    if !has_active_move {
+                        // Find which frame this window is in and make it the active tab
+                        for ws in &mut self.workspaces.workspaces {
+                            if let Some(frame_id) = ws.root.find_frame_with_window(*wid) {
+                                if let Some(frame) = ws.root.find_frame_mut(frame_id)
+                                    && let Some(tab_idx) =
+                                        frame.windows.iter().position(|w| w.window_id == *wid)
+                                {
+                                    frame.active_tab = tab_idx;
+                                }
+                                ws.focused_frame = frame_id;
+                                self.workspaces.focused_workspace = ws.id;
+                                break;
                             }
-                            ws.focused_frame = frame_id;
-                            self.workspaces.focused_workspace = ws.id;
-                            break;
                         }
                     }
                 }

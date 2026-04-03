@@ -546,7 +546,7 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
                 .active_output
                 .and_then(|oid| wm.workspaces.output(oid))
                 .and_then(|o| o.name.clone()),
-            preferred_output: ws.preferred_output.clone(),
+            preferred_output: ws.preferred_output.first().cloned(),
             focused: ws.id == focused_ws,
             visible: ws.active_output.is_some(),
             has_windows: ws

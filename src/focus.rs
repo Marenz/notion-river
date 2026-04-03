@@ -115,7 +115,7 @@ mod tests {
     fn test_focus_follows_mouse_between_frames_same_output() {
         let configs = vec![WorkspaceConfig {
             name: "main".to_string(),
-            output: Some("HDMI-A-1".to_string()),
+            output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
             initial_layout: Some("hsplit".to_string()),
         }];
         let mut wm =
@@ -170,7 +170,7 @@ mod tests {
     fn test_focus_stays_when_hovering_same_frame() {
         let configs = vec![WorkspaceConfig {
             name: "main".to_string(),
-            output: Some("HDMI-A-1".to_string()),
+            output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
             initial_layout: Some("hsplit".to_string()),
         }];
         let mut wm =
@@ -208,7 +208,7 @@ mod tests {
     fn test_focus_follows_pointer_position_into_empty_frame() {
         let configs = vec![WorkspaceConfig {
             name: "main".to_string(),
-            output: Some("HDMI-A-1".to_string()),
+            output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
             initial_layout: Some("hsplit".to_string()),
         }];
         let mut wm =
@@ -251,12 +251,12 @@ mod tests {
         let configs = vec![
             WorkspaceConfig {
                 name: "main".to_string(),
-                output: Some("HDMI-A-1".to_string()),
+                output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
                 initial_layout: Some("hsplit".to_string()),
             },
             WorkspaceConfig {
                 name: "social".to_string(),
-                output: Some("DP-1".to_string()),
+                output: Some(crate::config::OutputSpec::Single("DP-1".to_string())),
                 initial_layout: None,
             },
         ];
@@ -292,7 +292,7 @@ mod tests {
     fn test_focus_ignores_pointer_at_origin() {
         let configs = vec![WorkspaceConfig {
             name: "main".to_string(),
-            output: Some("HDMI-A-1".to_string()),
+            output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
             initial_layout: Some("hsplit".to_string()),
         }];
         let wm =
@@ -312,7 +312,7 @@ mod tests {
     fn test_focus_respects_margin() {
         let configs = vec![WorkspaceConfig {
             name: "main".to_string(),
-            output: Some("HDMI-A-1".to_string()),
+            output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
             initial_layout: Some("hsplit".to_string()),
         }];
         let mut wm =
@@ -342,7 +342,7 @@ mod tests {
     fn test_hovered_window_takes_priority_over_position() {
         let configs = vec![WorkspaceConfig {
             name: "main".to_string(),
-            output: Some("HDMI-A-1".to_string()),
+            output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
             initial_layout: Some("hsplit".to_string()),
         }];
         let mut wm =
@@ -406,12 +406,12 @@ mod tests {
             config.workspaces = vec![
                 crate::config::WorkspaceConfig {
                     name: "main".to_string(),
-                    output: Some("HDMI-A-1".to_string()),
+                    output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
                     initial_layout: Some("hsplit".to_string()),
                 },
                 crate::config::WorkspaceConfig {
                     name: "social".to_string(),
-                    output: Some("DP-1".to_string()),
+                    output: Some(crate::config::OutputSpec::Single("DP-1".to_string())),
                     initial_layout: None,
                 },
             ];

@@ -119,7 +119,11 @@ pub fn single_workspace_json(workspaces: &WorkspaceManager, name: &str) -> Strin
             "empty"
         };
 
-        let output = ws.preferred_output.as_deref().unwrap_or("?");
+        let output = ws
+            .preferred_output
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("?");
 
         return format!(
             r#"{{"text": "{name}", "tooltip": "{name} on {output}", "class": "{cls}"}}"#
@@ -150,7 +154,11 @@ pub fn output_workspaces_json(
     // Find the color index for this output
     let mut output_names: Vec<String> = Vec::new();
     for ws in &workspaces.workspaces {
-        let name = ws.preferred_output.as_deref().unwrap_or("none").to_string();
+        let name = ws
+            .preferred_output
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "none".to_string());
         if !output_names.contains(&name) {
             output_names.push(name);
         }
@@ -165,7 +173,11 @@ pub fn output_workspaces_json(
     let mut parts = Vec::new();
     let mut focused_name = String::new();
     for ws in &workspaces.workspaces {
-        let ws_output = ws.preferred_output.as_deref().unwrap_or("none");
+        let ws_output = ws
+            .preferred_output
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("none");
         if ws_output != output_name {
             continue;
         }
@@ -222,7 +234,11 @@ pub fn workspace_json(workspaces: &WorkspaceManager, appearance: &AppearanceConf
     // Collect outputs in order
     let mut output_names: Vec<String> = Vec::new();
     for ws in &workspaces.workspaces {
-        let name = ws.preferred_output.as_deref().unwrap_or("none").to_string();
+        let name = ws
+            .preferred_output
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "none".to_string());
         if !output_names.contains(&name) {
             output_names.push(name);
         }
@@ -246,7 +262,11 @@ pub fn workspace_json(workspaces: &WorkspaceManager, appearance: &AppearanceConf
 
         let mut parts = Vec::new();
         for ws in &workspaces.workspaces {
-            let ws_output = ws.preferred_output.as_deref().unwrap_or("none");
+            let ws_output = ws
+                .preferred_output
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("none");
             if ws_output != output_name {
                 continue;
             }

@@ -9,14 +9,109 @@ pub struct WorkspaceId(pub usize);
 pub struct Workspace {
     pub id: WorkspaceId,
     pub name: String,
-    /// Which output name this workspace prefers (from config).
-    pub preferred_output: Option<String>,
+    /// Ordered list of output matchers from config (semantic names, positions,
+    /// or connector names). First match wins.
+    pub preferred_output: Vec<String>,
     /// Which output this workspace is currently displayed on (runtime).
     pub active_output: Option<OutputId>,
     /// The static tiling tree.
     pub root: SplitNode,
     /// The currently focused frame within this workspace.
     pub focused_frame: FrameId,
+    /// Whether this workspace was auto-created (not from config).
+    #[allow(dead_code)]
+    pub auto_created: bool,
+}
+
+// ── Output geometry helpers ──────────────────────────────────────────────
+
+/// Returns a geometry key for an output, e.g. "2560x1440@0,0".
+/// Returns None if dimensions are not yet known.
+pub fn output_geometry_key(output: &Output) -> Option<String> {
+    if output.width > 0 && output.height > 0 {
+        Some(format!(
+            "{}x{}@{},{}",
+            output.width, output.height, output.x, output.y
+        ))
+    } else {
+        None
+    }
+}
+
+/// Find the output matching a semantic specifier.
+///
+/// Supported specifiers:
+/// - `"primary"` — monitor whose center is closest to the bounding-box center
+/// - `"portrait"` — first monitor where height > width
+/// - `"laptop"` — first monitor with eDP-* connector name
+/// - `"X,Y"` — monitor at exact logical position
+/// - anything else — connector name fallback
+fn find_matching_output(specifier: &str, outputs: &[Output]) -> Option<OutputId> {
+    let ready: Vec<&Output> = outputs
+        .iter()
+        .filter(|o| !o.removed && o.width > 0 && o.height > 0)
+        .collect();
+
+    if ready.is_empty() {
+        return None;
+    }
+
+    match specifier {
+        "primary" => {
+            // Most centered: closest center to the bounding-box center of all outputs.
+            let min_x = ready.iter().map(|o| o.x).min()?;
+            let max_x = ready.iter().map(|o| o.x + o.width).max()?;
+            let min_y = ready.iter().map(|o| o.y).min()?;
+            let max_y = ready.iter().map(|o| o.y + o.height).max()?;
+            let cx = (min_x + max_x) / 2;
+            let cy = (min_y + max_y) / 2;
+            ready
+                .iter()
+                .min_by_key(|o| {
+                    let ox = o.x + o.width / 2;
+                    let oy = o.y + o.height / 2;
+                    (ox - cx).pow(2) + (oy - cy).pow(2)
+                })
+                .map(|o| o.id)
+        }
+        "portrait" => ready.iter().find(|o| o.height > o.width).map(|o| o.id),
+        "laptop" => ready
+            .iter()
+            .find(|o| {
+                o.name
+                    .as_ref()
+                    .is_some_and(|n| n.starts_with("eDP"))
+            })
+            .map(|o| o.id),
+        s if s.contains(',') && s.chars().all(|c| c.is_ascii_digit() || c == ',' || c == '-') => {
+            // Position match "X,Y"
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.len() == 2
+                && let (Ok(x), Ok(y)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>())
+            {
+                return ready.iter().find(|o| o.x == x && o.y == y).map(|o| o.id);
+            }
+            None
+        }
+        name => {
+            // Connector name fallback
+            ready
+                .iter()
+                .find(|o| o.name.as_deref() == Some(name))
+                .map(|o| o.id)
+        }
+    }
+}
+
+/// Try a fallback chain of specifiers against the current outputs.
+/// Returns the first matching output.
+pub(crate) fn find_preferred_output(specifiers: &[String], outputs: &[Output]) -> Option<OutputId> {
+    for spec in specifiers {
+        if let Some(id) = find_matching_output(spec, outputs) {
+            return Some(id);
+        }
+    }
+    None
 }
 
 /// Identifier for an output (monitor), using the River object id.
@@ -125,10 +220,15 @@ impl WorkspaceManager {
                 Workspace {
                     id: WorkspaceId(i),
                     name: cfg.name.clone(),
-                    preferred_output: cfg.output.clone(),
+                    preferred_output: cfg
+                        .output
+                        .as_ref()
+                        .map(|o| o.matchers().into_iter().map(str::to_owned).collect())
+                        .unwrap_or_default(),
                     active_output: None,
                     root,
                     focused_frame,
+                    auto_created: false,
                 }
             })
             .collect();
@@ -144,43 +244,22 @@ impl WorkspaceManager {
         }
     }
 
-    /// Add or update an output. Assigns workspaces to outputs based on preferences.
+    /// Add or update an output. Actual workspace assignment is deferred to
+    /// `reassign_outputs()` which runs when geometry and name are known.
     pub fn add_output(&mut self, output: Output) {
         let output_id = output.id;
-        let output_name = output.name.clone();
-
-        // Check if output already exists (update)
         if let Some(existing) = self.outputs.iter_mut().find(|o| o.id == output_id) {
             *existing = output;
         } else {
             self.outputs.push(output);
         }
-
-        // If no workspace is assigned to this output yet, find one
-        if !self.output_workspace.values().any(|&ws| {
-            self.workspaces
-                .iter()
-                .find(|w| w.id == ws)
-                .is_some_and(|w| w.active_output == Some(output_id))
-        }) {
-            // If output name is known, try preferred match
-            // If name is not known yet, wait for reassign_outputs() after wl_output.name
-            if output_name.is_none() {
-                return;
-            }
-            let preferred = self.workspaces.iter().find(|ws| {
-                ws.active_output.is_none()
-                    && ws.preferred_output.as_deref() == output_name.as_deref()
-            });
-
-            // Otherwise, find the first unassigned workspace
-            let ws_id = preferred
-                .or_else(|| self.workspaces.iter().find(|ws| ws.active_output.is_none()))
-                .map(|ws| ws.id);
-
-            if let Some(ws_id) = ws_id {
-                self.assign_workspace_to_output(ws_id, output_id);
-            }
+        // Assignment deferred to reassign_outputs() — geometry may not be available yet.
+        // If this is the only output and it has geometry, try immediate assignment.
+        let has_geometry = self
+            .output(output_id)
+            .is_some_and(|o| o.width > 0 && o.height > 0);
+        if has_geometry && !self.output_workspace.contains_key(&output_id) {
+            self.reassign_outputs();
         }
     }
 
@@ -206,59 +285,134 @@ impl WorkspaceManager {
         self.output_workspace.insert(output_id, ws_id);
     }
 
-    /// Re-assign workspaces to outputs based on preferred_output names.
-    /// Called when output names become known (after wl_output.name event).
+    /// Re-assign workspaces to outputs using geometry-based semantic matching.
+    /// Called when output geometry or names become known.
     pub fn reassign_outputs(&mut self) {
-        // Collect (output_id, output_name) pairs
-        let outputs: Vec<(OutputId, String)> = self
+        // Phase 1: Collect assignments without mutating (avoids borrow issues).
+        let mut assignments: Vec<(WorkspaceId, OutputId)> = Vec::new();
+
+        let unassigned_outputs: Vec<OutputId> = self
             .outputs
             .iter()
-            .filter_map(|o| o.name.as_ref().map(|n| (o.id, n.clone())))
+            .filter(|o| !o.removed && o.width > 0 && !self.output_workspace.contains_key(&o.id))
+            .map(|o| o.id)
             .collect();
 
-        for (output_id, output_name) in &outputs {
-            // If this output already has a workspace assigned, skip it
-            if self.output_workspace.contains_key(output_id) {
-                continue;
-            }
+        for &output_id in &unassigned_outputs {
+            let geo_key = self.output(output_id).and_then(output_geometry_key);
 
-            // Prefer the saved visible workspace for this output (from state restore)
-            let saved_ws = self
-                .saved_visible
-                .iter()
-                .find(|(oname, _)| oname == output_name)
-                .and_then(|(_, ws_name)| {
-                    self.workspaces
-                        .iter()
-                        .find(|ws| ws.name == *ws_name && ws.active_output.is_none())
-                        .map(|ws| ws.id)
-                });
+            // 1. Check saved_visible (geometry-based keys from last session)
+            let saved_ws = geo_key.as_ref().and_then(|gk| {
+                self.saved_visible
+                    .iter()
+                    .find(|(saved_geo, _)| saved_geo == gk)
+                    .and_then(|(_, ws_name)| {
+                        self.workspaces
+                            .iter()
+                            .find(|ws| {
+                                ws.name == *ws_name
+                                    && ws.active_output.is_none()
+                                    && !assignments.iter().any(|(wid, _)| *wid == ws.id)
+                            })
+                            .map(|ws| ws.id)
+                    })
+            });
 
-            // Fall back to first preferred workspace for this output
+            // 2. Fall back to preferred_output semantic matching
             let ws_id = saved_ws.or_else(|| {
                 self.workspaces
                     .iter()
                     .find(|ws| {
-                        ws.preferred_output.as_deref() == Some(output_name.as_str())
-                            && ws.active_output.is_none()
+                        ws.active_output.is_none()
+                            && !assignments.iter().any(|(wid, _)| *wid == ws.id)
+                            && find_preferred_output(&ws.preferred_output, &self.outputs)
+                                == Some(output_id)
                     })
                     .map(|ws| ws.id)
             });
 
             if let Some(ws_id) = ws_id {
-                // Unassign whatever was on this output before
-                if let Some(&old_ws) = self.output_workspace.get(output_id)
-                    && let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws)
-                {
-                    ws.active_output = None;
-                }
-                self.assign_workspace_to_output(ws_id, *output_id);
-                log::info!(
-                    "Assigned workspace '{}' to output '{}'",
-                    self.workspaces[ws_id.0].name,
-                    output_name
-                );
+                assignments.push((ws_id, output_id));
             }
+        }
+
+        // Phase 1b: Any outputs still unassigned get any remaining unassigned workspace.
+        let assigned_outputs: std::collections::HashSet<OutputId> = assignments
+            .iter()
+            .map(|(_, oid)| *oid)
+            .chain(self.output_workspace.keys().copied())
+            .collect();
+        let still_empty: Vec<OutputId> = self
+            .outputs
+            .iter()
+            .filter(|o| !o.removed && o.width > 0 && !assigned_outputs.contains(&o.id))
+            .map(|o| o.id)
+            .collect();
+
+        for &output_id in &still_empty {
+            let ws_id = self
+                .workspaces
+                .iter()
+                .find(|ws| {
+                    ws.active_output.is_none()
+                        && !assignments.iter().any(|(wid, _)| *wid == ws.id)
+                })
+                .map(|ws| ws.id);
+            if let Some(ws_id) = ws_id {
+                assignments.push((ws_id, output_id));
+            }
+        }
+
+        // Phase 2: Apply assignments.
+        for (ws_id, output_id) in &assignments {
+            if let Some(&old_ws) = self.output_workspace.get(output_id)
+                && let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws)
+            {
+                ws.active_output = None;
+            }
+            self.assign_workspace_to_output(*ws_id, *output_id);
+            let geo = self
+                .output(*output_id)
+                .and_then(output_geometry_key)
+                .unwrap_or_default();
+            log::info!(
+                "Assigned workspace '{}' to output {geo}",
+                self.workspaces[ws_id.0].name
+            );
+        }
+
+        // Phase 3: Auto-create workspaces for monitors that still have nothing.
+        self.ensure_all_outputs_have_workspace();
+    }
+
+    /// Create temporary workspaces for any output that has no workspace assigned.
+    fn ensure_all_outputs_have_workspace(&mut self) {
+        let empty_outputs: Vec<OutputId> = self
+            .outputs
+            .iter()
+            .filter(|o| !o.removed && o.width > 0 && !self.output_workspace.contains_key(&o.id))
+            .map(|o| o.id)
+            .collect();
+
+        for output_id in empty_outputs {
+            let output_label = self
+                .output(output_id)
+                .and_then(|o| o.name.clone())
+                .unwrap_or_else(|| format!("{}", output_id.0));
+
+            let name = format!("auto:{output_label}");
+            let id = WorkspaceId(self.workspaces.len());
+            log::info!("Auto-creating workspace '{name}' for unoccupied output");
+            self.workspaces.push(Workspace {
+                id,
+                name,
+                preferred_output: Vec::new(),
+                active_output: None,
+                root: SplitNode::single_frame(),
+                focused_frame: FrameId(0),
+                auto_created: true,
+            });
+            self.assign_workspace_to_output(id, output_id);
         }
     }
 
@@ -280,17 +434,10 @@ impl WorkspaceManager {
         }
 
         // Determine which output to show this workspace on:
-        // 1. Use the workspace's preferred output if it has one and the output exists
+        // 1. Use the workspace's preferred output (semantic match) if available
         // 2. Otherwise use the currently focused output
-        let preferred_output = self.workspaces[target_ws.0]
-            .preferred_output
-            .as_ref()
-            .and_then(|name| {
-                self.outputs
-                    .iter()
-                    .find(|o| o.name.as_deref() == Some(name.as_str()))
-                    .map(|o| o.id)
-            });
+        let preferred_output =
+            find_preferred_output(&self.workspaces[target_ws.0].preferred_output, &self.outputs);
 
         let target_output = preferred_output.unwrap_or_else(|| {
             self.workspaces[self.focused_workspace.0]

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::workspace::WorkspaceManager;
+use crate::workspace::{find_preferred_output, output_geometry_key, WorkspaceManager};
 
 fn profiles_path() -> PathBuf {
     let dir = dirs::config_dir()
@@ -27,7 +27,7 @@ pub struct OutputProfile {
     pub focused_workspace: String,
 }
 
-/// All output profiles keyed by a hash of connected output names.
+/// All output profiles keyed by the geometry signature of connected outputs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OutputProfiles {
     pub profiles: HashMap<String, OutputProfile>,
@@ -50,15 +50,18 @@ impl OutputProfiles {
     }
 
     /// Compute a profile key from the current set of connected outputs.
+    /// Uses geometry (e.g. "2560x1440@0,0+3840x2160@2560,0") instead of
+    /// connector names, so the same physical setup is recognized regardless
+    /// of which ports the monitors are plugged into.
     pub fn profile_key(workspaces: &WorkspaceManager) -> String {
-        let mut names: Vec<String> = workspaces
+        let mut geos: Vec<String> = workspaces
             .outputs
             .iter()
             .filter(|o| !o.removed)
-            .filter_map(|o| o.name.clone())
+            .filter_map(output_geometry_key)
             .collect();
-        names.sort();
-        names.join("+")
+        geos.sort();
+        geos.join("+")
     }
 
     /// Save the current workspace-to-output assignments for this output config.
@@ -72,9 +75,9 @@ impl OutputProfiles {
         for ws in &workspaces.workspaces {
             if let Some(oid) = ws.active_output
                 && let Some(output) = workspaces.output(oid)
-                && let Some(name) = &output.name
+                && let Some(geo) = output_geometry_key(output)
             {
-                assignments.insert(name.clone(), ws.name.clone());
+                assignments.insert(geo, ws.name.clone());
             }
         }
 
@@ -105,11 +108,11 @@ impl OutputProfiles {
 
         log::info!("Restoring output profile '{key}'");
 
-        for (output_name, ws_name) in &profile.assignments {
+        for (geo_key, ws_name) in &profile.assignments {
             let output_id = match workspaces
                 .outputs
                 .iter()
-                .find(|o| o.name.as_deref() == Some(output_name.as_str()))
+                .find(|o| output_geometry_key(o).as_deref() == Some(geo_key.as_str()))
             {
                 Some(o) => o.id,
                 None => continue,
@@ -120,23 +123,16 @@ impl OutputProfiles {
                 None => continue,
             };
 
-            let preferred_output_id = workspaces.workspaces[ws_id.0]
-                .preferred_output
-                .as_ref()
-                .and_then(|preferred_output| {
-                    workspaces
-                        .outputs
-                        .iter()
-                        .find(|o| o.name.as_deref() == Some(preferred_output.as_str()))
-                        .map(|o| o.id)
-                });
-
-            if preferred_output_id.is_some_and(|preferred_output_id| preferred_output_id != output_id)
+            if let Some(preferred_output) = find_preferred_output(
+                &workspaces.workspaces[ws_id.0].preferred_output,
+                &workspaces.outputs,
+            )
+                && preferred_output != output_id
             {
                 log::info!(
-                    "Skipping profile assignment of '{}' to '{}' because its preferred output is available elsewhere",
+                    "Skipping profile assignment of '{}' to {} because its preferred output is different",
                     ws_name,
-                    output_name
+                    geo_key
                 );
                 continue;
             }
