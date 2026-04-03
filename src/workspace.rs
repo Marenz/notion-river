@@ -41,7 +41,7 @@ pub fn output_geometry_key(output: &Output) -> Option<String> {
 /// Find the output matching a semantic specifier.
 ///
 /// Supported specifiers:
-/// - `"primary"` — monitor whose center is closest to the bounding-box center
+/// - `"center"` — monitor whose center is closest to the bounding-box center
 /// - `"portrait"` — first monitor where height > width
 /// - `"laptop"` — first monitor with eDP-* connector name
 /// - `"X,Y"` — monitor at exact logical position
@@ -57,7 +57,7 @@ fn find_matching_output(specifier: &str, outputs: &[Output]) -> Option<OutputId>
     }
 
     match specifier {
-        "primary" => {
+        "center" => {
             // Most centered: closest center to the bounding-box center of all outputs.
             let min_x = ready.iter().map(|o| o.x).min()?;
             let max_x = ready.iter().map(|o| o.x + o.width).max()?;
@@ -141,6 +141,10 @@ pub struct Output {
     /// Physical mode dimensions (from wl_output.mode event).
     pub physical_width: i32,
     pub physical_height: i32,
+    /// Output transform (from wl_output.transform event).
+    /// Values: 0=normal, 1=90°, 2=180°, 3=270°, 4-7 are flipped variants.
+    #[allow(dead_code)]
+    pub transform: i32,
     /// Whether the output has been removed.
     pub removed: bool,
 }
@@ -162,6 +166,7 @@ impl Output {
             scale: 1,
             physical_width: 0,
             physical_height: 0,
+            transform: 0,
             removed: false,
         }
     }
@@ -245,7 +250,7 @@ impl WorkspaceManager {
     }
 
     /// Add or update an output. Actual workspace assignment is deferred to
-    /// `reassign_outputs()` which runs when geometry and name are known.
+    /// `reassign_outputs()` which runs once all outputs have geometry.
     pub fn add_output(&mut self, output: Output) {
         let output_id = output.id;
         if let Some(existing) = self.outputs.iter_mut().find(|o| o.id == output_id) {
@@ -253,13 +258,31 @@ impl WorkspaceManager {
         } else {
             self.outputs.push(output);
         }
-        // Assignment deferred to reassign_outputs() — geometry may not be available yet.
-        // If this is the only output and it has geometry, try immediate assignment.
-        let has_geometry = self
-            .output(output_id)
-            .is_some_and(|o| o.width > 0 && o.height > 0);
-        if has_geometry && !self.output_workspace.contains_key(&output_id) {
+        // Only run assignment when ALL known outputs have geometry.
+        // Semantic matchers like "center" need the full set to compute correctly.
+        if self.all_outputs_have_geometry() {
             self.reassign_outputs();
+        }
+    }
+
+    /// True when every non-removed output has known dimensions.
+    pub fn all_outputs_have_geometry(&self) -> bool {
+        let non_removed: Vec<&Output> = self.outputs.iter().filter(|o| !o.removed).collect();
+        !non_removed.is_empty() && non_removed.iter().all(|o| o.width > 0 && o.height > 0)
+    }
+
+    /// Clear current output assignments before rebuilding them from the current
+    /// monitor geometry/profile state.
+    #[allow(dead_code)]
+    pub fn clear_output_assignments(&mut self) {
+        self.output_workspace.clear();
+        self.workspaces.retain(|ws| !ws.auto_created);
+        for (index, ws) in self.workspaces.iter_mut().enumerate() {
+            ws.id = WorkspaceId(index);
+            ws.active_output = None;
+        }
+        if self.focused_workspace.0 >= self.workspaces.len() {
+            self.focused_workspace = WorkspaceId(0);
         }
     }
 

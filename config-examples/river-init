@@ -28,6 +28,19 @@ if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/river/autostart" ] && [ -f "$EXAMPL
     cp "$EXAMPLES/autostart" "${XDG_CONFIG_HOME:-$HOME/.config}/river/autostart"
     echo "Installed river autostart from $EXAMPLES/autostart"
 fi
+if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/kanshi.service" ] && [ -f "$EXAMPLES/kanshi.service" ]; then
+    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    cp "$EXAMPLES/kanshi.service" "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/kanshi.service"
+    echo "Installed kanshi user service from $EXAMPLES/kanshi.service"
+fi
+
+if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/kanshi.service" ]; then
+    systemctl --user daemon-reload
+    systemctl --user is-enabled kanshi.service >/dev/null 2>&1 || \
+        systemctl --user enable kanshi.service >/dev/null 2>&1
+    systemctl --user is-active kanshi.service >/dev/null 2>&1 || \
+        systemctl --user start kanshi.service >/dev/null 2>&1
+fi
 
 # ── Source user-specific autostart (keyboard layout, apps, etc.) ──
 AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/river/autostart"

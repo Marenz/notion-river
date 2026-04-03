@@ -80,6 +80,7 @@ jobs:
           test -f vendor/river/zig-out/bin/river && cp vendor/river/zig-out/bin/river "${PKGDIR}/usr/bin/" || true
           cp notion-river.desktop "${PKGDIR}/usr/share/wayland-sessions/"
           cp config-examples/start-river "${PKGDIR}/usr/share/notion-river/examples/"
+          cp config-examples/kanshi.service "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/river-init "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/autostart "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"

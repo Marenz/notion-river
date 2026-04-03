@@ -1,0 +1,13 @@
+[Unit]
+Description=Kanshi output profile daemon
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kanshi
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
