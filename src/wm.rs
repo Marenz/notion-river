@@ -360,6 +360,12 @@ impl WindowManager {
         // Save output profile when workspace state changes
         self.output_profiles.save_current(&self.workspaces);
 
+        // Fire outputs-changed hook if the output layout changed
+        if self.workspaces.outputs_changed {
+            self.workspaces.outputs_changed = false;
+            self.run_outputs_changed_hook();
+        }
+
         // Update waybar workspace display via FIFO
         self.ipc.update(&self.workspaces, &self.config.appearance);
         self.control
@@ -709,6 +715,54 @@ impl WindowManager {
         }
 
         self.windows.retain(|w| !w.closed);
+    }
+
+    /// Run the outputs-changed hook script if it exists.
+    /// The hook receives the current output layout as JSON on stdin.
+    fn run_outputs_changed_hook(&self) {
+        let hook_path = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+            .join("notion-river/hooks/on-outputs-changed");
+
+        if !hook_path.is_file() {
+            log::debug!("No outputs-changed hook at {}", hook_path.display());
+            return;
+        }
+
+        let json = self.workspaces.outputs_json();
+        log::info!("Running outputs-changed hook: {}", hook_path.display());
+
+        match std::process::Command::new(&hook_path)
+            .env("NOTION_RIVER_HOOK", "outputs-changed")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                // Write JSON to stdin in a fire-and-forget manner.
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(json.as_bytes());
+                    // stdin is dropped here, closing the pipe
+                }
+                // Spawn a thread to wait for the child so we don't block the event loop
+                std::thread::spawn(move || {
+                    match child.wait() {
+                        Ok(status) if !status.success() => {
+                            log::warn!("outputs-changed hook exited with {status}");
+                        }
+                        Err(e) => {
+                            log::warn!("outputs-changed hook wait error: {e}");
+                        }
+                        _ => {}
+                    }
+                });
+            }
+            Err(e) => {
+                log::warn!("Failed to spawn outputs-changed hook: {e}");
+            }
+        }
     }
 
     fn remove_closed_outputs(&mut self) {

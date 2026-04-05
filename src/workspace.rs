@@ -208,6 +208,9 @@ pub struct WorkspaceManager {
     pub focused_workspace: WorkspaceId,
     /// Saved visible workspaces from state restore: (output_name, workspace_name)
     pub saved_visible: Vec<(String, String)>,
+    /// Set to true when output layout changes and stabilizes.
+    /// Consumed by the manage cycle to fire the outputs-changed hook.
+    pub outputs_changed: bool,
 }
 
 impl WorkspaceManager {
@@ -246,6 +249,7 @@ impl WorkspaceManager {
             output_workspace: std::collections::HashMap::new(),
             focused_workspace,
             saved_visible: Vec::new(),
+            outputs_changed: false,
         }
     }
 
@@ -298,6 +302,7 @@ impl WorkspaceManager {
         }
 
         self.outputs.retain(|o| o.id != output_id);
+        self.outputs_changed = true;
     }
 
     /// Assign a workspace to an output.
@@ -406,6 +411,10 @@ impl WorkspaceManager {
 
         // Phase 3: Auto-create workspaces for monitors that still have nothing.
         self.ensure_all_outputs_have_workspace();
+
+        // Signal that the output layout has changed, so the manage cycle
+        // can fire the outputs-changed hook.
+        self.outputs_changed = true;
     }
 
     /// Create temporary workspaces for any output that has no workspace assigned.
@@ -511,6 +520,34 @@ impl WorkspaceManager {
     /// Get output by id mutably.
     pub fn output_mut(&mut self, id: OutputId) -> Option<&mut Output> {
         self.outputs.iter_mut().find(|o| o.id == id)
+    }
+
+    /// Serialize the current output layout as JSON for the outputs-changed hook.
+    pub fn outputs_json(&self) -> String {
+        let outputs: Vec<serde_json::Value> = self
+            .outputs
+            .iter()
+            .filter(|o| !o.removed && o.width > 0)
+            .map(|o| {
+                serde_json::json!({
+                    "name": o.name.as_deref().unwrap_or("unknown"),
+                    "x": o.x,
+                    "y": o.y,
+                    "width": o.width,
+                    "height": o.height,
+                    "usable_x": o.usable_x,
+                    "usable_y": o.usable_y,
+                    "usable_width": o.usable_width,
+                    "usable_height": o.usable_height,
+                    "scale": o.fractional_scale(),
+                    "wl_scale": o.scale,
+                    "physical_width": o.physical_width,
+                    "physical_height": o.physical_height,
+                    "transform": o.transform,
+                })
+            })
+            .collect();
+        serde_json::json!({ "outputs": outputs }).to_string()
     }
 
     /// Get all workspaces that are currently visible (assigned to an output).

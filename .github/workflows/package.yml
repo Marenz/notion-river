@@ -87,6 +87,8 @@ jobs:
           mkdir -p "${PKGDIR}/usr/share/notion-river/examples/waybar"
           cp config-examples/waybar/config.jsonc "${PKGDIR}/usr/share/notion-river/examples/waybar/"
           cp config-examples/waybar/style.css "${PKGDIR}/usr/share/notion-river/examples/waybar/"
+          mkdir -p "${PKGDIR}/usr/share/notion-river/examples/hooks"
+          cp config-examples/hooks/on-outputs-changed "${PKGDIR}/usr/share/notion-river/examples/hooks/"
 
           chmod 755 "${PKGDIR}/usr/bin/"*
           chmod 755 "${PKGDIR}/usr/share/notion-river/examples/"*

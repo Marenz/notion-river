@@ -17,6 +17,8 @@ override_dh_auto_install:
 	install -Dm755 config-examples/start-river $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/start-river
 	install -Dm644 config-examples/kanshi.service $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/kanshi.service
 	install -Dm755 config-examples/notion-rofi-window-mode $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/notion-rofi-window-mode
+	install -dm755 $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/hooks
+	install -Dm755 config-examples/hooks/on-outputs-changed $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/hooks/on-outputs-changed
 
 override_dh_auto_test:
 	cargo test --release --locked

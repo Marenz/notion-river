@@ -60,6 +60,8 @@ install -Dm644 config.example.toml %{buildroot}%{_datadir}/notion-river/examples
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples/waybar
 install -Dm644 config-examples/waybar/config.jsonc %{buildroot}%{_datadir}/notion-river/examples/waybar/config.jsonc
 install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-river/examples/waybar/style.css
+install -dm755 %{buildroot}%{_datadir}/notion-river/examples/hooks
+install -Dm755 config-examples/hooks/on-outputs-changed %{buildroot}%{_datadir}/notion-river/examples/hooks/on-outputs-changed
 
 %files
 %license LICENSE

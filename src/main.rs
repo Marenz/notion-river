@@ -44,6 +44,13 @@ impl std::io::Write for LineFlush {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Handle --version / -V before anything else
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("notion-river {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     // Log rotation: current run → notion-river.log, previous run → notion-river.log.prev
     // On startup, rotate so the previous run's log is always preserved for crash investigation.
     let log_path = "/tmp/notion-river.log";
