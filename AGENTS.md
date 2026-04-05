@@ -96,6 +96,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Output profiles**: Per-monitor-config workspace assignment memory. Hashes connected output names into a profile key, saves workspace-to-output assignments in `~/.config/notion-river/output-profiles.json`. When the same monitor set reconnects, previous workspace assignments are restored automatically.
 - **Monitor disconnect**: Workspaces stay intact (layout preserved), they just become invisible. Focus moves to a visible workspace. No window migration or layout tearing.
 - **Monitor reconnect**: Output profile restores previous workspace-to-output assignments for the reconnected monitor set.
+- **Outputs-changed hook**: When the output layout stabilizes (all outputs have geometry after add/remove/reassign), `WorkspaceManager.outputs_changed` is set to `true`. The manage cycle in `wm.rs` checks this flag and spawns `~/.config/notion-river/hooks/on-outputs-changed` with the output layout as JSON on stdin. The bundled example hook generates kanshi config and signals kanshi to reload.
 - **Runtime keyboard layout switching**: `Ctrl+F12` toggles between `de/neo` and `de` layouts at runtime.
 
 ## Built-in Keybinding Profiles
@@ -110,6 +111,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `~/.config/notion-river/bindings.json` — persisted app-to-frame bindings (auto-managed, survives reboots)
 - `~/.config/notion-river/state.json` — persisted layout/window state (auto-managed, survives reboots)
 - `~/.config/notion-river/output-profiles.json` — per-monitor-set workspace assignment profiles (auto-managed, hashed by connected output names)
+- `~/.config/notion-river/hooks/on-outputs-changed` — hook script called when output layout changes; receives JSON on stdin with current outputs, used to auto-generate kanshi config
 - `~/.config/river/init` — River init script (env vars, kanshi, waybar, notion-river restart loop)
 - `~/.local/bin/start-river` — Session launcher (XKB layout, env vars, exec river)
 - `~/.config/kanshi/config` — Monitor layout (position, scale, transform)
