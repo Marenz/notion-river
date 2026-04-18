@@ -38,6 +38,15 @@ pub struct AppData {
         std::collections::HashMap<u64, crate::protocol::river_output_v1::RiverOutputV1>,
     /// Map from wl_output global name (u32) to connector name string.
     pub wl_output_names: std::collections::HashMap<u32, String>,
+    /// Buffered wl_output mode data for globals that arrived before the
+    /// river_output_v1 → wl_output mapping was established.
+    pub wl_output_modes: std::collections::HashMap<u32, (i32, i32)>,
+    /// Buffered wl_output scale data (same race condition as modes).
+    pub wl_output_scales: std::collections::HashMap<u32, i32>,
+    /// Buffered wl_output transform data.
+    pub wl_output_transforms: std::collections::HashMap<u32, i32>,
+    /// Buffered wl_output description data (EDID make/model/serial).
+    pub wl_output_descriptions: std::collections::HashMap<u32, String>,
     /// wl_seat global name (for binding wl_pointer).
     pub wl_seat_name: Option<u32>,
     /// Pending tab click: (workspace_index, frame_id, tab_index) from decoration click
@@ -60,6 +69,10 @@ impl Default for AppData {
             wl_output_map: std::collections::HashMap::new(),
             river_outputs: std::collections::HashMap::new(),
             wl_output_names: std::collections::HashMap::new(),
+            wl_output_modes: std::collections::HashMap::new(),
+            wl_output_scales: std::collections::HashMap::new(),
+            wl_output_transforms: std::collections::HashMap::new(),
+            wl_output_descriptions: std::collections::HashMap::new(),
             wl_seat_name: None,
             pending_tab_click: None,
             wl_pointer_surface: None,
@@ -357,13 +370,17 @@ impl WindowManager {
             self.warp_cursor_to_frame(new_focused_frame);
         }
 
-        // Save output profile when workspace state changes
-        self.output_profiles.save_current(&self.workspaces);
+        // Only persist output state and fire hooks when all outputs have
+        // complete metadata (physical dimensions from wl_output Mode events).
+        // This prevents saving incomplete/transient state during resume or
+        // hotplug, where logical dimensions arrive before physical ones.
+        if self.workspaces.all_outputs_have_metadata() {
+            self.output_profiles.save_current(&self.workspaces);
 
-        // Fire outputs-changed hook if the output layout changed
-        if self.workspaces.outputs_changed {
-            self.workspaces.outputs_changed = false;
-            self.run_outputs_changed_hook();
+            if self.workspaces.outputs_changed {
+                self.workspaces.outputs_changed = false;
+                self.run_outputs_changed_hook();
+            }
         }
 
         // Update waybar workspace display via FIFO

@@ -41,7 +41,7 @@ pub fn output_geometry_key(output: &Output) -> Option<String> {
 /// Find the output matching a semantic specifier.
 ///
 /// Supported specifiers:
-/// - `"center"` — monitor whose center is closest to the bounding-box center
+/// - `"center"` — monitor whose horizontal center is closest to the setup center
 /// - `"portrait"` — first monitor where height > width
 /// - `"laptop"` — first monitor with eDP-* connector name
 /// - `"X,Y"` — monitor at exact logical position
@@ -58,7 +58,9 @@ fn find_matching_output(specifier: &str, outputs: &[Output]) -> Option<OutputId>
 
     match specifier {
         "center" => {
-            // Most centered: closest center to the bounding-box center of all outputs.
+            // Treat "center" as the horizontal middle monitor. Using full 2D distance
+            // lets a tall portrait display win just because it is vertically closer
+            // to the bounding-box center.
             let min_x = ready.iter().map(|o| o.x).min()?;
             let max_x = ready.iter().map(|o| o.x + o.width).max()?;
             let min_y = ready.iter().map(|o| o.y).min()?;
@@ -70,7 +72,7 @@ fn find_matching_output(specifier: &str, outputs: &[Output]) -> Option<OutputId>
                 .min_by_key(|o| {
                     let ox = o.x + o.width / 2;
                     let oy = o.y + o.height / 2;
-                    (ox - cx).pow(2) + (oy - cy).pow(2)
+                    ((ox - cx).abs(), (oy - cy).abs(), -(o.width * o.height))
                 })
                 .map(|o| o.id)
         }
@@ -114,6 +116,33 @@ pub(crate) fn find_preferred_output(specifiers: &[String], outputs: &[Output]) -
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{find_preferred_output, Output, OutputId};
+
+    fn output(id: u64, x: i32, y: i32, width: i32, height: i32) -> Output {
+        let mut output = Output::new(OutputId(id));
+        output.width = width;
+        output.height = height;
+        output.x = x;
+        output.y = y;
+        output
+    }
+
+    #[test]
+    fn center_prefers_horizontal_middle_over_portrait() {
+        let outputs = vec![
+            output(1, 0, 1692, 1280, 800),
+            output(2, 1280, 611, 2560, 1440),
+            output(3, 3840, 0, 1440, 2560),
+        ];
+
+        let preferred = find_preferred_output(&["center".to_owned()], &outputs);
+
+        assert_eq!(preferred, Some(OutputId(2)));
+    }
+}
+
 /// Identifier for an output (monitor), using the River object id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OutputId(pub u64);
@@ -124,6 +153,9 @@ pub struct Output {
     pub id: OutputId,
     /// The wl_output name string (e.g. "HDMI-0").
     pub name: Option<String>,
+    /// The wl_output description (EDID make/model/serial, e.g.
+    /// "LG Electronics LG HDR 4K 503NTWG54001"). Stable monitor identity.
+    pub description: Option<String>,
     /// Position in the compositor's logical coordinate space.
     pub x: i32,
     pub y: i32,
@@ -154,6 +186,7 @@ impl Output {
         Self {
             id,
             name: None,
+            description: None,
             x: 0,
             y: 0,
             width: 0,
@@ -174,8 +207,14 @@ impl Output {
     /// Compute the actual fractional scale from physical vs logical dimensions.
     /// Falls back to the integer wl_output.scale if physical dims aren't known.
     pub fn fractional_scale(&self) -> f64 {
-        if self.physical_width > 0 && self.width > 0 {
-            self.physical_width as f64 / self.width as f64
+        if self.width > 0 && self.height > 0 && self.physical_width > 0 && self.physical_height > 0 {
+            let (physical_width, _physical_height) = match self.transform {
+                // Rotated outputs swap their logical axes relative to the
+                // physical mode dimensions reported by wl_output.mode.
+                1 | 3 | 5 | 7 => (self.physical_height, self.physical_width),
+                _ => (self.physical_width, self.physical_height),
+            };
+            physical_width as f64 / self.width as f64
         } else {
             self.scale.max(1) as f64
         }
@@ -273,6 +312,21 @@ impl WorkspaceManager {
     pub fn all_outputs_have_geometry(&self) -> bool {
         let non_removed: Vec<&Output> = self.outputs.iter().filter(|o| !o.removed).collect();
         !non_removed.is_empty() && non_removed.iter().all(|o| o.width > 0 && o.height > 0)
+    }
+
+    /// True when every non-removed output has complete metadata from wl_output
+    /// (physical dimensions from Mode event, and logical dimensions from
+    /// river_output_v1). This is stricter than `all_outputs_have_geometry()`
+    /// and should be used before persisting or exporting output state.
+    pub fn all_outputs_have_metadata(&self) -> bool {
+        let non_removed: Vec<&Output> = self.outputs.iter().filter(|o| !o.removed).collect();
+        !non_removed.is_empty()
+            && non_removed.iter().all(|o| {
+                o.width > 0
+                    && o.height > 0
+                    && o.physical_width > 0
+                    && o.physical_height > 0
+            })
     }
 
     /// Clear current output assignments before rebuilding them from the current
@@ -531,6 +585,7 @@ impl WorkspaceManager {
             .map(|o| {
                 serde_json::json!({
                     "name": o.name.as_deref().unwrap_or("unknown"),
+                    "description": o.description.as_deref().unwrap_or(""),
                     "x": o.x,
                     "y": o.y,
                     "width": o.width,
@@ -547,7 +602,34 @@ impl WorkspaceManager {
                 })
             })
             .collect();
-        serde_json::json!({ "outputs": outputs }).to_string()
+        // Include workspace-to-output assignments so external tools
+        // (e.g. monitor-profiles) can persist them alongside output geometry.
+        let assignments: Vec<serde_json::Value> = self
+            .workspaces
+            .iter()
+            .filter_map(|ws| {
+                let oid = ws.active_output?;
+                let output = self.output(oid)?;
+                let geo = output_geometry_key(output)?;
+                Some(serde_json::json!({
+                    "workspace": ws.name,
+                    "output_geometry": geo,
+                }))
+            })
+            .collect();
+
+        let focused = self
+            .workspaces
+            .get(self.focused_workspace.0)
+            .map(|ws| ws.name.as_str())
+            .unwrap_or("");
+
+        serde_json::json!({
+            "outputs": outputs,
+            "workspace_assignments": assignments,
+            "focused_workspace": focused,
+        })
+        .to_string()
     }
 
     /// Get all workspaces that are currently visible (assigned to an output).

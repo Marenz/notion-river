@@ -337,11 +337,36 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
             Event::WlOutput { name: global_name } => {
                 log::info!("Output {oid:?} wl_output global name: {global_name}");
                 state.wl_output_map.insert(global_name, oid);
-                // Check if wl_output.name already arrived for this global
+                // Apply any buffered wl_output data that arrived before this mapping
                 if let Some(connector_name) = state.wl_output_names.get(&global_name).cloned() {
                     log::info!("Output {oid:?} applying stored connector name: {connector_name}");
                     if let Some(output) = state.wm.workspaces.output_mut(oid) {
                         output.name = Some(connector_name);
+                    }
+                }
+                if let Some((pw, ph)) = state.wl_output_modes.remove(&global_name) {
+                    log::info!("Output {oid:?} applying buffered mode: {pw}x{ph}");
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.physical_width = pw;
+                        output.physical_height = ph;
+                    }
+                }
+                if let Some(scale) = state.wl_output_scales.remove(&global_name) {
+                    log::info!("Output {oid:?} applying buffered scale: {scale}");
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.scale = scale;
+                    }
+                }
+                if let Some(transform) = state.wl_output_transforms.remove(&global_name) {
+                    log::info!("Output {oid:?} applying buffered transform: {transform}");
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.transform = transform;
+                    }
+                }
+                if let Some(desc) = state.wl_output_descriptions.get(&global_name).cloned() {
+                    log::info!("Output {oid:?} applying buffered description: {desc}");
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.description = Some(desc);
                     }
                 }
                 state.wm.workspaces.reassign_outputs();
@@ -356,15 +381,21 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
             }
             Event::Position { x, y } => {
                 if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                    output.x = x;
-                    output.y = y;
+                    if output.x != x || output.y != y {
+                        output.x = x;
+                        output.y = y;
+                        state.wm.workspaces.outputs_changed = true;
+                    }
                 }
             }
             Event::Dimensions { width, height } => {
                 log::info!("Output {oid:?} dimensions: {width}x{height}");
                 if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                    output.width = width;
-                    output.height = height;
+                    if output.width != width || output.height != height {
+                        output.width = width;
+                        output.height = height;
+                        state.wm.workspaces.outputs_changed = true;
+                    }
                 }
             }
         }
@@ -744,28 +775,66 @@ impl Dispatch<WlOutput, u32> for AppData {
                     state.wm.workspaces.reassign_outputs();
                 }
             }
+            Event::Geometry { transform, .. } => {
+                let transform = match transform {
+                    wayland_client::WEnum::Value(value) => value as i32,
+                    wayland_client::WEnum::Unknown(value) => value as i32,
+                };
+                log::info!("wl_output global {} geometry transform: {transform}", data);
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        if output.transform != transform {
+                            output.transform = transform;
+                            state.wm.workspaces.outputs_changed = true;
+                        }
+                    }
+                } else {
+                    state.wl_output_transforms.insert(*data, transform);
+                }
+                if let Some(wm_proxy) = &state.river_wm {
+                    wm_proxy.manage_dirty();
+                }
+            }
             Event::Scale { factor } => {
                 log::info!("wl_output global {} scale: {factor}", data);
-                if let Some(&oid) = state.wl_output_map.get(data)
-                    && let Some(output) = state.wm.workspaces.output_mut(oid)
-                {
-                    output.scale = factor;
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        if output.scale != factor {
+                            output.scale = factor;
+                            state.wm.workspaces.outputs_changed = true;
+                        }
+                    }
+                } else {
+                    state.wl_output_scales.insert(*data, factor);
                 }
-                // Trigger re-render so decorations pick up the new scale
                 if let Some(wm_proxy) = &state.river_wm {
                     wm_proxy.manage_dirty();
                 }
             }
             Event::Mode { width, height, .. } => {
                 log::info!("wl_output global {} mode: {width}x{height}", data);
-                if let Some(&oid) = state.wl_output_map.get(data)
-                    && let Some(output) = state.wm.workspaces.output_mut(oid)
-                {
-                    output.physical_width = width;
-                    output.physical_height = height;
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        if output.physical_width != width || output.physical_height != height {
+                            output.physical_width = width;
+                            output.physical_height = height;
+                            state.wm.workspaces.outputs_changed = true;
+                        }
+                    }
+                } else {
+                    state.wl_output_modes.insert(*data, (width, height));
                 }
                 if let Some(wm_proxy) = &state.river_wm {
                     wm_proxy.manage_dirty();
+                }
+            }
+            Event::Description { description } => {
+                log::info!("wl_output global {} description: {description}", data);
+                state.wl_output_descriptions.insert(*data, description.clone());
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                        output.description = Some(description);
+                    }
                 }
             }
             _ => {}
