@@ -74,7 +74,7 @@ The result: a predictable, stable workspace that doesn't rearrange itself.
 
 ### Multi-Monitor
 - **Per-output workspaces** — each workspace assigned to a preferred output
-- **Hotplug support** — output profiles remember workspace assignments
+- **Hotplug support** — per-monitor memory (EDID-keyed) remembers which workspace was last shown on each physical monitor
 - **Graceful disconnect** — workspaces stay intact when a monitor disconnects
 - **Automatic restore** — reconnecting monitors restores previous layout
 
@@ -93,10 +93,10 @@ The result: a predictable, stable workspace that doesn't rearrange itself.
 
 - [River](https://codeberg.org/river/river) 0.4.x+ (uses `river-window-management-v1` protocol)
 - Rust 1.75+
-- `kanshi` or `wlr-randr` for monitor configuration
 - `waybar` for status bar
 - `foot` or another Wayland terminal
 - `rofi` for app launcher / window switcher
+- `wdisplays` (optional) for one-shot interactive monitor layout edits — notion-river itself owns and remembers the layout via `wlr-output-management-unstable-v1`. Do **not** run kanshi or another wlr-output-management client alongside notion-river.
 
 ### Building
 
@@ -118,8 +118,6 @@ export XDG_CURRENT_DESKTOP=river
 export MOZ_ENABLE_WAYLAND=1
 export RUST_LOG=info
 
-kanshi &
-
 (sleep 3; waybar &; nm-applet --indicator &) &
 
 while true; do
@@ -128,39 +126,27 @@ while true; do
 done
 ```
 
-### Output Change Hook
+### Monitor configuration
 
-If `~/.config/notion-river/hooks/on-outputs-changed` exists and is executable,
-`notion-river` runs it whenever the current output layout changes and stabilizes.
+notion-river owns monitor layout (mode, position, scale, transform) directly
+via `wlr-output-management-unstable-v1` and persists it to
+`~/.config/notion-river/monitors.json`, keyed by the sorted set of EDID
+descriptors of the connected monitors.
 
-The hook receives JSON on stdin describing the current outputs:
+Behaviour:
 
-```json
-{
-  "outputs": [
-    {
-      "name": "DP-7",
-      "x": 3840,
-      "y": 0,
-      "width": 1440,
-      "height": 2560,
-      "usable_x": 3840,
-      "usable_y": 0,
-      "usable_width": 1440,
-      "usable_height": 2560,
-      "scale": 1.5,
-      "wl_scale": 2,
-      "physical_width": 2160,
-      "physical_height": 3840
-    }
-  ]
-}
-```
+- First time a given set of monitors is seen: whatever the compositor picked
+  is recorded as the initial profile.
+- Subsequent appearances of the same set: the saved profile is applied
+  instantly (no flicker, no waiting).
+- Edit the layout interactively with `wdisplays` (or any other
+  wlr-output-management client) and notion-river will save the new layout
+  for that set immediately.
+- Suspend/resume preserves layout — the EDID set doesn't change, so no apply
+  is triggered.
 
-The environment variable `NOTION_RIVER_HOOK=outputs-changed` is also set.
-
-This is intended for integrations such as updating `kanshi` profiles after live
-monitor changes.
+Do not run kanshi or another wlr-output-management client; two clients
+fighting over the same protocol breaks layout persistence.
 
 2. **WM config** at `~/.config/notion-river/config.toml`:
 

@@ -97,6 +97,8 @@ mod tests {
         outputs: Vec<(OutputId, &str, i32, i32, i32, i32)>,
     ) -> WorkspaceManager {
         let mut wm = WorkspaceManager::new(configs, 0.5);
+        // Don't touch the user's real monitor-memory.json from tests.
+        wm.monitor_memory = crate::monitor_memory::MonitorMemory::default();
         for (oid, name, x, y, w, h) in outputs {
             let mut output = Output::new(oid);
             output.name = Some(name.to_string());
@@ -407,7 +409,7 @@ mod tests {
                 crate::config::WorkspaceConfig {
                     name: "main".to_string(),
                     output: Some(crate::config::OutputSpec::Single("HDMI-A-1".to_string())),
-                    initial_layout: Some("hsplit".to_string()),
+                    initial_layout: Some("vsplit".to_string()),
                 },
                 crate::config::WorkspaceConfig {
                     name: "social".to_string(),
@@ -416,6 +418,8 @@ mod tests {
                 },
             ];
             let mut wm = WindowManager::new(config);
+            // Don't touch the user's real monitor-memory.json from tests.
+            wm.workspaces.monitor_memory = crate::monitor_memory::MonitorMemory::default();
 
             // Add outputs
             let mut output1 = crate::workspace::Output::new(OutputId(1));
@@ -490,7 +494,6 @@ mod tests {
 
             let frame_ids = wm.workspaces.workspaces[0].root.all_frame_ids();
             let frame1 = frame_ids[0];
-            let frame2 = frame_ids[1];
 
             // Only frame1 has a window
             wm.workspaces.workspaces[0]
@@ -512,12 +515,17 @@ mod tests {
                 pointer_y: 540,
             }];
 
+            let expected = crate::focus::compute_focus(&inputs[0], &wm.workspaces, 4, 0)
+                .expect("Focus should follow pointer into empty frame");
+
             wm.apply_focus_follows_mouse(&inputs);
 
             assert_eq!(
-                wm.workspaces.workspaces[0].focused_frame, frame2,
+                wm.workspaces.workspaces[expected.workspace.0].focused_frame,
+                expected.frame,
                 "Focus should follow pointer into empty frame"
             );
+            assert_eq!(wm.workspaces.focused_workspace, expected.workspace);
         }
 
         #[test]

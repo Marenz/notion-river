@@ -15,8 +15,10 @@
 if [ -n "$WAYLAND_DISPLAY" ]; then
 
     # ── Monitor configuration ──
-    # kanshi is managed by the packaged systemd --user service.
-    # Configure profiles in ~/.config/kanshi/config.
+    # notion-river itself manages monitor layout via
+    # wlr-output-management-unstable-v1. Use `wdisplays` for one-shot
+    # interactive edits; the WM observes and persists the result.
+    # Do NOT run kanshi or another wlr-output-management client.
 
     # ── Volume OSD ──
     # WOB_SOCK="$XDG_RUNTIME_DIR/wob.sock"

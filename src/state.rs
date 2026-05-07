@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::layout::{Frame, FrameId, Orientation, SplitNode};
-use crate::workspace::{output_geometry_key, WorkspaceId, WorkspaceManager};
+use crate::workspace::{WorkspaceId, WorkspaceManager};
 
 const STATE_FILE: &str = "notion-river-state.json";
 const STATE_BACKUP: &str = "notion-river-state.backup.json";
@@ -31,9 +31,10 @@ fn backup_path() -> PathBuf {
 pub struct SavedState {
     pub workspaces: Vec<SavedWorkspace>,
     pub focused_workspace: String,
-    /// Which workspace was visible on each output: (output_geometry_key, workspace_name).
-    /// Uses geometry keys like "2560x1440@0,0" instead of connector names for stability.
-    #[serde(default)]
+    /// Legacy field, kept only to tolerate old state files. Per-monitor workspace
+    /// memory now lives in `monitor-memory.json`.
+    #[serde(default, skip_serializing)]
+    #[allow(dead_code)]
     pub visible_workspaces: Vec<(String, String)>,
 }
 
@@ -92,16 +93,7 @@ pub fn save_state(workspaces: &WorkspaceManager, windows: &[crate::wm::ManagedWi
             .get(workspaces.focused_workspace.0)
             .map(|ws| ws.name.clone())
             .unwrap_or_default(),
-        visible_workspaces: workspaces
-            .workspaces
-            .iter()
-            .filter_map(|ws| {
-                let output_id = ws.active_output?;
-                let output = workspaces.output(output_id)?;
-                let geo = output_geometry_key(output)?;
-                Some((geo, ws.name.clone()))
-            })
-            .collect(),
+        visible_workspaces: Vec::new(),
     };
 
     let path = state_path();

@@ -30,7 +30,7 @@ lightdm is configured with a "Notion River" session (`/usr/share/wayland-session
 
 The `start-river` script sets XKB layout (de/neo), Wayland env vars, and execs River.
 
-The init script (`~/.config/river/init`) starts kanshi, waybar, nm-applet, keepassxc, and runs notion-river in a restart loop (always restarts, not just on exit 0). kanshi sets DPI at scale 1.5 for HiDPI (clean fraction, no wlroots blur); wp_viewporter protocol handles fractional scaling.
+The init script (`~/.config/river/init`) starts waybar, nm-applet, keepassxc, and runs notion-river in a restart loop (always restarts, not just on exit 0). notion-river itself owns monitor configuration (mode/scale/position/transform) via `wlr-output-management-unstable-v1`; no kanshi or external tool is involved. wp_viewporter protocol handles fractional scaling.
 
 ### Nested testing (inside X11)
 
@@ -54,14 +54,15 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `src/decorations.rs` — tab bar rendering (per-window decoration surfaces via Cairo+Pango) + empty frame indicators (shell surfaces)
 - `src/control.rs` — IPC control socket server: accepts commands on `$XDG_RUNTIME_DIR/notion-river.sock`
 - `src/bin/notion-ctl.rs` — CLI client for the control socket
-- `src/workspace.rs` — workspace manager, output assignment, multi-monitor, saved visible workspace restore
+- `src/workspace.rs` — workspace manager, deterministic 3-tier output assignment (monitor memory → preferred_output → fallback), multi-monitor
 - `src/bindings.rs` — keybinding parsing, built-in profiles (i3_neo, notion), media keys, modifier constants
 - `src/actions.rs` — action enum and config string parsing
 - `src/config.rs` — TOML config loading and defaults
 - `src/focus.rs` — focus-follows-mouse logic, extracted for testability with 12 unit tests
 - `src/state.rs` — state persistence: save/restore layout tree, window placement, active tabs, visible workspaces to `~/.config/notion-river/`
 - `src/app_bindings.rs` — app-to-frame bindings: bind/unbind apps to frames, wildcard app_id matching, fixed dimensions, persistence to `~/.config/notion-river/bindings.json`, enforce_app_bindings auto-move
-- `src/output_profiles.rs` — output profile management: hashes connected output names, saves/restores workspace-to-output assignments in `~/.config/notion-river/output-profiles.json`
+- `src/monitor_memory.rs` — per-monitor "last workspace shown here" memory, keyed by EDID description (with connector/geometry fallbacks), persisted to `~/.config/notion-river/monitor-memory.json`
+- `src/monitors.rs` — monitor (output) layout via `wlr-output-management-unstable-v1`: bind manager, observe heads/modes, apply saved profiles on topology change, persist user edits to `~/.config/notion-river/monitors.json` (keyed by sorted EDID set)
 - `src/ipc.rs` — waybar workspace status: writes JSON to `$XDG_RUNTIME_DIR/notion-river-workspaces`, streams updates to IPC subscribers
 - `protocol/` — River protocol XML files (vendored)
 
@@ -92,11 +93,12 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Fullscreen toggle**: `Super+Return` toggles fullscreen for the focused window.
 - **Resize mode**: `Super+R` enters/exits resize mode with absolute direction semantics (Up always moves the boundary up, regardless of which side).
 - **Tab drag specificity**: Dragging a tab in the tab bar drags that specific clicked tab, not the active window.
-- **wp_viewporter**: Wayland protocol for fractional scaling support with HiDPI (scale 1.5x via kanshi).
-- **Output profiles**: Per-monitor-config workspace assignment memory. Hashes connected output names into a profile key, saves workspace-to-output assignments in `~/.config/notion-river/output-profiles.json`. When the same monitor set reconnects, previous workspace assignments are restored automatically.
-- **Monitor disconnect**: Workspaces stay intact (layout preserved), they just become invisible. Focus moves to a visible workspace. No window migration or layout tearing.
-- **Monitor reconnect**: Output profile restores previous workspace-to-output assignments for the reconnected monitor set.
-- **Outputs-changed hook**: When the output layout stabilizes (all outputs have geometry after add/remove/reassign), `WorkspaceManager.outputs_changed` is set to `true`. The manage cycle in `wm.rs` checks this flag and spawns `~/.config/notion-river/hooks/on-outputs-changed` with the output layout as JSON on stdin. The bundled example hook generates kanshi config and signals kanshi to reload.
+- **wp_viewporter**: Wayland protocol for fractional scaling support with HiDPI.
+- **Monitor memory**: Per-physical-monitor map of "last workspace shown here", keyed by EDID description (stripped of the `(connector)` suffix wlroots appends, so replugging into a different port keeps identity). Stored in `~/.config/notion-river/monitor-memory.json`. Replaces the old whole-setup `output-profiles.json` and the per-output `visible_workspaces` field in saved state — those layered, geometry-fingerprinted stores were non-deterministic and have been deleted.
+- **Output assignment algorithm**: Single deterministic pass in `WorkspaceManager::reassign_outputs`, three tiers per output (sorted by id for stability): (1) monitor memory match, (2) workspace whose `preferred_output` chain has the lowest-rank match for this output (config order tiebreak), (3) any remaining unplaced workspace. Workspaces not placed stay invisible (`active_output = None`) — they are still switch-to-able, just not on screen. Memory is persisted whenever placement actually changes, never on every manage cycle. The reassign call is gated by `maybe_reassign_outputs` which compares the set of stable monitor keys against the snapshot from the previous run.
+- **Monitor disconnect**: Workspace on the disconnected monitor becomes invisible (its `active_output` clears). Other monitors keep their assignments untouched. Focus moves to a still-visible workspace. No window migration, no layout tearing.
+- **Monitor reconnect**: Monitor's EDID-keyed memory is consulted, restoring whatever was last on it. If memory is empty (first time seeing this monitor), falls through to the `preferred_output` chain.
+- **Monitor layout (mode/scale/position/transform)**: Owned by `monitors.rs` via `wlr-output-management-unstable-v1`. State machine on every `Done` event: (1) build a snapshot keyed by sorted EDID set; (2) if pending self-apply for this set → ack and persist actual post-apply state; (3) if topology changed → apply saved profile if present, else save current as initial profile; (4) if topology unchanged → save snapshot if it differs from saved (catches `wdisplays` edits with no time gate). Refresh rate is intentionally not part of profile equality (only used when picking a `wl_output` mode: exact w+h+refresh first, fall back to w+h). Suspend/resume preserves layout because the EDID set doesn't change → no apply path triggered. Manual edits via wdisplays/etc. are saved instantly.
 - **Runtime keyboard layout switching**: `Ctrl+F12` toggles between `de/neo` and `de` layouts at runtime.
 
 ## Built-in Keybinding Profiles
@@ -110,11 +112,10 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `~/.config/notion-river/config.toml` — WM config (profile, workspaces, commands, appearance)
 - `~/.config/notion-river/bindings.json` — persisted app-to-frame bindings (auto-managed, survives reboots)
 - `~/.config/notion-river/state.json` — persisted layout/window state (auto-managed, survives reboots)
-- `~/.config/notion-river/output-profiles.json` — per-monitor-set workspace assignment profiles (auto-managed, hashed by connected output names)
-- `~/.config/notion-river/hooks/on-outputs-changed` — hook script called when output layout changes; receives JSON on stdin with current outputs, used to auto-generate kanshi config
-- `~/.config/river/init` — River init script (env vars, kanshi, waybar, notion-river restart loop)
+- `~/.config/notion-river/monitor-memory.json` — per-physical-monitor "last workspace shown here" memory, keyed by EDID description (auto-managed)
+- `~/.config/notion-river/monitors.json` — saved monitor layouts per EDID-set (auto-managed): mode, position, scale, transform, enabled
+- `~/.config/river/init` — River init script (env vars, waybar, notion-river restart loop)
 - `~/.local/bin/start-river` — Session launcher (XKB layout, env vars, exec river)
-- `~/.config/kanshi/config` — Monitor layout (position, scale, transform)
 - `~/.config/waybar/config.jsonc` — Waybar modules (per-workspace event-driven modules via `notion-ctl subscribe-workspace <name>`, CPU, MEM, DSK, VOL, NET, tray)
 - `~/.config/waybar/style.css` — Waybar styling (Catppuccin Mocha, per-monitor colors, floating pill modules, rounded corners)
 - `~/.config/rofi/config.rasi` — Rofi config (Catppuccin Mocha Mauve theme)
@@ -132,8 +133,9 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - Stale wayland socket locks after crashes: `rm -f /run/user/$(id -u)/wayland-*`
 - The init restart loop always restarts notion-river (not conditional on exit code). This means crashes also trigger a restart.
 - Contour terminal works under Wayland — no special flags needed.
-- Fractional scale 1.5x (kanshi) is the best fractional scale — it's a clean fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or integer scales (1x, 2x).
+- Fractional scale 1.5x is the best fractional scale — it's a clean fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or integer scales (1x, 2x).
 - XWayland support requires rebuilding River with `-Dxwayland=true`. Some apps (Steam) need it.
+- Monitor configuration is **fully owned by notion-river**. Do **not** install kanshi or any external `wlr-output-management` client. Two clients fighting over the same protocol = the layout-loss-on-replug bug we spent over a month chasing. Use `wdisplays` for one-shot interactive edits — notion-river observes the result and saves it.
 
 ## HiDPI / Scaling Deep Dive
 
@@ -165,7 +167,7 @@ The `wl_output.scale=2` event arrives moments later, but:
 - **Various font options (Slight/Full hinting, Subpixel/Gray antialias)** — minimal difference; the real issue was the 1x vs 2x buffer, not the font rendering settings
 
 ### What worked
-1. **Integer output scale** — kanshi `scale 2` not `1.75`. Fractional scaling + wlroots = blur.
+1. **Integer output scale** — `scale 2` not `1.75`. Fractional scaling + wlroots = blur.
 2. **Force minimum 2x scale in decoration rendering** — `let scale = if fractional_scale > 1.0 { fractional_scale } else { 2.0 }`. This bypasses the timing issue where scale detection arrives too late.
 3. **Cairo+Pango rendering** — same stack as waybar/GTK. `set_absolute_size` for pixel-perfect font sizing. Default fontconfig options (don't override antialias/hinting).
 4. **Track `last_scale` per decoration** — force redraw when scale changes (via `manage_dirty` on `wl_output.scale` and `wl_output.mode` events).

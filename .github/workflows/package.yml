@@ -80,15 +80,12 @@ jobs:
           test -f vendor/river/zig-out/bin/river && cp vendor/river/zig-out/bin/river "${PKGDIR}/usr/bin/" || true
           cp notion-river.desktop "${PKGDIR}/usr/share/wayland-sessions/"
           cp config-examples/start-river "${PKGDIR}/usr/share/notion-river/examples/"
-          cp config-examples/kanshi.service "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/river-init "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/autostart "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"
           mkdir -p "${PKGDIR}/usr/share/notion-river/examples/waybar"
           cp config-examples/waybar/config.jsonc "${PKGDIR}/usr/share/notion-river/examples/waybar/"
           cp config-examples/waybar/style.css "${PKGDIR}/usr/share/notion-river/examples/waybar/"
-          mkdir -p "${PKGDIR}/usr/share/notion-river/examples/hooks"
-          cp config-examples/hooks/on-outputs-changed "${PKGDIR}/usr/share/notion-river/examples/hooks/"
 
           chmod 755 "${PKGDIR}/usr/bin/"*
           chmod 755 "${PKGDIR}/usr/share/notion-river/examples/"*

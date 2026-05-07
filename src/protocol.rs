@@ -27,8 +27,13 @@ mod interfaces {
         pub use wayland_client::protocol::__interfaces::*;
         wayland_scanner::generate_interfaces!("./protocol/viewporter.xml");
     }
+
+    pub(super) mod om {
+        wayland_scanner::generate_interfaces!("./protocol/wlr-output-management-unstable-v1.xml");
+    }
 }
 
+use self::interfaces::om::*;
 use self::interfaces::rls::*;
 use self::interfaces::rwm::*;
 use self::interfaces::rxkb::*;
@@ -37,3 +42,4 @@ wayland_scanner::generate_client_code!("./protocol/river-window-management-v1.xm
 wayland_scanner::generate_client_code!("./protocol/river-xkb-bindings-v1.xml");
 wayland_scanner::generate_client_code!("./protocol/river-layer-shell-v1.xml");
 wayland_scanner::generate_client_code!("./protocol/viewporter.xml");
+wayland_scanner::generate_client_code!("./protocol/wlr-output-management-unstable-v1.xml");

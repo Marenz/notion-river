@@ -18,10 +18,137 @@ use crate::protocol::{
     river_seat_v1::RiverSeatV1, river_shell_surface_v1::RiverShellSurfaceV1,
     river_window_manager_v1::RiverWindowManagerV1, river_window_v1::RiverWindowV1,
     river_xkb_binding_v1::RiverXkbBindingV1, river_xkb_bindings_v1::RiverXkbBindingsV1,
+    zwlr_output_configuration_v1::ZwlrOutputConfigurationV1,
+    zwlr_output_configuration_head_v1::ZwlrOutputConfigurationHeadV1,
+    zwlr_output_head_v1::ZwlrOutputHeadV1, zwlr_output_manager_v1::ZwlrOutputManagerV1,
+    zwlr_output_mode_v1::ZwlrOutputModeV1,
 };
 
 use crate::wm::{AppData, ManagedWindow, Seat, SeatOp};
 use crate::workspace::{Output, OutputId};
+
+impl AppData {
+    /// Snapshot live monitor state and persist it as the saved profile for
+    /// the current monitor set. Triggered by `notion-ctl save-monitors`.
+    pub fn flush_save_monitors_request(&mut self) {
+        let Some((set_key, snap)) =
+            crate::monitors::snapshot(&self.monitors.heads, &self.monitors.modes)
+        else {
+            log::warn!("save-monitors: live monitor state is not yet stable; ignored");
+            return;
+        };
+        if self.monitors.profiles.insert(set_key.clone(), snap) {
+            self.monitors.profiles.save();
+            log::info!("save-monitors: saved current live state for set '{set_key}'");
+        } else {
+            log::info!(
+                "save-monitors: current live state already matches saved for set '{set_key}'"
+            );
+        }
+        // Whatever we just saved is, by definition, what the user wants;
+        // clear any failure state so future divergence will trigger reapply
+        // again.
+        self.monitors.failed_sets.remove(&set_key);
+    }
+
+    /// Apply a saved profile (`edid -> SavedHead`) to the live heads via
+    /// wlr-output-management.
+    fn apply_monitor_profile(
+        &mut self,
+        target: &std::collections::HashMap<String, crate::monitors::SavedHead>,
+        qh: &QueueHandle<Self>,
+    ) -> Result<(), &'static str> {
+        let manager = self.monitors.manager.as_ref().ok_or("no output manager")?;
+        let serial = self.monitors.serial.ok_or("no output serial")?;
+        if self.monitors.apply_in_flight {
+            return Err("output config already in flight");
+        }
+        self.monitors.apply_in_flight = true;
+        let config = manager.create_configuration(serial, qh, ());
+
+        for (id, head_live) in &self.monitors.heads {
+            let Some(head_proxy) = self.output_head_proxies.get(id) else {
+                continue;
+            };
+            let key = crate::monitors::monitor_key(
+                head_live.name.as_deref(),
+                head_live.description.as_deref(),
+            );
+            let target_head = key.as_deref().and_then(|k| target.get(k));
+
+            let Some(target_head) = target_head else {
+                config.disable_head(head_proxy);
+                continue;
+            };
+            if !target_head.enabled {
+                config.disable_head(head_proxy);
+                continue;
+            }
+
+            let head_config = config.enable_head(head_proxy, qh, ());
+
+            // Pick the wl_output mode for this head: prefer exact match
+            // (w+h+refresh, refresh from the live head's current mode), then
+            // fall back to any mode with matching w+h.
+            let target_refresh = head_live
+                .current_mode_id
+                .and_then(|m| self.monitors.modes.get(&m))
+                .map(|m| m.refresh_mhz)
+                .unwrap_or(0);
+            let mode_proxy = head_live
+                .mode_ids
+                .iter()
+                .find_map(|mid| {
+                    let mode = self.monitors.modes.get(mid)?;
+                    if mode.w == target_head.mode_w
+                        && mode.h == target_head.mode_h
+                        && target_refresh > 0
+                        && mode.refresh_mhz == target_refresh
+                    {
+                        self.output_mode_proxies.get(mid)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    head_live.mode_ids.iter().find_map(|mid| {
+                        let mode = self.monitors.modes.get(mid)?;
+                        if mode.w == target_head.mode_w && mode.h == target_head.mode_h {
+                            self.output_mode_proxies.get(mid)
+                        } else {
+                            None
+                        }
+                    })
+                });
+            if let Some(mp) = mode_proxy {
+                head_config.set_mode(mp);
+            }
+            head_config.set_position(target_head.position_x, target_head.position_y);
+            head_config.set_scale(target_head.scale.max(0.1));
+            if let Some(transform) = output_transform(target_head.transform) {
+                head_config.set_transform(transform);
+            }
+        }
+
+        config.apply();
+        Ok(())
+    }
+}
+
+fn output_transform(value: i32) -> Option<wayland_client::protocol::wl_output::Transform> {
+    use wayland_client::protocol::wl_output::Transform;
+    match value {
+        0 => Some(Transform::Normal),
+        1 => Some(Transform::_90),
+        2 => Some(Transform::_180),
+        3 => Some(Transform::_270),
+        4 => Some(Transform::Flipped),
+        5 => Some(Transform::Flipped90),
+        6 => Some(Transform::Flipped180),
+        7 => Some(Transform::Flipped270),
+        _ => None,
+    }
+}
 
 // ── Registry ─────────────────────────────────────────────────────────────
 
@@ -88,6 +215,13 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     log::info!("Bound wp_viewporter");
                     state.wp_viewporter = Some(vp);
                 }
+                "zwlr_output_manager_v1" => {
+                    // Vendored protocol XML is v1; binding at a higher version
+                    // would decode unknown v2+ events as malformed messages.
+                    let om = registry.bind::<ZwlrOutputManagerV1, _, _>(name, 1, qh, ());
+                    log::info!("Bound zwlr_output_manager_v1 (v1)");
+                    state.monitors.manager = Some(om);
+                }
                 _ => {}
             }
         }
@@ -140,6 +274,10 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 state
                     .wm
                     .handle_manage_start(proxy, river_xkb, &state.river_outputs, qh);
+                if state.wm.save_monitors_pending {
+                    state.wm.save_monitors_pending = false;
+                    state.flush_save_monitors_request();
+                }
             }
             Event::RenderStart => {
                 state.wm.handle_render_start(
@@ -369,15 +507,7 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
                         output.description = Some(desc);
                     }
                 }
-                state.wm.workspaces.reassign_outputs();
-                // Try to restore output profile for this monitor config
-                if !state
-                    .wm
-                    .output_profiles
-                    .restore_for_current(&mut state.wm.workspaces)
-                {
-                    log::info!("No output profile for current config");
-                }
+                state.wm.workspaces.maybe_reassign_outputs();
             }
             Event::Position { x, y } => {
                 if let Some(output) = state.wm.workspaces.output_mut(oid) {
@@ -397,6 +527,10 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
                         state.wm.workspaces.outputs_changed = true;
                     }
                 }
+                // Dimensions can be the last piece of metadata to arrive; if so,
+                // this is when reassignment should fire. The maybe_ guard makes
+                // it cheap when the connected set hasn't really changed.
+                state.wm.workspaces.maybe_reassign_outputs();
             }
         }
     }
@@ -772,7 +906,7 @@ impl Dispatch<WlOutput, u32> for AppData {
                     if let Some(output) = state.wm.workspaces.output_mut(oid) {
                         output.name = Some(name);
                     }
-                    state.wm.workspaces.reassign_outputs();
+                    state.wm.workspaces.maybe_reassign_outputs();
                 }
             }
             Event::Geometry { transform, .. } => {
@@ -905,6 +1039,252 @@ impl Dispatch<crate::protocol::river_layer_shell_seat_v1::RiverLayerShellSeatV1,
                 state.wm.layer_shell_has_focus = false;
             }
         }
+    }
+}
+
+// ── Output Management (wlr-output-management-v1) ─────────────────────────
+
+impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwlrOutputManagerV1,
+        event: <ZwlrOutputManagerV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::zwlr_output_manager_v1::Event;
+        match event {
+            Event::Head { head } => {
+                let hid = head.id().protocol_id() as u64;
+                log::info!("Output management: new head id={hid}");
+                state.output_head_proxies.insert(hid, head);
+                state
+                    .monitors
+                    .heads
+                    .insert(hid, crate::monitors::HeadLive::default());
+            }
+            Event::Done { serial } => {
+                state.monitors.serial = Some(serial);
+
+                let Some((set_key, snap)) =
+                    crate::monitors::snapshot(&state.monitors.heads, &state.monitors.modes)
+                else {
+                    // Metadata still settling; wait for next Done.
+                    return;
+                };
+
+                state.monitors.last_set_key = Some(set_key.clone());
+
+                // Case 1: we just issued an apply for this set; this Done is
+                // the compositor's ack of our apply. Don't treat it as a
+                // user edit, don't overwrite the saved profile.
+                if state.monitors.pending_self_apply.as_deref() == Some(set_key.as_str()) {
+                    state.monitors.pending_self_apply = None;
+                    log::info!("Acknowledged self-apply for set '{set_key}'");
+                    return;
+                }
+
+                // Case 2: we have a saved profile. It is authoritative.
+                // Reapply if the live state diverges from it. We never
+                // overwrite the saved profile from a Done event; explicit
+                // user save is a separate path (not yet implemented; until
+                // then, hand-edit monitors.json or use wdisplays + save).
+                if let Some(target) = state.monitors.profiles.get(&set_key).cloned() {
+                    if target == snap {
+                        // Live already matches saved. Nothing to do.
+                        state.monitors.failed_sets.remove(&set_key);
+                    } else if state.monitors.failed_sets.contains(&set_key) {
+                        // We already tried and the compositor rejected.
+                        // Don't loop. The user can fix monitors.json and
+                        // restart, or the next topology change clears this.
+                    } else {
+                        state.monitors.pending_self_apply = Some(set_key.clone());
+                        match state.apply_monitor_profile(&target, qh) {
+                            Ok(()) => log::info!(
+                                "Set '{set_key}' diverged from saved profile; reapplying"
+                            ),
+                            Err(err) => {
+                                state.monitors.apply_in_flight = false;
+                                state.monitors.pending_self_apply = None;
+                                log::warn!("Failed to apply saved profile: {err}");
+                            }
+                        }
+                    }
+                } else {
+                    // Case 3: no saved profile for this set. Save current
+                    // live state as the initial profile so subsequent
+                    // appearances of this set are restored to it. After this
+                    // first save we will not overwrite without an explicit
+                    // user save.
+                    if state.monitors.profiles.insert(set_key.clone(), snap) {
+                        state.monitors.profiles.save();
+                        log::info!("First time seeing monitor set '{set_key}'; saved initial profile");
+                    }
+                }
+            }
+            Event::Finished => {
+                log::info!("Output management: manager finished");
+                state.monitors.manager = None;
+            }
+        }
+    }
+
+    wayland_client::event_created_child!(AppData, ZwlrOutputManagerV1, [
+        crate::protocol::zwlr_output_manager_v1::EVT_HEAD_OPCODE => (ZwlrOutputHeadV1, ()),
+    ]);
+}
+
+impl Dispatch<ZwlrOutputHeadV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwlrOutputHeadV1,
+        event: <ZwlrOutputHeadV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::zwlr_output_head_v1::Event;
+        use wayland_client::WEnum;
+        let hid = _proxy.id().protocol_id() as u64;
+        let head = match state.monitors.heads.get_mut(&hid) {
+            Some(h) => h,
+            None => return,
+        };
+        match event {
+            Event::Name { name } => head.name = Some(name),
+            Event::Description { description } => head.description = Some(description),
+            Event::PhysicalSize { .. } => {}
+            Event::Mode { mode } => {
+                let mid = mode.id().protocol_id() as u64;
+                head.mode_ids.push(mid);
+                state.output_mode_proxies.insert(mid, mode);
+            }
+            Event::Enabled { enabled } => head.enabled = enabled != 0,
+            Event::CurrentMode { mode } => {
+                let mid = mode.id().protocol_id() as u64;
+                head.current_mode_id = Some(mid);
+                if let Some(mode) = state.monitors.modes.get(&mid) {
+                    head.mode_w = mode.w;
+                    head.mode_h = mode.h;
+                    head.mode_refresh_mhz = mode.refresh_mhz;
+                }
+            }
+            Event::Position { x, y } => {
+                head.position_x = x;
+                head.position_y = y;
+            }
+            Event::Transform { transform } => {
+                if let WEnum::Value(t) = transform {
+                    head.transform = t as i32;
+                }
+            }
+            Event::Scale { scale } => head.scale_fixed = (scale * 120_000.0) as i32,
+            Event::Finished => {
+                state.monitors.heads.remove(&hid);
+                state.output_head_proxies.remove(&hid);
+            }
+        }
+    }
+
+    wayland_client::event_created_child!(AppData, ZwlrOutputHeadV1, [
+        crate::protocol::zwlr_output_head_v1::EVT_MODE_OPCODE => (ZwlrOutputModeV1, ()),
+    ]);
+}
+
+// ── No-op dispatches for output management child types ──────────────────
+
+wayland_client::delegate_noop!(AppData: ignore ZwlrOutputConfigurationHeadV1);
+
+impl Dispatch<ZwlrOutputModeV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwlrOutputModeV1,
+        event: <ZwlrOutputModeV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::zwlr_output_mode_v1::Event;
+        let mid = proxy.id().protocol_id() as u64;
+        match event {
+            Event::Size { width, height } => {
+                let mode = state.monitors.modes.entry(mid).or_default();
+                mode.w = width;
+                mode.h = height;
+                for head in state.monitors.heads.values_mut() {
+                    if head.current_mode_id == Some(mid) {
+                        head.mode_w = width;
+                        head.mode_h = height;
+                    }
+                }
+            }
+            Event::Refresh { refresh } => {
+                let mode = state.monitors.modes.entry(mid).or_default();
+                mode.refresh_mhz = refresh;
+                for head in state.monitors.heads.values_mut() {
+                    if head.current_mode_id == Some(mid) {
+                        head.mode_refresh_mhz = refresh;
+                    }
+                }
+            }
+            Event::Preferred => {
+                state.monitors.modes.entry(mid).or_default().preferred = true;
+            }
+            Event::Finished => {
+                state.monitors.modes.remove(&mid);
+                state.output_mode_proxies.remove(&mid);
+                for head in state.monitors.heads.values_mut() {
+                    head.mode_ids.retain(|id| *id != mid);
+                    if head.current_mode_id == Some(mid) {
+                        head.current_mode_id = None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Dispatch<ZwlrOutputConfigurationV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwlrOutputConfigurationV1,
+        event: <ZwlrOutputConfigurationV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::zwlr_output_configuration_v1::Event;
+        state.monitors.apply_in_flight = false;
+        match event {
+            Event::Succeeded => {
+                log::info!("Output config applied successfully");
+                if let Some(key) = &state.monitors.pending_self_apply {
+                    state.monitors.failed_sets.remove(key);
+                }
+            }
+            Event::Failed => {
+                if let Some(key) = state.monitors.pending_self_apply.clone() {
+                    log::warn!("Output config failed for set '{key}'; will not retry this session");
+                    state.monitors.failed_sets.insert(key);
+                } else {
+                    log::warn!("Output config failed");
+                }
+                state.monitors.pending_self_apply = None;
+            }
+            Event::Cancelled => {
+                if let Some(key) = state.monitors.pending_self_apply.clone() {
+                    log::warn!(
+                        "Output config cancelled for set '{key}'; will not retry this session"
+                    );
+                    state.monitors.failed_sets.insert(key);
+                } else {
+                    log::warn!("Output config cancelled");
+                }
+                state.monitors.pending_self_apply = None;
+            }
+        }
+        proxy.destroy();
     }
 }
 

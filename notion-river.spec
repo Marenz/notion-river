@@ -53,15 +53,12 @@ test -f vendor/river/zig-out/bin/river && install -Dm755 vendor/river/zig-out/bi
 install -Dm644 notion-river.desktop %{buildroot}%{_datadir}/wayland-sessions/notion-river.desktop
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples
 install -Dm644 config-examples/start-river %{buildroot}%{_datadir}/notion-river/examples/start-river
-install -Dm644 config-examples/kanshi.service %{buildroot}%{_datadir}/notion-river/examples/kanshi.service
 install -Dm755 config-examples/river-init %{buildroot}%{_datadir}/notion-river/examples/river-init
 install -Dm644 config-examples/autostart %{buildroot}%{_datadir}/notion-river/examples/autostart
 install -Dm644 config.example.toml %{buildroot}%{_datadir}/notion-river/examples/config.toml
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples/waybar
 install -Dm644 config-examples/waybar/config.jsonc %{buildroot}%{_datadir}/notion-river/examples/waybar/config.jsonc
 install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-river/examples/waybar/style.css
-install -dm755 %{buildroot}%{_datadir}/notion-river/examples/hooks
-install -Dm755 config-examples/hooks/on-outputs-changed %{buildroot}%{_datadir}/notion-river/examples/hooks/on-outputs-changed
 
 %files
 %license LICENSE

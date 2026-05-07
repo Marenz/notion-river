@@ -55,6 +55,15 @@ pub struct AppData {
     pub wl_pointer_surface: Option<u32>,
     pub wl_pointer_surface_x: f64,
     pub wm: WindowManager,
+    pub monitors: crate::monitors::Monitors,
+    pub output_head_proxies: std::collections::HashMap<
+        u64,
+        crate::protocol::zwlr_output_head_v1::ZwlrOutputHeadV1,
+    >,
+    pub output_mode_proxies: std::collections::HashMap<
+        u64,
+        crate::protocol::zwlr_output_mode_v1::ZwlrOutputModeV1,
+    >,
 }
 
 impl Default for AppData {
@@ -78,6 +87,9 @@ impl Default for AppData {
             wl_pointer_surface: None,
             wl_pointer_surface_x: 0.0,
             wm: WindowManager::new(Config::load()),
+            monitors: crate::monitors::Monitors::load(),
+            output_head_proxies: std::collections::HashMap::new(),
+            output_mode_proxies: std::collections::HashMap::new(),
         }
     }
 }
@@ -128,7 +140,7 @@ pub struct WindowManager {
     pub resize_highlight_h: crate::decorations::ResizeHighlight,
     pub resize_highlight_v: crate::decorations::ResizeHighlight,
     /// Per-output-config workspace assignment memory.
-    pub output_profiles: crate::output_profiles::OutputProfiles,
+
     /// Control socket state for window/workspace switching.
     pub control: crate::control::ControlState,
     /// Currently focused floating window, if any. Takes priority over tiled focus.
@@ -136,6 +148,9 @@ pub struct WindowManager {
     /// Pointer hover state on decoration surfaces (for tab hover highlight).
     pub hover_surface_id: Option<u32>,
     pub hover_surface_x: f64,
+    /// Set by ControlRequest::SaveMonitors. AppData snapshots live monitor
+    /// state into `monitors.profiles` and persists it after the manage cycle.
+    pub save_monitors_pending: bool,
 }
 
 /// A window tracked by the WM.
@@ -287,10 +302,7 @@ impl WindowManager {
         // Try to restore saved state (from previous restart)
         let saved_state = crate::state::load_state();
         let saved_active_tabs = if let Some(ref state) = saved_state {
-            let tabs = crate::state::restore_layout(&mut workspaces, state);
-            // Store visible workspace preferences for later (after output names arrive)
-            workspaces.saved_visible = state.visible_workspaces.to_vec();
-            tabs
+            crate::state::restore_layout(&mut workspaces, state)
         } else {
             std::collections::HashMap::new()
         };
@@ -319,11 +331,11 @@ impl WindowManager {
             drag_preview: crate::decorations::DragPreview::default(),
             resize_highlight_h: crate::decorations::ResizeHighlight::default(),
             resize_highlight_v: crate::decorations::ResizeHighlight::default(),
-            output_profiles: crate::output_profiles::OutputProfiles::load(),
             control,
             focused_floating: None,
             hover_surface_id: None,
             hover_surface_x: 0.0,
+            save_monitors_pending: false,
         }
     }
 
@@ -370,17 +382,11 @@ impl WindowManager {
             self.warp_cursor_to_frame(new_focused_frame);
         }
 
-        // Only persist output state and fire hooks when all outputs have
-        // complete metadata (physical dimensions from wl_output Mode events).
-        // This prevents saving incomplete/transient state during resume or
-        // hotplug, where logical dimensions arrive before physical ones.
-        if self.workspaces.all_outputs_have_metadata() {
-            self.output_profiles.save_current(&self.workspaces);
-
-            if self.workspaces.outputs_changed {
-                self.workspaces.outputs_changed = false;
-                self.run_outputs_changed_hook();
-            }
+        // Output layout is fully owned by the monitors module via
+        // wlr-output-management. We just clear the legacy flag here so the
+        // workspace reassignment path stays consistent.
+        if self.workspaces.outputs_changed {
+            self.workspaces.outputs_changed = false;
         }
 
         // Update waybar workspace display via FIFO
@@ -508,6 +514,13 @@ impl WindowManager {
                     self.app_bindings.bindings.remove(&app_id);
                     self.app_bindings.save();
                     log::info!("Unbound '{}'", app_id);
+                }
+                crate::control::ControlRequest::SaveMonitors => {
+                    // Snapshot live monitor state into the saved profile for
+                    // the current monitor set. AppData handles the actual
+                    // snapshot+save in `flush_save_monitors_request` because
+                    // `Monitors` lives on AppData, not on WindowManager.
+                    self.save_monitors_pending = true;
                 }
                 crate::control::ControlRequest::SetFixedDimensions(app_id, dims) => {
                     // Apply to all current bindings for this app
@@ -734,54 +747,6 @@ impl WindowManager {
         self.windows.retain(|w| !w.closed);
     }
 
-    /// Run the outputs-changed hook script if it exists.
-    /// The hook receives the current output layout as JSON on stdin.
-    fn run_outputs_changed_hook(&self) {
-        let hook_path = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
-            .join("notion-river/hooks/on-outputs-changed");
-
-        if !hook_path.is_file() {
-            log::debug!("No outputs-changed hook at {}", hook_path.display());
-            return;
-        }
-
-        let json = self.workspaces.outputs_json();
-        log::info!("Running outputs-changed hook: {}", hook_path.display());
-
-        match std::process::Command::new(&hook_path)
-            .env("NOTION_RIVER_HOOK", "outputs-changed")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        {
-            Ok(mut child) => {
-                // Write JSON to stdin in a fire-and-forget manner.
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = stdin.write_all(json.as_bytes());
-                    // stdin is dropped here, closing the pipe
-                }
-                // Spawn a thread to wait for the child so we don't block the event loop
-                std::thread::spawn(move || {
-                    match child.wait() {
-                        Ok(status) if !status.success() => {
-                            log::warn!("outputs-changed hook exited with {status}");
-                        }
-                        Err(e) => {
-                            log::warn!("outputs-changed hook wait error: {e}");
-                        }
-                        _ => {}
-                    }
-                });
-            }
-            Err(e) => {
-                log::warn!("Failed to spawn outputs-changed hook: {e}");
-            }
-        }
-    }
-
     fn remove_closed_outputs(&mut self) {
         let removed: Vec<OutputId> = self
             .workspaces
@@ -796,10 +761,12 @@ impl WindowManager {
         for id in &removed {
             self.workspaces.remove_output(*id);
         }
-        // Don't migrate windows — workspaces keep their layout.
-        // User can switch to them with Super+N, or they'll be
-        // restored to the monitor when it reconnects.
-        // Just make sure we're focused on a visible workspace.
+        // After a disconnect, the remaining outputs' assignments are still
+        // valid — workspaces that lost their monitor are simply invisible.
+        // Re-run the algorithm so any unplaced workspaces with matching
+        // preferences can move into freed slots if appropriate.
+        self.workspaces.maybe_reassign_outputs();
+        // Make sure focus lands on something visible.
         let focused_visible = self
             .workspaces
             .workspaces

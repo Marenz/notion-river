@@ -26,6 +26,7 @@ pub enum ControlRequest {
         dimensions: Option<(i32, i32)>,
     },
     Unbind(String),
+    SaveMonitors,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -389,6 +390,13 @@ fn handle_client(
                 .lock()
                 .expect("control pending poisoned")
                 .push(ControlRequest::SetFixedDimensions(app_id.to_string(), dims));
+            let _ = stream.write_all(b"OK\n");
+        }
+        "save-monitors" => {
+            pending
+                .lock()
+                .expect("control pending poisoned")
+                .push(ControlRequest::SaveMonitors);
             let _ = stream.write_all(b"OK\n");
         }
         _ => {

@@ -108,9 +108,20 @@ fn find_matching_output(specifier: &str, outputs: &[Output]) -> Option<OutputId>
 /// Try a fallback chain of specifiers against the current outputs.
 /// Returns the first matching output.
 pub(crate) fn find_preferred_output(specifiers: &[String], outputs: &[Output]) -> Option<OutputId> {
-    for spec in specifiers {
+    find_preferred_output_ranked(specifiers, outputs).map(|(_, id)| id)
+}
+
+/// Like `find_preferred_output` but also returns the index in `specifiers`
+/// where the match occurred. Lower index = stronger preference. Used to break
+/// ties when several workspaces all want the same output via different
+/// preference depths.
+pub(crate) fn find_preferred_output_ranked(
+    specifiers: &[String],
+    outputs: &[Output],
+) -> Option<(usize, OutputId)> {
+    for (rank, spec) in specifiers.iter().enumerate() {
         if let Some(id) = find_matching_output(spec, outputs) {
-            return Some(id);
+            return Some((rank, id));
         }
     }
     None
@@ -118,7 +129,8 @@ pub(crate) fn find_preferred_output(specifiers: &[String], outputs: &[Output]) -
 
 #[cfg(test)]
 mod tests {
-    use super::{find_preferred_output, Output, OutputId};
+    use super::{find_preferred_output, Output, OutputId, WorkspaceManager};
+    use crate::config::{OutputSpec, WorkspaceConfig};
 
     fn output(id: u64, x: i32, y: i32, width: i32, height: i32) -> Output {
         let mut output = Output::new(OutputId(id));
@@ -127,6 +139,64 @@ mod tests {
         output.x = x;
         output.y = y;
         output
+    }
+
+    fn named_output(
+        id: u64,
+        name: &str,
+        desc: &str,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) -> Output {
+        let mut o = output(id, x, y, width, height);
+        o.name = Some(name.to_owned());
+        o.description = Some(desc.to_owned());
+        o
+    }
+
+    fn ws(name: &str, output: Option<OutputSpec>) -> WorkspaceConfig {
+        WorkspaceConfig {
+            name: name.to_owned(),
+            output,
+            initial_layout: None,
+        }
+    }
+
+    fn three_workspace_setup() -> WorkspaceManager {
+        let configs = vec![
+            ws("main", Some(OutputSpec::Single("center".into()))),
+            ws("secondary", Some(OutputSpec::Single("center".into()))),
+            ws("utility", Some(OutputSpec::Single("center".into()))),
+            ws(
+                "social",
+                Some(OutputSpec::Fallback(vec![
+                    "portrait".into(),
+                    "laptop".into(),
+                ])),
+            ),
+            ws("work", Some(OutputSpec::Single("laptop".into()))),
+            ws(
+                "term",
+                Some(OutputSpec::Fallback(vec![
+                    "portrait".into(),
+                    "laptop".into(),
+                ])),
+            ),
+        ];
+        let mut wm = WorkspaceManager::new(&configs, 0.5);
+        // Tests must not touch (read or write) the user's real
+        // monitor-memory.json. Replace whatever load() pulled in.
+        wm.monitor_memory = crate::monitor_memory::MonitorMemory::default();
+        wm
+    }
+
+    fn workspace_for(wm: &WorkspaceManager, oid: OutputId) -> Option<&str> {
+        wm.workspaces
+            .iter()
+            .find(|w| w.active_output == Some(oid))
+            .map(|w| w.name.as_str())
     }
 
     #[test]
@@ -140,6 +210,234 @@ mod tests {
         let preferred = find_preferred_output(&["center".to_owned()], &outputs);
 
         assert_eq!(preferred, Some(OutputId(2)));
+    }
+
+    #[test]
+    fn first_assignment_uses_preferred_outputs() {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            named_output(20, "DP-2", "LG 503NTWG54001", 1280, 611, 2560, 1440),
+            named_output(30, "DP-10", "LG 507NTFALB971", 3840, 0, 1440, 2560),
+        ];
+        wm.reassign_outputs();
+
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        assert_eq!(workspace_for(&wm, OutputId(30)), Some("social"));
+    }
+
+    #[test]
+    fn memory_overrides_preferred_on_subsequent_runs() {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            named_output(20, "DP-2", "LG 503NTWG54001", 1280, 611, 2560, 1440),
+            named_output(30, "DP-10", "LG 507NTFALB971", 3840, 0, 1440, 2560),
+        ];
+        // Pretend the user moved utility to the portrait monitor and that got
+        // memorized.
+        wm.monitor_memory
+            .record("edid:LG 507NTFALB971".into(), "utility".into());
+        wm.reassign_outputs();
+
+        assert_eq!(workspace_for(&wm, OutputId(30)), Some("utility"));
+        // main still belongs on center via preferred_output.
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        // social loses portrait but should not snap to center; it falls
+        // through to laptop via its second preference.
+        // (eDP-1 is taken by work first via config order; social ends up
+        // unplaced or taking the center fallback.) See next test for detail.
+    }
+
+    #[test]
+    fn unplugging_a_monitor_keeps_others_unchanged() {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            named_output(20, "DP-2", "LG 503NTWG54001", 1280, 611, 2560, 1440),
+            named_output(30, "DP-10", "LG 507NTFALB971", 3840, 0, 1440, 2560),
+        ];
+        wm.reassign_outputs();
+
+        // Unplug the portrait monitor.
+        wm.remove_output(OutputId(30));
+        wm.reassign_outputs();
+
+        // The two remaining monitors should keep what they had.
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        // The portrait workspace is invisible but still exists.
+        assert!(wm
+            .workspaces
+            .iter()
+            .find(|w| w.name == "social")
+            .is_some_and(|w| w.active_output.is_none()));
+    }
+
+    #[test]
+    fn replugging_restores_remembered_workspace() {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            named_output(20, "DP-2", "LG 503NTWG54001", 1280, 611, 2560, 1440),
+            named_output(30, "DP-10", "LG 507NTFALB971", 3840, 0, 1440, 2560),
+        ];
+        wm.reassign_outputs();
+        // Pretend the user moved term onto the portrait, persisting that.
+        wm.monitor_memory
+            .record("edid:LG 507NTFALB971".into(), "term".into());
+
+        // Unplug.
+        wm.remove_output(OutputId(30));
+        wm.reassign_outputs();
+        assert!(workspace_for(&wm, OutputId(30)).is_none());
+
+        // Replug — same physical monitor, fresh wayland id (40 instead of 30).
+        wm.outputs.push(named_output(
+            40,
+            "DP-10",
+            "LG 507NTFALB971",
+            3840,
+            0,
+            1440,
+            2560,
+        ));
+        wm.reassign_outputs();
+
+        assert_eq!(workspace_for(&wm, OutputId(40)), Some("term"));
+    }
+
+    #[test]
+    fn temporary_switch_during_partial_replug_does_not_overwrite_memory() {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 640, 1440, 1280, 800),
+            named_output(20, "DP-7", "LG 507NTFALB971", 2560, 0, 1440, 2560),
+            named_output(30, "DP-3", "LG 503NTWG54001", 0, 0, 2560, 1440),
+        ];
+        wm.monitor_memory
+            .record("edid:Sharp 0x1515".into(), "work".into());
+        wm.monitor_memory
+            .record("edid:LG 507NTFALB971".into(), "term".into());
+        wm.monitor_memory
+            .record("edid:LG 503NTWG54001".into(), "main".into());
+        wm.reassign_outputs();
+
+        wm.remove_output(OutputId(30));
+        wm.reassign_outputs();
+
+        wm.switch_workspace("main");
+
+        assert_eq!(
+            wm.monitor_memory.get("edid:LG 507NTFALB971"),
+            Some("term")
+        );
+        assert_eq!(
+            wm.monitor_memory.get("edid:LG 503NTWG54001"),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn maybe_reassign_skips_when_set_unchanged() {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            named_output(20, "DP-2", "LG 503NTWG54001", 1280, 611, 2560, 1440),
+        ];
+        wm.maybe_reassign_outputs();
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+
+        // User manually moves a workspace.
+        wm.workspaces[0].active_output = Some(OutputId(20)); // pretend swap
+        wm.workspaces[1].active_output = Some(OutputId(10));
+        wm.output_workspace.insert(OutputId(20), super::WorkspaceId(0));
+        wm.output_workspace.insert(OutputId(10), super::WorkspaceId(1));
+
+        // Same set of monitors -> no reassignment, manual layout preserved.
+        wm.maybe_reassign_outputs();
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("secondary"));
+    }
+
+    #[test]
+    fn same_resolution_monitors_do_not_collide() {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            named_output(
+                20,
+                "DP-3",
+                "LG Electronics LG HDR 4K 503NTWG54001",
+                1280,
+                0,
+                3840,
+                2160,
+            ),
+            named_output(
+                30,
+                "DP-7",
+                "LG Electronics LG HDR 4K 507NTFALB971",
+                5120,
+                0,
+                3840,
+                2160,
+            ),
+        ];
+        wm.monitor_memory.record(
+            "edid:LG Electronics LG HDR 4K 503NTWG54001".into(),
+            "main".into(),
+        );
+        wm.monitor_memory.record(
+            "edid:LG Electronics LG HDR 4K 507NTFALB971".into(),
+            "social".into(),
+        );
+        wm.monitor_memory
+            .record("edid:Sharp 0x1515".into(), "work".into());
+
+        wm.maybe_reassign_outputs();
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        assert_eq!(workspace_for(&wm, OutputId(30)), Some("social"));
+
+        wm.workspaces[0].active_output = Some(OutputId(30));
+        wm.workspaces[3].active_output = Some(OutputId(20));
+        wm.output_workspace.insert(OutputId(30), super::WorkspaceId(0));
+        wm.output_workspace.insert(OutputId(20), super::WorkspaceId(3));
+
+        wm.reassign_outputs();
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        assert_eq!(workspace_for(&wm, OutputId(30)), Some("social"));
+    }
+
+    #[test]
+    fn reassign_deferred_until_description_arrives() {
+        let mut wm = three_workspace_setup();
+        let mut external = output(20, 1280, 611, 3840, 2160);
+        external.name = Some("DP-3".to_owned());
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            external,
+        ];
+
+        assert!(wm.all_outputs_have_geometry());
+        assert!(!wm.all_outputs_have_stable_identity());
+
+        wm.maybe_reassign_outputs();
+        assert!(wm.output_workspace.is_empty());
+        assert!(wm.workspaces.iter().all(|ws| ws.active_output.is_none()));
+
+        wm.output_mut(OutputId(20)).unwrap().description =
+            Some("LG Electronics LG HDR 4K 503NTWG54001".to_owned());
+
+        assert!(wm.all_outputs_have_stable_identity());
+
+        wm.maybe_reassign_outputs();
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
     }
 }
 
@@ -245,11 +543,15 @@ pub struct WorkspaceManager {
     pub output_workspace: std::collections::HashMap<OutputId, WorkspaceId>,
     /// The globally focused workspace.
     pub focused_workspace: WorkspaceId,
-    /// Saved visible workspaces from state restore: (output_name, workspace_name)
-    pub saved_visible: Vec<(String, String)>,
+    /// Per-monitor memory of "last workspace shown here". Persisted to disk.
+    /// Loaded once on startup; updated whenever an assignment changes.
+    pub monitor_memory: crate::monitor_memory::MonitorMemory,
     /// Set to true when output layout changes and stabilizes.
     /// Consumed by the manage cycle to fire the outputs-changed hook.
     pub outputs_changed: bool,
+    /// Snapshot of monitor keys present the last time `reassign_outputs` ran.
+    /// Used to decide whether the connected-monitor set actually changed.
+    last_connected_keys: std::collections::BTreeSet<String>,
 }
 
 impl WorkspaceManager {
@@ -287,13 +589,16 @@ impl WorkspaceManager {
             outputs: Vec::new(),
             output_workspace: std::collections::HashMap::new(),
             focused_workspace,
-            saved_visible: Vec::new(),
+            monitor_memory: crate::monitor_memory::MonitorMemory::load(),
             outputs_changed: false,
+            last_connected_keys: std::collections::BTreeSet::new(),
         }
     }
 
-    /// Add or update an output. Actual workspace assignment is deferred to
-    /// `reassign_outputs()` which runs once all outputs have geometry.
+    /// Add or update an output. Just stores the data — reassignment is gated
+    /// on the connected-monitor set actually changing and is triggered
+    /// explicitly by the caller via `maybe_reassign_outputs()` once metadata
+    /// has settled.
     pub fn add_output(&mut self, output: Output) {
         let output_id = output.id;
         if let Some(existing) = self.outputs.iter_mut().find(|o| o.id == output_id) {
@@ -301,11 +606,24 @@ impl WorkspaceManager {
         } else {
             self.outputs.push(output);
         }
-        // Only run assignment when ALL known outputs have geometry.
-        // Semantic matchers like "center" need the full set to compute correctly.
-        if self.all_outputs_have_geometry() {
-            self.reassign_outputs();
+    }
+
+    /// Run `reassign_outputs` only if (a) all currently-connected outputs have
+    /// geometry, (b) all of them have a stable monitor identity, and (c) the
+    /// resulting set of monitor keys differs from the last assignment pass.
+    /// This is the single entry point that callers should use after output
+    /// events to keep the algorithm idempotent and cheap.
+    pub fn maybe_reassign_outputs(&mut self) {
+        if !self.all_outputs_have_geometry() {
+            return;
         }
+        if !self.all_outputs_have_stable_identity() {
+            return;
+        }
+        if !self.connected_monitor_keys_changed() {
+            return;
+        }
+        self.reassign_outputs();
     }
 
     /// True when every non-removed output has known dimensions.
@@ -314,10 +632,20 @@ impl WorkspaceManager {
         !non_removed.is_empty() && non_removed.iter().all(|o| o.width > 0 && o.height > 0)
     }
 
+    /// True when every non-removed output has a strict, stable monitor key.
+    pub fn all_outputs_have_stable_identity(&self) -> bool {
+        let non_removed: Vec<&Output> = self.outputs.iter().filter(|o| !o.removed).collect();
+        !non_removed.is_empty()
+            && non_removed
+                .iter()
+                .all(|output| crate::monitor_memory::monitor_key(output).is_some())
+    }
+
     /// True when every non-removed output has complete metadata from wl_output
     /// (physical dimensions from Mode event, and logical dimensions from
     /// river_output_v1). This is stricter than `all_outputs_have_geometry()`
     /// and should be used before persisting or exporting output state.
+    #[allow(dead_code)]
     pub fn all_outputs_have_metadata(&self) -> bool {
         let non_removed: Vec<&Output> = self.outputs.iter().filter(|o| !o.removed).collect();
         !non_removed.is_empty()
@@ -329,24 +657,10 @@ impl WorkspaceManager {
             })
     }
 
-    /// Clear current output assignments before rebuilding them from the current
-    /// monitor geometry/profile state.
-    #[allow(dead_code)]
-    pub fn clear_output_assignments(&mut self) {
-        self.output_workspace.clear();
-        self.workspaces.retain(|ws| !ws.auto_created);
-        for (index, ws) in self.workspaces.iter_mut().enumerate() {
-            ws.id = WorkspaceId(index);
-            ws.active_output = None;
-        }
-        if self.focused_workspace.0 >= self.workspaces.len() {
-            self.focused_workspace = WorkspaceId(0);
-        }
-    }
-
-    /// Remove an output. Unassigns its workspace.
+    /// Remove an output. Unassigns its workspace; the workspace itself stays
+    /// alive (just becomes invisible until the monitor returns or the user
+    /// switches to it on another monitor).
     pub fn remove_output(&mut self, output_id: OutputId) {
-        // Unassign any workspace from this output
         self.output_workspace.retain(|oid, _| *oid != output_id);
 
         for ws in &mut self.workspaces {
@@ -356,6 +670,9 @@ impl WorkspaceManager {
         }
 
         self.outputs.retain(|o| o.id != output_id);
+        // Force the next maybe_reassign_outputs to run by invalidating the
+        // snapshot — even if the new set happens to equal a previous one.
+        self.last_connected_keys.clear();
         self.outputs_changed = true;
     }
 
@@ -367,108 +684,165 @@ impl WorkspaceManager {
         self.output_workspace.insert(output_id, ws_id);
     }
 
-    /// Re-assign workspaces to outputs using geometry-based semantic matching.
-    /// Called when output geometry or names become known.
-    pub fn reassign_outputs(&mut self) {
-        // Phase 1: Collect assignments without mutating (avoids borrow issues).
-        let mut assignments: Vec<(WorkspaceId, OutputId)> = Vec::new();
-
-        let unassigned_outputs: Vec<OutputId> = self
-            .outputs
+    /// Build the set of stable monitor keys for currently-connected outputs.
+    /// Outputs without enough info to produce a key are skipped.
+    fn connected_monitor_keys(&self) -> std::collections::BTreeSet<String> {
+        self.outputs
             .iter()
-            .filter(|o| !o.removed && o.width > 0 && !self.output_workspace.contains_key(&o.id))
-            .map(|o| o.id)
+            .filter(|o| !o.removed && o.width > 0)
+            .filter_map(crate::monitor_memory::monitor_key)
+            .collect()
+    }
+
+    /// Re-assign workspaces to outputs.
+    ///
+    /// One pass, fully deterministic, with three tiers per output:
+    ///
+    /// 1. **Per-monitor memory**: if `monitor_memory` knows what was last shown
+    ///    on this physical monitor, put that workspace back.
+    /// 2. **Preferred-output match**: walk workspaces in config order, place the
+    ///    first unplaced workspace whose `preferred_output` chain resolves to
+    ///    this output.
+    /// 3. **Any remaining**: first unplaced workspace in config order.
+    ///
+    /// Outputs that gain a placement also have their memory updated. Workspaces
+    /// that don't get placed remain invisible (`active_output = None`), which is
+    /// fine — they're still switch-to-able.
+    ///
+    /// Wipes existing assignments first so this function is idempotent and
+    /// independent of prior state. Called only when the connected-monitor set
+    /// actually changed (see `connected_monitor_keys_changed`).
+    pub fn reassign_outputs(&mut self) {
+        let connected_keys = self.connected_monitor_keys();
+
+        // Wipe assignments so this function is idempotent and prior partial
+        // assignments don't leak into the result.
+        self.output_workspace.clear();
+        // Drop auto-created workspaces from previous runs so they don't
+        // accumulate; real workspaces just have their active_output cleared.
+        let auto_ids: Vec<WorkspaceId> = self
+            .workspaces
+            .iter()
+            .filter(|w| w.auto_created)
+            .map(|w| w.id)
             .collect();
-
-        for &output_id in &unassigned_outputs {
-            let geo_key = self.output(output_id).and_then(output_geometry_key);
-
-            // 1. Check saved_visible (geometry-based keys from last session)
-            let saved_ws = geo_key.as_ref().and_then(|gk| {
-                self.saved_visible
-                    .iter()
-                    .find(|(saved_geo, _)| saved_geo == gk)
-                    .and_then(|(_, ws_name)| {
-                        self.workspaces
-                            .iter()
-                            .find(|ws| {
-                                ws.name == *ws_name
-                                    && ws.active_output.is_none()
-                                    && !assignments.iter().any(|(wid, _)| *wid == ws.id)
-                            })
-                            .map(|ws| ws.id)
-                    })
-            });
-
-            // 2. Fall back to preferred_output semantic matching
-            let ws_id = saved_ws.or_else(|| {
-                self.workspaces
-                    .iter()
-                    .find(|ws| {
-                        ws.active_output.is_none()
-                            && !assignments.iter().any(|(wid, _)| *wid == ws.id)
-                            && find_preferred_output(&ws.preferred_output, &self.outputs)
-                                == Some(output_id)
-                    })
-                    .map(|ws| ws.id)
-            });
-
-            if let Some(ws_id) = ws_id {
-                assignments.push((ws_id, output_id));
+        if !auto_ids.is_empty() {
+            self.workspaces.retain(|w| !w.auto_created);
+            // Re-pack ids so they remain dense (vec index = id).
+            for (i, ws) in self.workspaces.iter_mut().enumerate() {
+                ws.id = WorkspaceId(i);
+            }
+            // Heal focus if it pointed at a dropped workspace.
+            if self.focused_workspace.0 >= self.workspaces.len() {
+                self.focused_workspace = WorkspaceId(0);
             }
         }
+        for ws in &mut self.workspaces {
+            ws.active_output = None;
+        }
 
-        // Phase 1b: Any outputs still unassigned get any remaining unassigned workspace.
-        let assigned_outputs: std::collections::HashSet<OutputId> = assignments
-            .iter()
-            .map(|(_, oid)| *oid)
-            .chain(self.output_workspace.keys().copied())
-            .collect();
-        let still_empty: Vec<OutputId> = self
+        // Build a stable iteration order: outputs sorted by id.
+        let mut output_ids: Vec<OutputId> = self
             .outputs
             .iter()
-            .filter(|o| !o.removed && o.width > 0 && !assigned_outputs.contains(&o.id))
+            .filter(|o| !o.removed && o.width > 0)
             .map(|o| o.id)
             .collect();
+        output_ids.sort_by_key(|o| o.0);
 
-        for &output_id in &still_empty {
+        let mut placed: std::collections::HashSet<WorkspaceId> =
+            std::collections::HashSet::new();
+
+        // Tier 1: monitor memory.
+        for &oid in &output_ids {
+            let key = match self.output(oid).and_then(crate::monitor_memory::monitor_key) {
+                Some(k) => k,
+                None => continue,
+            };
+            let remembered_name = match self.monitor_memory.get(&key) {
+                Some(name) => name.to_owned(),
+                None => continue,
+            };
             let ws_id = self
                 .workspaces
                 .iter()
-                .find(|ws| {
-                    ws.active_output.is_none()
-                        && !assignments.iter().any(|(wid, _)| *wid == ws.id)
-                })
+                .find(|ws| ws.name == remembered_name && !placed.contains(&ws.id))
                 .map(|ws| ws.id);
             if let Some(ws_id) = ws_id {
-                assignments.push((ws_id, output_id));
+                self.assign_workspace_to_output(ws_id, oid);
+                placed.insert(ws_id);
+                log::info!(
+                    "Assigned workspace '{}' to monitor '{key}' (from memory)",
+                    self.workspaces[ws_id.0].name,
+                );
             }
         }
 
-        // Phase 2: Apply assignments.
-        for (ws_id, output_id) in &assignments {
-            if let Some(&old_ws) = self.output_workspace.get(output_id)
-                && let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws)
-            {
-                ws.active_output = None;
+        // Tier 2: preferred-output match. For each output pick the workspace
+        // with the strongest (lowest-rank) preference that resolves to it,
+        // falling back to config order on ties. This ensures a workspace whose
+        // primary preference is a given monitor wins over one that only lists
+        // it as a fallback.
+        for &oid in &output_ids {
+            if self.output_workspace.contains_key(&oid) {
+                continue;
             }
-            self.assign_workspace_to_output(*ws_id, *output_id);
-            let geo = self
-                .output(*output_id)
-                .and_then(output_geometry_key)
-                .unwrap_or_default();
-            log::info!(
-                "Assigned workspace '{}' to output {geo}",
-                self.workspaces[ws_id.0].name
-            );
+            let ws_id = self
+                .workspaces
+                .iter()
+                .filter(|ws| !placed.contains(&ws.id))
+                .filter_map(|ws| {
+                    find_preferred_output_ranked(&ws.preferred_output, &self.outputs)
+                        .filter(|(_, matched)| *matched == oid)
+                        .map(|(rank, _)| (rank, ws.id))
+                })
+                .min_by_key(|(rank, ws_id)| (*rank, ws_id.0))
+                .map(|(_, ws_id)| ws_id);
+            if let Some(ws_id) = ws_id {
+                self.assign_workspace_to_output(ws_id, oid);
+                placed.insert(ws_id);
+                log::info!(
+                    "Assigned workspace '{}' to output {} (from preferred_output)",
+                    self.workspaces[ws_id.0].name,
+                    self.output(oid).and_then(output_geometry_key).unwrap_or_default(),
+                );
+            }
         }
 
-        // Phase 3: Auto-create workspaces for monitors that still have nothing.
+        // Tier 3: any remaining unplaced workspace, config order.
+        for &oid in &output_ids {
+            if self.output_workspace.contains_key(&oid) {
+                continue;
+            }
+            let ws_id = self
+                .workspaces
+                .iter()
+                .find(|ws| !placed.contains(&ws.id))
+                .map(|ws| ws.id);
+            if let Some(ws_id) = ws_id {
+                self.assign_workspace_to_output(ws_id, oid);
+                placed.insert(ws_id);
+                log::info!(
+                    "Assigned workspace '{}' to output {} (fallback)",
+                    self.workspaces[ws_id.0].name,
+                    self.output(oid).and_then(output_geometry_key).unwrap_or_default(),
+                );
+            }
+        }
+
+        // Auto-create workspaces for any outputs we still couldn't fill.
         self.ensure_all_outputs_have_workspace();
 
-        // Signal that the output layout has changed, so the manage cycle
-        // can fire the outputs-changed hook.
+        self.last_connected_keys = connected_keys;
         self.outputs_changed = true;
+    }
+
+    /// Returns true when the set of stable monitor keys differs from the
+    /// snapshot at the last `reassign_outputs` call. Used to suppress
+    /// reassignment thrash when only secondary metadata (scale, transform)
+    /// changes without affecting which physical monitors are connected.
+    pub fn connected_monitor_keys_changed(&self) -> bool {
+        self.connected_monitor_keys() != self.last_connected_keys
     }
 
     /// Create temporary workspaces for any output that has no workspace assigned.
@@ -502,8 +876,20 @@ impl WorkspaceManager {
         }
     }
 
-    /// Switch to a workspace. The workspace appears on its preferred output
-    /// if it has one, otherwise on the currently focused output.
+    /// Switch to a workspace.
+    ///
+    /// If the target is already visible somewhere, just focus it. Otherwise
+    /// pick a monitor for it: walk the workspace's `preferred_output` chain
+    /// against currently-connected outputs and use the first match. If none
+    /// of the preferences are connected, fall back to whichever output the
+    /// currently-focused workspace lives on.
+    ///
+    /// Whichever workspace was previously on the chosen output gets pushed to
+    /// invisible — it isn't deleted, so the user can switch back to it.
+    ///
+    /// This intentionally does not persist monitor memory. Switching a
+    /// workspace during dock hotplug is often just a rescue action while the
+    /// preferred monitor is absent, not a new long-term monitor assignment.
     pub fn switch_workspace(&mut self, target_name: &str) {
         let target_ws = match self.workspaces.iter().find(|w| w.name == target_name) {
             Some(ws) => ws.id,
@@ -513,15 +899,12 @@ impl WorkspaceManager {
             }
         };
 
-        // If target is already visible on some output, just focus it
+        // Already visible -> just focus.
         if self.workspaces[target_ws.0].active_output.is_some() {
             self.focused_workspace = target_ws;
             return;
         }
 
-        // Determine which output to show this workspace on:
-        // 1. Use the workspace's preferred output (semantic match) if available
-        // 2. Otherwise use the currently focused output
         let preferred_output =
             find_preferred_output(&self.workspaces[target_ws.0].preferred_output, &self.outputs);
 
@@ -531,7 +914,7 @@ impl WorkspaceManager {
                 .unwrap_or(OutputId(0))
         });
 
-        // Unassign whatever workspace is currently on that output
+        // Push the existing occupant aside.
         let displaced_ws: Option<WorkspaceId> = self.output_workspace.get(&target_output).copied();
         if let Some(old_ws_id) = displaced_ws
             && let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == old_ws_id)
@@ -539,7 +922,6 @@ impl WorkspaceManager {
             ws.active_output = None;
         }
 
-        // Assign target workspace to that output
         self.assign_workspace_to_output(target_ws, target_output);
         self.focused_workspace = target_ws;
     }
@@ -574,62 +956,6 @@ impl WorkspaceManager {
     /// Get output by id mutably.
     pub fn output_mut(&mut self, id: OutputId) -> Option<&mut Output> {
         self.outputs.iter_mut().find(|o| o.id == id)
-    }
-
-    /// Serialize the current output layout as JSON for the outputs-changed hook.
-    pub fn outputs_json(&self) -> String {
-        let outputs: Vec<serde_json::Value> = self
-            .outputs
-            .iter()
-            .filter(|o| !o.removed && o.width > 0)
-            .map(|o| {
-                serde_json::json!({
-                    "name": o.name.as_deref().unwrap_or("unknown"),
-                    "description": o.description.as_deref().unwrap_or(""),
-                    "x": o.x,
-                    "y": o.y,
-                    "width": o.width,
-                    "height": o.height,
-                    "usable_x": o.usable_x,
-                    "usable_y": o.usable_y,
-                    "usable_width": o.usable_width,
-                    "usable_height": o.usable_height,
-                    "scale": o.fractional_scale(),
-                    "wl_scale": o.scale,
-                    "physical_width": o.physical_width,
-                    "physical_height": o.physical_height,
-                    "transform": o.transform,
-                })
-            })
-            .collect();
-        // Include workspace-to-output assignments so external tools
-        // (e.g. monitor-profiles) can persist them alongside output geometry.
-        let assignments: Vec<serde_json::Value> = self
-            .workspaces
-            .iter()
-            .filter_map(|ws| {
-                let oid = ws.active_output?;
-                let output = self.output(oid)?;
-                let geo = output_geometry_key(output)?;
-                Some(serde_json::json!({
-                    "workspace": ws.name,
-                    "output_geometry": geo,
-                }))
-            })
-            .collect();
-
-        let focused = self
-            .workspaces
-            .get(self.focused_workspace.0)
-            .map(|ws| ws.name.as_str())
-            .unwrap_or("");
-
-        serde_json::json!({
-            "outputs": outputs,
-            "workspace_assignments": assignments,
-            "focused_workspace": focused,
-        })
-        .to_string()
     }
 
     /// Get all workspaces that are currently visible (assigned to an output).
