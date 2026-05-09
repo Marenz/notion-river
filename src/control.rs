@@ -407,6 +407,31 @@ fn handle_client(
                 .push(ControlRequest::ForgetMonitors);
             let _ = stream.write_all(b"OK\n");
         }
+        "set-log-level" => {
+            // Usage: set-log-level <level>
+            // Levels: error, warn, info, debug, trace
+            let Some(level_str) = parts.next() else {
+                let _ = stream.write_all(b"ERR usage: set-log-level <error|warn|info|debug|trace>\n");
+                return;
+            };
+            match level_str.to_lowercase().as_str() {
+                "error" => log::set_max_level(log::LevelFilter::Error),
+                "warn" => log::set_max_level(log::LevelFilter::Warn),
+                "info" => log::set_max_level(log::LevelFilter::Info),
+                "debug" => log::set_max_level(log::LevelFilter::Debug),
+                "trace" => log::set_max_level(log::LevelFilter::Trace),
+                _ => {
+                    let _ = stream.write_all(b"ERR unknown level, use: error|warn|info|debug|trace\n");
+                    return;
+                }
+            }
+            log::info!("Log level changed to {}", level_str.to_lowercase());
+            let _ = stream.write_all(format!("OK {}\n", level_str.to_lowercase()).as_bytes());
+        }
+        "get-log-level" => {
+            let level = log::max_level();
+            let _ = stream.write_all(format!("{level}\n").as_bytes());
+        }
         _ => {
             let _ = stream.write_all(b"ERR unknown\n");
         }

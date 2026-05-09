@@ -355,6 +355,7 @@ impl WindowManager {
         >,
         qh: &QueueHandle<AppData>,
     ) {
+        let manage_t0 = std::time::Instant::now();
         let prev_focused_frame = self.workspaces.focused_workspace().focused_frame;
 
         self.remove_closed_outputs();
@@ -363,6 +364,7 @@ impl WindowManager {
         self.sync_window_titles();
         self.init_new_windows();
         self.init_new_seats(river_xkb, qh);
+        let t_init = manage_t0.elapsed();
 
         // Check if any keyboard action is pending (before handle_pending_actions consumes it)
         let has_keyboard_action = self
@@ -371,9 +373,13 @@ impl WindowManager {
             .any(|s| !matches!(s.pending_action, Action::None));
 
         self.handle_pending_actions(proxy, river_outputs);
+        let t_actions = manage_t0.elapsed();
         self.handle_control_requests();
+        let t_control = manage_t0.elapsed();
         self.enforce_app_bindings();
+        let t_bindings = manage_t0.elapsed();
         self.apply_window_management(proxy);
+        let t_wm = manage_t0.elapsed();
         self.update_binding_modes();
 
         // Cursor follows focus: only warp when a keyboard action changed focus,
@@ -392,11 +398,24 @@ impl WindowManager {
         if self.workspaces.outputs_changed {
             self.workspaces.outputs_changed = false;
         }
+        let t_profile = manage_t0.elapsed();
+        let t_hook = manage_t0.elapsed();
 
         // Update waybar workspace display via FIFO
         self.ipc.update(&self.workspaces, &self.config.appearance);
+        let t_ipc = manage_t0.elapsed();
         self.control
             .update_snapshot(crate::control::build_snapshot(self));
+
+        let manage_elapsed = manage_t0.elapsed();
+        if manage_elapsed.as_millis() > 100 {
+            log::warn!(
+                "SLOW manage cycle: {:?} (init={:?} actions={:?} control={:?} bindings={:?} wm={:?} profile={:?} hook={:?} ipc={:?})",
+                manage_elapsed, t_init, t_actions, t_control, t_bindings, t_wm, t_profile, t_hook, t_ipc
+            );
+        } else {
+            log::debug!("manage cycle: {:?}", manage_elapsed);
+        }
 
         proxy.manage_finish();
     }
@@ -587,6 +606,7 @@ impl WindowManager {
         viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
         qh: &QueueHandle<AppData>,
     ) {
+        let render_t0 = std::time::Instant::now();
         self.handle_seat_ops();
         self.apply_layout_positions(proxy, shm, compositor, viewporter, qh);
 
@@ -594,6 +614,13 @@ impl WindowManager {
         if let (Some(shm), Some(compositor)) = (shm, compositor) {
             self.update_drag_preview(proxy, shm, compositor, qh);
             self.update_resize_highlight(proxy, shm, compositor, qh);
+        }
+
+        let render_elapsed = render_t0.elapsed();
+        if render_elapsed.as_millis() > 100 {
+            log::warn!("SLOW render cycle: {:?}", render_elapsed);
+        } else {
+            log::debug!("render cycle: {:?}", render_elapsed);
         }
 
         proxy.render_finish();

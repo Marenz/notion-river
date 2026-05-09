@@ -44,7 +44,15 @@ impl std::io::Write for LineFlush {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(e) = run() {
+        log::error!("Fatal: {e}");
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --version / -V before anything else
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -63,12 +71,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .truncate(true)
         .open(log_path);
 
-    let mut builder =
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    // Parse the desired log level from RUST_LOG, defaulting to "info".
+    // We initialize env_logger with "trace" so it never filters anything itself,
+    // then use log::set_max_level() to control the effective level at runtime.
+    // This allows changing the log level via IPC (notion-ctl set-log-level debug).
+    let initial_level = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|s| s.parse::<log::LevelFilter>().ok())
+        .unwrap_or(log::LevelFilter::Info);
+
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(log::LevelFilter::Trace);
     if let Ok(file) = log_target {
         builder.target(env_logger::Target::Pipe(Box::new(LineFlush(file))));
     }
     builder.init();
+    log::set_max_level(initial_level);
 
     log::info!("notion-river starting");
 
