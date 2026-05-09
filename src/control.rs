@@ -27,6 +27,7 @@ pub enum ControlRequest {
     },
     Unbind(String),
     SaveMonitors,
+    ForgetMonitors,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -397,6 +398,13 @@ fn handle_client(
                 .lock()
                 .expect("control pending poisoned")
                 .push(ControlRequest::SaveMonitors);
+            let _ = stream.write_all(b"OK\n");
+        }
+        "forget-monitors" => {
+            pending
+                .lock()
+                .expect("control pending poisoned")
+                .push(ControlRequest::ForgetMonitors);
             let _ = stream.write_all(b"OK\n");
         }
         _ => {

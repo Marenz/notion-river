@@ -151,6 +151,9 @@ pub struct WindowManager {
     /// Set by ControlRequest::SaveMonitors. AppData snapshots live monitor
     /// state into `monitors.profiles` and persists it after the manage cycle.
     pub save_monitors_pending: bool,
+    /// Set by ControlRequest::ForgetMonitors. AppData removes the saved
+    /// profile for the current monitor set after the manage cycle.
+    pub forget_monitors_pending: bool,
 }
 
 /// A window tracked by the WM.
@@ -336,6 +339,7 @@ impl WindowManager {
             hover_surface_id: None,
             hover_surface_x: 0.0,
             save_monitors_pending: false,
+            forget_monitors_pending: false,
         }
     }
 
@@ -521,6 +525,9 @@ impl WindowManager {
                     // snapshot+save in `flush_save_monitors_request` because
                     // `Monitors` lives on AppData, not on WindowManager.
                     self.save_monitors_pending = true;
+                }
+                crate::control::ControlRequest::ForgetMonitors => {
+                    self.forget_monitors_pending = true;
                 }
                 crate::control::ControlRequest::SetFixedDimensions(app_id, dims) => {
                     // Apply to all current bindings for this app

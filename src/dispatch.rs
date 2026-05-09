@@ -51,6 +51,24 @@ impl AppData {
         self.monitors.failed_sets.remove(&set_key);
     }
 
+    /// Forget the saved profile for the current monitor set. After this the
+    /// next Done event with no profile will follow the "stay out of the way"
+    /// path: do not apply, do not save. The user can then configure the
+    /// layout via wdisplays and run `notion-ctl save-monitors`.
+    pub fn flush_forget_monitors_request(&mut self) {
+        let Some(set_key) = self.monitors.last_set_key.clone() else {
+            log::warn!("forget-monitors: no current monitor set known yet; ignored");
+            return;
+        };
+        if self.monitors.profiles.map.remove(&set_key).is_some() {
+            self.monitors.profiles.save();
+            self.monitors.failed_sets.remove(&set_key);
+            log::info!("forget-monitors: removed saved profile for set '{set_key}'");
+        } else {
+            log::info!("forget-monitors: no saved profile for set '{set_key}'");
+        }
+    }
+
     /// Apply a saved profile (`edid -> SavedHead`) to the live heads via
     /// wlr-output-management.
     fn apply_monitor_profile(
@@ -277,6 +295,10 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 if state.wm.save_monitors_pending {
                     state.wm.save_monitors_pending = false;
                     state.flush_save_monitors_request();
+                }
+                if state.wm.forget_monitors_pending {
+                    state.wm.forget_monitors_pending = false;
+                    state.flush_forget_monitors_request();
                 }
             }
             Event::RenderStart => {
@@ -1112,15 +1134,13 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
                         }
                     }
                 } else {
-                    // Case 3: no saved profile for this set. Save current
-                    // live state as the initial profile so subsequent
-                    // appearances of this set are restored to it. After this
-                    // first save we will not overwrite without an explicit
-                    // user save.
-                    if state.monitors.profiles.insert(set_key.clone(), snap) {
-                        state.monitors.profiles.save();
-                        log::info!("First time seeing monitor set '{set_key}'; saved initial profile");
-                    }
+                    // Case 3: no saved profile for this set. Stay out of the
+                    // way: do not apply, do not save. The user configures the
+                    // layout (e.g. via wdisplays) and runs `notion-ctl
+                    // save-monitors` to persist it.
+                    log::info!(
+                        "Monitor set '{set_key}' has no saved profile; not applying. Run 'notion-ctl save-monitors' to persist current live state."
+                    );
                 }
             }
             Event::Finished => {
