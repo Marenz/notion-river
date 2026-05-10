@@ -169,6 +169,9 @@ pub struct ManagedWindow {
     pub identifier: Option<String>,
     pub width: i32,
     pub height: i32,
+    /// Last dimensions proposed to the client via propose_dimensions.
+    pub last_proposed_width: i32,
+    pub last_proposed_height: i32,
     pub new: bool,
     pub closed: bool,
     /// Which frame this window is placed in.
@@ -1365,6 +1368,8 @@ impl ManagedWindow {
             identifier: None,
             width: 0,
             height: 0,
+            last_proposed_width: 0,
+            last_proposed_height: 0,
             new: true,
             closed: false,
             frame_id: None,

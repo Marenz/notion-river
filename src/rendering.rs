@@ -29,27 +29,34 @@ impl WindowManager {
                 if let Some(frame) = ws.root.find_frame(*frame_id) {
                     if let Some(active_win) = frame.active_window() {
                         let wid = active_win.window_id;
-                        if let Some(win) = self.windows.iter().find(|w| w.id == wid) {
-                            let bw = border as i32 * 2;
-                            let tab_h = TAB_BAR_HEIGHT;
-                            // Check for fixed dimensions from app bindings
-                            let frame_idx = ws
-                                .root
-                                .all_frame_ids()
-                                .iter()
-                                .position(|id| *id == *frame_id);
-                            let fixed = frame_idx.and_then(|fi| {
-                                self.app_bindings.fixed_dimensions_for(
-                                    &active_win.app_id,
-                                    &ws.name,
-                                    fi,
-                                )
-                            });
-                            if let Some((fw, fh)) = fixed {
-                                win.proxy.propose_dimensions(fw, fh);
-                            } else {
-                                win.proxy
-                                    .propose_dimensions(rect.width - bw, rect.height - bw - tab_h);
+                        let bw = border as i32 * 2;
+                        let tab_h = TAB_BAR_HEIGHT;
+                        // Check for fixed dimensions from app bindings
+                        let frame_idx = ws
+                            .root
+                            .all_frame_ids()
+                            .iter()
+                            .position(|id| *id == *frame_id);
+                        let fixed = frame_idx.and_then(|fi| {
+                            self.app_bindings.fixed_dimensions_for(
+                                &active_win.app_id,
+                                &ws.name,
+                                fi,
+                            )
+                        });
+                        let (pw, ph) = if let Some((fw, fh)) = fixed {
+                            (fw, fh)
+                        } else {
+                            (rect.width - bw, rect.height - bw - tab_h)
+                        };
+                        // Only propose dimensions when they actually changed —
+                        // avoids triggering client-side resize popups on every
+                        // render cycle (e.g. contour's size_indicator_on_resize).
+                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
+                            if pw != win.last_proposed_width || ph != win.last_proposed_height {
+                                win.proxy.propose_dimensions(pw, ph);
+                                win.last_proposed_width = pw;
+                                win.last_proposed_height = ph;
                             }
                         }
                     }
@@ -89,12 +96,23 @@ impl WindowManager {
                             newly_positioned_float = Some(win.id);
                         }
                     }
-                    win.proxy.propose_dimensions(win.width, win.height);
+                    // Only propose when dimensions changed (avoids resize popups)
+                    if win.width != win.last_proposed_width
+                        || win.height != win.last_proposed_height
+                    {
+                        win.proxy.propose_dimensions(win.width, win.height);
+                        win.last_proposed_width = win.width;
+                        win.last_proposed_height = win.height;
+                    }
                     win.proxy.show();
                 } else {
                     // Client hasn't committed dimensions yet — propose 0,0 to let
                     // the client pick, but don't show until we have real dimensions.
-                    win.proxy.propose_dimensions(0, 0);
+                    if win.last_proposed_width != 0 || win.last_proposed_height != 0 {
+                        win.proxy.propose_dimensions(0, 0);
+                        win.last_proposed_width = 0;
+                        win.last_proposed_height = 0;
+                    }
                 }
             }
         }
