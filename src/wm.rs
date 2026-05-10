@@ -856,12 +856,13 @@ impl WindowManager {
             .collect();
 
         for window in self.windows.iter_mut().filter(|w| w.new) {
+            let title_preview: String = window.title.chars().take(40).collect();
             log::info!(
                 "Placing window '{}' (id={}, identifier={:?}, title='{}')",
                 window.app_id,
                 window.id,
                 window.identifier.as_deref().unwrap_or("none"),
-                &window.title[..window.title.len().min(40)],
+                title_preview,
             );
 
             // Auto-float windows that look like popups/notifications:
