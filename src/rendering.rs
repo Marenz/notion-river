@@ -52,13 +52,12 @@ impl WindowManager {
                         // Only propose dimensions when they actually changed —
                         // avoids triggering client-side resize popups on every
                         // render cycle (e.g. contour's size_indicator_on_resize).
-                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
-                            if pw != win.last_proposed_width || ph != win.last_proposed_height {
+                        if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid)
+                            && (pw != win.last_proposed_width || ph != win.last_proposed_height) {
                                 win.proxy.propose_dimensions(pw, ph);
                                 win.last_proposed_width = pw;
                                 win.last_proposed_height = ph;
                             }
-                        }
                     }
                     // Hide non-active tabs
                     for (i, win_ref) in frame.windows.iter().enumerate() {

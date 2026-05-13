@@ -532,23 +532,21 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
                 state.wm.workspaces.maybe_reassign_outputs();
             }
             Event::Position { x, y } => {
-                if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                    if output.x != x || output.y != y {
+                if let Some(output) = state.wm.workspaces.output_mut(oid)
+                    && (output.x != x || output.y != y) {
                         output.x = x;
                         output.y = y;
                         state.wm.workspaces.outputs_changed = true;
                     }
-                }
             }
             Event::Dimensions { width, height } => {
                 log::info!("Output {oid:?} dimensions: {width}x{height}");
-                if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                    if output.width != width || output.height != height {
+                if let Some(output) = state.wm.workspaces.output_mut(oid)
+                    && (output.width != width || output.height != height) {
                         output.width = width;
                         output.height = height;
                         state.wm.workspaces.outputs_changed = true;
                     }
-                }
                 // Dimensions can be the last piece of metadata to arrive; if so,
                 // this is when reassignment should fire. The maybe_ guard makes
                 // it cheap when the connected set hasn't really changed.
@@ -938,12 +936,11 @@ impl Dispatch<WlOutput, u32> for AppData {
                 };
                 log::info!("wl_output global {} geometry transform: {transform}", data);
                 if let Some(&oid) = state.wl_output_map.get(data) {
-                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                        if output.transform != transform {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid)
+                        && output.transform != transform {
                             output.transform = transform;
                             state.wm.workspaces.outputs_changed = true;
                         }
-                    }
                 } else {
                     state.wl_output_transforms.insert(*data, transform);
                 }
@@ -954,12 +951,11 @@ impl Dispatch<WlOutput, u32> for AppData {
             Event::Scale { factor } => {
                 log::info!("wl_output global {} scale: {factor}", data);
                 if let Some(&oid) = state.wl_output_map.get(data) {
-                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                        if output.scale != factor {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid)
+                        && output.scale != factor {
                             output.scale = factor;
                             state.wm.workspaces.outputs_changed = true;
                         }
-                    }
                 } else {
                     state.wl_output_scales.insert(*data, factor);
                 }
@@ -970,13 +966,12 @@ impl Dispatch<WlOutput, u32> for AppData {
             Event::Mode { width, height, .. } => {
                 log::info!("wl_output global {} mode: {width}x{height}", data);
                 if let Some(&oid) = state.wl_output_map.get(data) {
-                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
-                        if output.physical_width != width || output.physical_height != height {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid)
+                        && (output.physical_width != width || output.physical_height != height) {
                             output.physical_width = width;
                             output.physical_height = height;
                             state.wm.workspaces.outputs_changed = true;
                         }
-                    }
                 } else {
                     state.wl_output_modes.insert(*data, (width, height));
                 }
@@ -987,11 +982,10 @@ impl Dispatch<WlOutput, u32> for AppData {
             Event::Description { description } => {
                 log::info!("wl_output global {} description: {description}", data);
                 state.wl_output_descriptions.insert(*data, description.clone());
-                if let Some(&oid) = state.wl_output_map.get(data) {
-                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
+                if let Some(&oid) = state.wl_output_map.get(data)
+                    && let Some(output) = state.wm.workspaces.output_mut(oid) {
                         output.description = Some(description);
                     }
-                }
             }
             _ => {}
         }
