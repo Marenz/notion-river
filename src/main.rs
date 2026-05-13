@@ -126,6 +126,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         libc::sigemptyset(&mut action.sa_mask);
         libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
         libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+
+        // Auto-reap spawned children (terminals, launchers, etc.) so they
+        // don't become zombies. We never wait() on Child handles from
+        // spawn_command — SA_NOCLDWAIT tells the kernel to discard exit
+        // status automatically.
+        let mut chld: libc::sigaction = std::mem::zeroed();
+        chld.sa_sigaction = libc::SIG_DFL;
+        chld.sa_flags = libc::SA_NOCLDWAIT;
+        libc::sigemptyset(&mut chld.sa_mask);
+        libc::sigaction(libc::SIGCHLD, &chld, std::ptr::null_mut());
     }
     extern "C" fn signal_handler(_sig: libc::c_int) {
         SHUTDOWN.store(true, Ordering::Relaxed);
