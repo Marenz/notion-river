@@ -24,6 +24,11 @@ use crate::protocol::zwlr_output_manager_v1::ZwlrOutputManagerV1;
 
 const FILE: &str = "monitors.json";
 
+/// Maximum number of consecutive `failed`/`cancelled` events tolerated for a
+/// given set key before we stop retrying. Boot-time DRM races typically
+/// resolve after 1 retry; a couple more covers slow displays.
+pub const MAX_APPLY_RETRIES: u32 = 4;
+
 fn store_path() -> PathBuf {
     let dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("~/.config"))
@@ -189,10 +194,13 @@ pub struct Monitors {
     /// for the compositor to ack it. The next `Done` for this set key will
     /// be treated as confirmation, not as a user edit.
     pub pending_self_apply: Option<SetKey>,
-    /// Set keys for which we already gave up applying this session (because
-    /// the previous apply ended in `failed`/`cancelled`). Cleared on
-    /// success.
-    pub failed_sets: std::collections::HashSet<SetKey>,
+    /// Number of consecutive `failed`/`cancelled` applies per set key.
+    /// Used to bound retry attempts: each new `Done` with divergence will
+    /// retry until the counter reaches `MAX_APPLY_RETRIES`. Cleared on
+    /// success. Boot-time DRM races (link training, EDID negotiation) often
+    /// reject the first apply but accept a retry milliseconds later, so we
+    /// must retry rather than give up forever on the first failure.
+    pub apply_failures: std::collections::HashMap<SetKey, u32>,
     /// Live head state, indexed by `wl_object` id of the head proxy.
     pub heads: HashMap<u64, HeadLive>,
     /// Live mode state, indexed by `wl_object` id of the mode proxy.

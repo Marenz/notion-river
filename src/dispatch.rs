@@ -48,7 +48,7 @@ impl AppData {
         // Whatever we just saved is, by definition, what the user wants;
         // clear any failure state so future divergence will trigger reapply
         // again.
-        self.monitors.failed_sets.remove(&set_key);
+        self.monitors.apply_failures.remove(&set_key);
     }
 
     /// Forget the saved profile for the current monitor set. After this the
@@ -62,10 +62,49 @@ impl AppData {
         };
         if self.monitors.profiles.map.remove(&set_key).is_some() {
             self.monitors.profiles.save();
-            self.monitors.failed_sets.remove(&set_key);
+            self.monitors.apply_failures.remove(&set_key);
             log::info!("forget-monitors: removed saved profile for set '{set_key}'");
         } else {
             log::info!("forget-monitors: no saved profile for set '{set_key}'");
+        }
+    }
+
+    /// Shared handler for both `Failed` and `Cancelled` events on an
+    /// output-configuration. Increments the per-set failure counter and,
+    /// if budget remains, immediately retries the apply with the current
+    /// saved profile. Boot-time DRM races (link training, EDID negotiation)
+    /// often reject the first apply but accept a retry milliseconds later,
+    /// so this gives us automatic recovery without waiting for an external
+    /// nudge.
+    fn handle_apply_failure(&mut self, kind: &'static str, qh: &QueueHandle<Self>) {
+        let Some(key) = self.monitors.pending_self_apply.take() else {
+            log::warn!("Output config {kind} (no pending self-apply tracked)");
+            return;
+        };
+        let n = self.monitors.apply_failures.entry(key.clone()).or_insert(0);
+        *n += 1;
+        let attempts = *n;
+        let max = crate::monitors::MAX_APPLY_RETRIES;
+        if attempts >= max {
+            log::warn!(
+                "Output config {kind} for set '{key}' (attempt {attempts}/{max}); giving up until next topology change or restart"
+            );
+            return;
+        }
+        let Some(target) = self.monitors.profiles.get(&key).cloned() else {
+            log::warn!(
+                "Output config {kind} for set '{key}' (attempt {attempts}/{max}); no saved profile to retry"
+            );
+            return;
+        };
+        log::warn!(
+            "Output config {kind} for set '{key}' (attempt {attempts}/{max}); retrying immediately"
+        );
+        self.monitors.pending_self_apply = Some(key);
+        if let Err(err) = self.apply_monitor_profile(&target, qh) {
+            self.monitors.apply_in_flight = false;
+            self.monitors.pending_self_apply = None;
+            log::warn!("Retry apply failed to dispatch: {err}");
         }
     }
 
@@ -146,6 +185,17 @@ impl AppData {
             if let Some(transform) = output_transform(target_head.transform) {
                 head_config.set_transform(transform);
             }
+            log::info!(
+                "apply head '{}': mode {}x{} pos ({},{}) scale {:.3} transform {} mode_proxy_found={}",
+                key.as_deref().unwrap_or("<unknown>"),
+                target_head.mode_w,
+                target_head.mode_h,
+                target_head.position_x,
+                target_head.position_y,
+                target_head.scale.max(0.1),
+                target_head.transform,
+                mode_proxy.is_some(),
+            );
         }
 
         config.apply();
@@ -1109,21 +1159,32 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
                 if let Some(target) = state.monitors.profiles.get(&set_key).cloned() {
                     if target == snap {
                         // Live already matches saved. Nothing to do.
-                        state.monitors.failed_sets.remove(&set_key);
-                    } else if state.monitors.failed_sets.contains(&set_key) {
-                        // We already tried and the compositor rejected.
-                        // Don't loop. The user can fix monitors.json and
-                        // restart, or the next topology change clears this.
+                        state.monitors.apply_failures.remove(&set_key);
                     } else {
-                        state.monitors.pending_self_apply = Some(set_key.clone());
-                        match state.apply_monitor_profile(&target, qh) {
-                            Ok(()) => log::info!(
-                                "Set '{set_key}' diverged from saved profile; reapplying"
-                            ),
-                            Err(err) => {
-                                state.monitors.apply_in_flight = false;
-                                state.monitors.pending_self_apply = None;
-                                log::warn!("Failed to apply saved profile: {err}");
+                        let attempts = state
+                            .monitors
+                            .apply_failures
+                            .get(&set_key)
+                            .copied()
+                            .unwrap_or(0);
+                        if attempts >= crate::monitors::MAX_APPLY_RETRIES {
+                            // Exhausted retry budget. Stop trying. The user
+                            // can fix monitors.json and restart, or the
+                            // topology can change to clear this. The
+                            // counter persists in-memory only.
+                        } else {
+                            state.monitors.pending_self_apply = Some(set_key.clone());
+                            match state.apply_monitor_profile(&target, qh) {
+                                Ok(()) => log::info!(
+                                    "Set '{set_key}' diverged from saved profile; reapplying (attempt {}/{})",
+                                    attempts + 1,
+                                    crate::monitors::MAX_APPLY_RETRIES
+                                ),
+                                Err(err) => {
+                                    state.monitors.apply_in_flight = false;
+                                    state.monitors.pending_self_apply = None;
+                                    log::warn!("Failed to apply saved profile: {err}");
+                                }
                             }
                         }
                     }
@@ -1266,7 +1327,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, ()> for AppData {
         event: <ZwlrOutputConfigurationV1 as Proxy>::Event,
         _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         use crate::protocol::zwlr_output_configuration_v1::Event;
         state.monitors.apply_in_flight = false;
@@ -1274,29 +1335,12 @@ impl Dispatch<ZwlrOutputConfigurationV1, ()> for AppData {
             Event::Succeeded => {
                 log::info!("Output config applied successfully");
                 if let Some(key) = &state.monitors.pending_self_apply {
-                    state.monitors.failed_sets.remove(key);
-                }
-            }
-            Event::Failed => {
-                if let Some(key) = state.monitors.pending_self_apply.clone() {
-                    log::warn!("Output config failed for set '{key}'; will not retry this session");
-                    state.monitors.failed_sets.insert(key);
-                } else {
-                    log::warn!("Output config failed");
+                    state.monitors.apply_failures.remove(key);
                 }
                 state.monitors.pending_self_apply = None;
             }
-            Event::Cancelled => {
-                if let Some(key) = state.monitors.pending_self_apply.clone() {
-                    log::warn!(
-                        "Output config cancelled for set '{key}'; will not retry this session"
-                    );
-                    state.monitors.failed_sets.insert(key);
-                } else {
-                    log::warn!("Output config cancelled");
-                }
-                state.monitors.pending_self_apply = None;
-            }
+            Event::Failed => state.handle_apply_failure("failed", qh),
+            Event::Cancelled => state.handle_apply_failure("cancelled", qh),
         }
         proxy.destroy();
     }
