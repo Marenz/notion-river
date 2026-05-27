@@ -421,6 +421,20 @@ mod tests {
             // Don't touch the user's real monitor-memory.json from tests.
             wm.workspaces.monitor_memory = crate::monitor_memory::MonitorMemory::default();
 
+            // WindowManager::new loads saved layout state from the user's
+            // ~/.config/notion-river/notion-river-state.json which makes
+            // tests non-deterministic. Reset workspaces to clean configured
+            // layouts so frame ids and split orientation are predictable.
+            for ws in &mut wm.workspaces.workspaces {
+                ws.root = match ws.name.as_str() {
+                    "main" => crate::layout::SplitNode::vsplit(0.5),
+                    _ => crate::layout::SplitNode::single_frame(),
+                };
+                ws.focused_frame = ws.root.first_frame_id();
+            }
+            wm.saved_active_tabs.clear();
+            wm.saved_state = None;
+
             // Add outputs
             let mut output1 = crate::workspace::Output::new(OutputId(1));
             output1.name = Some("HDMI-A-1".to_string());
@@ -507,12 +521,15 @@ mod tests {
                 });
 
             wm.workspaces.workspaces[0].focused_frame = frame1;
+            wm.workspaces.focused_workspace = WorkspaceId(0);
 
-            // Pointer moves to right half (frame2, empty), no hovered window
+            // Pointer moves into the bottom half (frame2, empty); make_test_wm
+            // resets to a clean vsplit, so y=900 lands clearly in the second
+            // frame and avoids the half_gap overlap around the boundary.
             let inputs = vec![FocusInput {
                 hovered_window_id: None,
-                pointer_x: 1500,
-                pointer_y: 540,
+                pointer_x: 960,
+                pointer_y: 900,
             }];
 
             let expected = crate::focus::compute_focus(&inputs[0], &wm.workspaces, 4, 0)
