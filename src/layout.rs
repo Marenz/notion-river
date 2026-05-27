@@ -76,6 +76,12 @@ pub struct Frame {
     pub windows: Vec<WindowRef>,
     /// Index of the currently visible tab.
     pub active_tab: usize,
+    /// MRU stack of window ids that were focused in this frame.
+    /// Most-recently-focused at the back. Used so that when a tab closes,
+    /// focus returns to the previously focused tab instead of the next index.
+    /// Not serialized; rebuilt at runtime.
+    #[allow(dead_code)] // accessed via methods, field is private to module conceptually
+    focus_history: Vec<u64>,
 }
 
 /// A reference to a window stored in a frame.
@@ -94,6 +100,7 @@ impl Frame {
             name: None,
             windows: Vec::new(),
             active_tab: 0,
+            focus_history: Vec::new(),
         }
     }
 
@@ -104,6 +111,7 @@ impl Frame {
             name: Some(name.to_string()),
             windows: Vec::new(),
             active_tab: 0,
+            focus_history: Vec::new(),
         }
     }
 
@@ -123,44 +131,90 @@ impl Frame {
 
     /// Add a window to this frame. It becomes the active tab.
     pub fn add_window(&mut self, win: WindowRef) {
+        let id = win.window_id;
         self.windows.push(win);
         self.active_tab = self.windows.len() - 1;
+        self.touch_focus(id);
     }
 
     /// Add a window without changing the active tab (used during restore).
     pub fn add_window_quiet(&mut self, win: WindowRef) {
+        let id = win.window_id;
         self.windows.push(win);
+        // Seed history in add order. Restore calls set_active_tab afterwards
+        // which will bump the real active tab to the back (most-recent).
+        self.focus_history.retain(|x| *x != id);
+        self.focus_history.push(id);
     }
 
     /// Remove a window by id. Returns the removed WindowRef if found.
-    /// Adjusts active_tab to stay in bounds.
+    /// Picks the next active tab from the focus history (most-recently focused
+    /// remaining window in this frame), falling back to clamping the index.
     pub fn remove_window(&mut self, window_id: u64) -> Option<WindowRef> {
-        if let Some(pos) = self.windows.iter().position(|w| w.window_id == window_id) {
-            let removed = self.windows.remove(pos);
-            if self.active_tab >= self.windows.len() && !self.windows.is_empty() {
-                self.active_tab = self.windows.len() - 1;
-            }
-            Some(removed)
-        } else {
-            None
+        let pos = self.windows.iter().position(|w| w.window_id == window_id)?;
+        let removed = self.windows.remove(pos);
+        self.focus_history.retain(|id| *id != window_id);
+
+        if self.windows.is_empty() {
+            self.active_tab = 0;
+            return Some(removed);
         }
+
+        // Was the removed tab the active one? If so, pick from history.
+        if pos == self.active_tab {
+            if let Some(prev_id) = self.focus_history.last().copied()
+                && let Some(idx) = self.windows.iter().position(|w| w.window_id == prev_id)
+            {
+                self.active_tab = idx;
+            } else {
+                // No history match — fall back to clamping.
+                if self.active_tab >= self.windows.len() {
+                    self.active_tab = self.windows.len() - 1;
+                }
+            }
+        } else {
+            // Removed a non-active tab; shift active_tab if it was past pos.
+            if pos < self.active_tab {
+                self.active_tab -= 1;
+            }
+        }
+        Some(removed)
+    }
+
+    /// Set the active tab by index and record it in the focus history.
+    /// No-op if the index is out of range.
+    pub fn set_active_tab(&mut self, idx: usize) {
+        if idx >= self.windows.len() {
+            return;
+        }
+        self.active_tab = idx;
+        let id = self.windows[idx].window_id;
+        self.touch_focus(id);
+    }
+
+    /// Move `id` to the back of the focus history (most recent).
+    fn touch_focus(&mut self, id: u64) {
+        self.focus_history.retain(|x| *x != id);
+        self.focus_history.push(id);
     }
 
     /// Cycle to the next tab.
     pub fn next_tab(&mut self) {
         if !self.windows.is_empty() {
-            self.active_tab = (self.active_tab + 1) % self.windows.len();
+            let next = (self.active_tab + 1) % self.windows.len();
+            self.set_active_tab(next);
         }
     }
 
     /// Cycle to the previous tab.
     pub fn prev_tab(&mut self) {
         if !self.windows.is_empty() {
-            self.active_tab = if self.active_tab == 0 {
+            let prev = if self.active_tab == 0 {
                 self.windows.len() - 1
             } else {
                 self.active_tab - 1
             };
+            self.set_active_tab(prev);
         }
     }
 
@@ -1183,6 +1237,80 @@ mod tests {
         frame.remove_window(2);
         assert_eq!(frame.active_tab, 0);
         assert_eq!(frame.window_count(), 1);
+    }
+
+    fn mkwin(id: u64) -> WindowRef {
+        WindowRef {
+            window_id: id,
+            app_id: format!("app{id}"),
+            title: format!("w{id}"),
+        }
+    }
+
+    #[test]
+    fn test_close_returns_to_previously_focused_tab() {
+        // Scenario: open A, B, C (focus C). Switch back to A. Open D from A
+        // (D becomes active). Close D -> should return to A, not B/C.
+        let mut frame = Frame::new();
+        frame.add_window(mkwin(1)); // A active
+        frame.add_window(mkwin(2)); // B active
+        frame.add_window(mkwin(3)); // C active
+        frame.set_active_tab(0); // back to A
+        frame.add_window(mkwin(4)); // D opened, becomes active
+        assert_eq!(frame.windows[frame.active_tab].window_id, 4);
+
+        frame.remove_window(4);
+        // Should return to A (previously focused), not next index (B).
+        assert_eq!(frame.windows[frame.active_tab].window_id, 1);
+    }
+
+    #[test]
+    fn test_close_walks_mru_chain() {
+        // Open A, B, C, D in order. Focus sequence: A, C, B, D.
+        // Close D -> B. Close B -> C. Close C -> A.
+        let mut frame = Frame::new();
+        frame.add_window(mkwin(1));
+        frame.add_window(mkwin(2));
+        frame.add_window(mkwin(3));
+        frame.add_window(mkwin(4));
+        frame.set_active_tab(0); // A
+        frame.set_active_tab(2); // C
+        frame.set_active_tab(1); // B
+        frame.set_active_tab(3); // D
+
+        frame.remove_window(4);
+        assert_eq!(frame.windows[frame.active_tab].window_id, 2); // B
+        frame.remove_window(2);
+        assert_eq!(frame.windows[frame.active_tab].window_id, 3); // C
+        frame.remove_window(3);
+        assert_eq!(frame.windows[frame.active_tab].window_id, 1); // A
+    }
+
+    #[test]
+    fn test_close_non_active_tab_keeps_active() {
+        let mut frame = Frame::new();
+        frame.add_window(mkwin(1));
+        frame.add_window(mkwin(2));
+        frame.add_window(mkwin(3));
+        // active = C (index 2)
+        frame.remove_window(1); // remove A (non-active)
+        // C should still be active, now at index 1.
+        assert_eq!(frame.windows[frame.active_tab].window_id, 3);
+        assert_eq!(frame.active_tab, 1);
+    }
+
+    #[test]
+    fn test_close_falls_back_when_history_empty() {
+        // Manually constructed frame with no history seeding (simulating restore).
+        let mut frame = Frame::new();
+        frame.add_window_quiet(mkwin(1));
+        frame.add_window_quiet(mkwin(2));
+        frame.add_window_quiet(mkwin(3));
+        frame.active_tab = 1; // direct field write — bypasses history
+        // History contains 1,2,3 from add_window_quiet seeding.
+        // Removing the active tab: history.last() = 3, so we go to 3.
+        frame.remove_window(2);
+        assert_eq!(frame.windows[frame.active_tab].window_id, 3);
     }
 
     #[test]

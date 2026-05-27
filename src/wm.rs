@@ -591,7 +591,7 @@ impl WindowManager {
                 if let Some(frame) = ws.root.find_frame_mut(frame_id)
                     && let Some(tab_idx) = frame.windows.iter().position(|w| w.window_id == id)
                 {
-                    frame.active_tab = tab_idx;
+                    frame.set_active_tab(tab_idx);
                 }
                 ws.focused_frame = frame_id;
             }
@@ -986,7 +986,7 @@ impl WindowManager {
                     if let Some(frame) = ws.root.find_frame_mut(*frame_id)
                         && *active_tab < frame.windows.len()
                     {
-                        frame.active_tab = *active_tab;
+                        frame.set_active_tab(*active_tab);
                     }
                 }
             }
@@ -1203,7 +1203,7 @@ impl WindowManager {
                                     && let Some(tab_idx) =
                                         frame.windows.iter().position(|w| w.window_id == *wid)
                                 {
-                                    frame.active_tab = tab_idx;
+                                    frame.set_active_tab(tab_idx);
                                 }
                                 ws.focused_frame = frame_id;
                                 self.workspaces.focused_workspace = ws.id;

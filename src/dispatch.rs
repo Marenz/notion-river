@@ -275,7 +275,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                             && tab_index < frame.windows.len()
                         {
                             log::info!("Tab click: frame {:?} tab {}", frame_id, tab_index);
-                            frame.active_tab = tab_index;
+                            frame.set_active_tab(tab_index);
                         }
                         ws.focused_frame = frame_id;
                         state.wm.workspaces.focused_workspace = ws.id;
