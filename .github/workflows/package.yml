@@ -76,19 +76,30 @@ jobs:
 
           cp target/release/notion-river "${PKGDIR}/usr/bin/"
           cp target/release/notion-ctl "${PKGDIR}/usr/bin/"
+          # rofi launcher + window switcher on PATH (referenced by config.toml)
+          cp config-examples/notion-rofi-launch "${PKGDIR}/usr/bin/"
+          cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/bin/"
           # Include River binary if built
           test -f vendor/river/zig-out/bin/river && cp vendor/river/zig-out/bin/river "${PKGDIR}/usr/bin/" || true
           cp notion-river.desktop "${PKGDIR}/usr/share/wayland-sessions/"
           cp config-examples/start-river "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/river-init "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/autostart "${PKGDIR}/usr/share/notion-river/examples/"
+          cp config-examples/notion-rofi-launch "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"
           mkdir -p "${PKGDIR}/usr/share/notion-river/examples/waybar"
           cp config-examples/waybar/config.jsonc "${PKGDIR}/usr/share/notion-river/examples/waybar/"
           cp config-examples/waybar/style.css "${PKGDIR}/usr/share/notion-river/examples/waybar/"
+          mkdir -p "${PKGDIR}/usr/share/notion-river/examples/rofi"
+          cp config-examples/rofi/config.rasi "${PKGDIR}/usr/share/notion-river/examples/rofi/"
+          cp config-examples/rofi/catppuccin-mocha.rasi "${PKGDIR}/usr/share/notion-river/examples/rofi/"
 
           chmod 755 "${PKGDIR}/usr/bin/"*
-          chmod 755 "${PKGDIR}/usr/share/notion-river/examples/"*
+          find "${PKGDIR}/usr/share/notion-river/examples" -type f -exec chmod 644 {} +
+          chmod 755 "${PKGDIR}/usr/share/notion-river/examples/start-river" \
+                    "${PKGDIR}/usr/share/notion-river/examples/river-init" \
+                    "${PKGDIR}/usr/share/notion-river/examples/notion-rofi-launch" \
+                    "${PKGDIR}/usr/share/notion-river/examples/notion-rofi-window-mode"
 
           INSTALLED_SIZE=$(du -sk "${PKGDIR}" | cut -f1)
 
