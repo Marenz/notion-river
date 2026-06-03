@@ -119,9 +119,10 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `~/.local/bin/start-river` — Session launcher (XKB layout, env vars, exec river)
 - `~/.config/waybar/config.jsonc` — Waybar modules (per-workspace event-driven modules via `notion-ctl subscribe-workspace <name>`, CPU, MEM, DSK, VOL, NET, tray)
 - `~/.config/waybar/style.css` — Waybar styling (Catppuccin Mocha, per-monitor colors, floating pill modules, rounded corners)
-- `~/.config/rofi/config.rasi` — Rofi config (Catppuccin Mocha Mauve theme)
-- `~/.config/rofi/catppuccin-mocha.rasi` — Rofi theme file
-- `~/.local/bin/notion-rofi-windows` — rofi window switcher using `notion-ctl`
+- `~/.config/rofi/config.rasi` — Rofi config (Catppuccin Mocha Mauve theme); example shipped at `config-examples/rofi/config.rasi`, installed to `/usr/share/notion-river/examples/rofi/`
+- `~/.config/rofi/catppuccin-mocha.rasi` — Rofi theme file (example shipped alongside `config.rasi`)
+- `notion-rofi-launch` — packaged launcher (`config-examples/notion-rofi-launch`, installed to `/usr/bin`). Resolves the focused output via `notion-ctl list-workspaces` and runs `rofi -show windows -m <output>` with `windows:notion-rofi-window-mode,drun,run`. Set as `commands.launcher = ["notion-rofi-launch"]`.
+- `notion-rofi-window-mode` — packaged rofi script-modi (`config-examples/notion-rofi-window-mode`, installed to `/usr/bin`). Lists open windows (`id\t[ws] marker title (app)`) and focuses the picked one via `notion-ctl focus-window`. Has an `XDG_RUNTIME_DIR` fallback for rofi's sanitized env.
 - `/usr/share/wayland-sessions/river-custom.desktop` — lightdm session entry
 
 ## Common Pitfalls
@@ -137,6 +138,9 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - Fractional scale 1.5x is the best fractional scale — it's a clean fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or integer scales (1x, 2x).
 - XWayland support requires rebuilding River with `-Dxwayland=true`. Some apps (Steam) need it.
 - Monitor configuration is **fully owned by notion-river**. Do **not** install kanshi or any external `wlr-output-management` client. Two clients fighting over the same protocol = the layout-loss-on-replug bug we spent over a month chasing. Use `wdisplays` for one-shot interactive edits — notion-river observes the result and saves it.
+- **rofi on the wrong monitor**: notion-river advertises every output at position `0,0` to layer-shell clients, so rofi-wayland cannot place itself by coordinates and always opens on the same output. Target the focused output **by name** with `-m <output>` (rofi-wayland accepts output names). `notion-rofi-launch` resolves it from `notion-ctl list-workspaces`. Negative `-m` indices (`-1` focused-monitor etc.) do not reliably follow notion-river focus.
+- **rofi window switcher does not jump**: rofi-wayland's `combi` mode swallows the script-modi selection callback, so a window picked from a combi view never gets focused. Use separate modi (`windows:...,drun,run`) instead of `-combi-modi`. The built-in `window` modi is X11-only (it warns `compositor does not support wlr-foreign-toplevel-management`), which is why the `notion-rofi-window-mode` script-modi exists.
+- **`commands.launcher` is read once at startup** (`window_actions.rs` clones `self.config.commands.launcher`), not hot-reloaded. After editing the launcher line, restart notion-river (`Super+Shift+R`) for it to take effect.
 
 ## HiDPI / Scaling Deep Dive
 

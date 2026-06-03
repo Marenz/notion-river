@@ -1,0 +1,119 @@
+/* Catppuccin Mocha Mauve — rofi theme for notion-river */
+
+* {
+    bg:           #1e1e2eee;
+    bg-alt:       #313244;
+    bg-selected:  #45475a;
+    fg:           #cdd6f4;
+    fg-alt:       #bac2de;
+    mauve:        #cba6f7;
+    teal:         #94e2d5;
+    red:          #f38ba8;
+    surface0:     #313244;
+    overlay0:     #6c7086;
+
+    background-color: transparent;
+    text-color:       @fg;
+
+    margin:  0;
+    padding: 0;
+    spacing: 0;
+}
+
+window {
+    location:         center;
+    width:            600px;
+    border-radius:    16px;
+    background-color: @bg;
+    border:           2px solid;
+    border-color:     @mauve;
+}
+
+mainbox {
+    padding: 12px;
+}
+
+inputbar {
+    background-color: @bg-alt;
+    border-radius:    10px;
+    padding:          10px 16px;
+    spacing:          10px;
+    children:         [ prompt, entry ];
+}
+
+prompt {
+    text-color: @mauve;
+}
+
+entry {
+    placeholder:       "Search...";
+    placeholder-color: @overlay0;
+}
+
+message {
+    margin:           8px 0 0 0;
+    border-radius:    10px;
+    background-color: @bg-alt;
+    padding:          8px 12px;
+}
+
+textbox {
+    text-color: @fg-alt;
+}
+
+listview {
+    lines:       8;
+    columns:     1;
+    fixed-height: true;
+    margin:       8px 0 0 0;
+    spacing:      4px;
+}
+
+element {
+    padding:       8px 12px;
+    border-radius: 8px;
+    spacing:       12px;
+}
+
+element normal.normal {
+    background-color: transparent;
+    text-color:       @fg;
+}
+
+element normal.urgent {
+    background-color: transparent;
+    text-color:       @red;
+}
+
+element normal.active {
+    background-color: transparent;
+    text-color:       @mauve;
+}
+
+element selected.normal {
+    background-color: @mauve;
+    text-color:       #1e1e2e;
+}
+
+element selected.urgent {
+    background-color: @red;
+    text-color:       #1e1e2e;
+}
+
+element selected.active {
+    background-color: @mauve;
+    text-color:       #1e1e2e;
+}
+
+element alternate.normal {
+    background-color: transparent;
+    text-color:       @fg;
+}
+
+element-icon {
+    size: 24px;
+}
+
+element-text {
+    vertical-align:   0.5;
+}

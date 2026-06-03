@@ -46,6 +46,7 @@ install -Dm755 target/release/notion-river %{buildroot}%{_bindir}/notion-river
 install -Dm755 target/release/notion-ctl %{buildroot}%{_bindir}/notion-ctl
 install -Dm755 notion-river-session %{buildroot}%{_bindir}/notion-river-session
 install -Dm755 config-examples/notion-rofi-window-mode %{buildroot}%{_bindir}/notion-rofi-window-mode
+install -Dm755 config-examples/notion-rofi-launch %{buildroot}%{_bindir}/notion-rofi-launch
 install -Dm755 config-examples/notion-volume %{buildroot}%{_bindir}/notion-volume
 install -Dm755 config-examples/notion-cycle-workspace %{buildroot}%{_bindir}/notion-cycle-workspace
 # Include River if built
@@ -59,6 +60,9 @@ install -Dm644 config.example.toml %{buildroot}%{_datadir}/notion-river/examples
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples/waybar
 install -Dm644 config-examples/waybar/config.jsonc %{buildroot}%{_datadir}/notion-river/examples/waybar/config.jsonc
 install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-river/examples/waybar/style.css
+install -dm755 %{buildroot}%{_datadir}/notion-river/examples/rofi
+install -Dm644 config-examples/rofi/config.rasi %{buildroot}%{_datadir}/notion-river/examples/rofi/config.rasi
+install -Dm644 config-examples/rofi/catppuccin-mocha.rasi %{buildroot}%{_datadir}/notion-river/examples/rofi/catppuccin-mocha.rasi
 
 %files
 %license LICENSE
@@ -67,6 +71,7 @@ install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-r
 %{_bindir}/notion-ctl
 %{_bindir}/notion-river-session
 %{_bindir}/notion-rofi-window-mode
+%{_bindir}/notion-rofi-launch
 %{_bindir}/notion-volume
 %{_bindir}/notion-cycle-workspace
 %ghost %{_bindir}/river

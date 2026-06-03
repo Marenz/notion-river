@@ -1,5 +1,17 @@
 #!/bin/sh
+# rofi script-modi: list open windows and focus the selected one.
+#
+# When invoked with no argument, prints one entry per open window in the form
+#   <id>\t[workspace] <marker> <title> (<app_id>)
+# so it can be matched by title or app_id (e.g. typing "keepass" finds the
+# running KeePassXC window). When rofi calls it back with the chosen entry as
+# $1, the leading numeric id is extracted and focused via notion-ctl.
 set -eu
+
+# notion-ctl locates its IPC socket via XDG_RUNTIME_DIR; rofi may launch the
+# modi with a sanitized environment, so provide a sensible fallback.
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
 
 if [ "$#" -gt 0 ]; then
     selected="$1"

@@ -18,7 +18,10 @@ border_width = 2
 
 [commands]
 terminal = "contour"
-launcher = ["rofi", "-show", "combi"]
+# notion-rofi-launch opens rofi on the focused output with the window switcher
+# first (type an app name to jump to a running window) plus drun/run launchers.
+# A plain ["rofi", "-show", "drun"] also works if you don't want window jumping.
+launcher = ["notion-rofi-launch"]
 
 # Choose keybinding profile: "i3_neo" or "notion"
 active_profile = "i3_neo"

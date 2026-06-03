@@ -13,7 +13,9 @@ border_width = 2
 
 [commands]
 terminal = "foot"
-launcher = ["rofi", "-show", "combi", "-modi", "drun,run,windows:/home/marenz/.local/bin/notion-rofi-window-mode", "-combi-modi", "windows,drun,run", "-drun-match-fields", "name,generic,exec,categories,keywords,comment"]
+# Opens rofi on the focused output, window switcher first (type an app name
+# like "keepass" to jump to a running window), with drun/run as adjacent modi.
+launcher = ["notion-rofi-launch"]
 
 [appearance]
 active_border = "#9b8ec4"

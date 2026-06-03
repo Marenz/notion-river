@@ -1,0 +1,39 @@
+#!/bin/sh
+# Launch rofi on the currently focused output, defaulting to the window
+# switcher with app launchers as adjacent modi.
+#
+# Two notion-river / rofi-wayland specifics this works around:
+#
+#  1. combi mode swallows the script-modi selection callback on rofi-wayland,
+#     so a window picked from a "combi" view never gets focused. We therefore
+#     use separate modi (windows,drun,run) with "windows" shown first instead
+#     of -combi-modi.
+#
+#  2. notion-river advertises every output at position 0,0 to layer-shell
+#     clients, so rofi cannot place itself by coordinates. It can target an
+#     output by name, so we resolve the focused output from notion-ctl and
+#     pass it via -m.
+set -eu
+
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
+
+out=$(notion-ctl list-workspaces | python3 -c '
+import json, sys
+try:
+    wss = json.load(sys.stdin)
+except Exception:
+    wss = []
+for w in wss:
+    if w.get("focused") and w.get("output"):
+        print(w["output"])
+        break
+')
+
+set -- rofi -show windows \
+    -modi "windows:notion-rofi-window-mode,drun,run" \
+    -drun-match-fields "name,generic,exec,categories,keywords,comment"
+
+[ -n "$out" ] && set -- "$@" -m "$out"
+
+exec "$@"

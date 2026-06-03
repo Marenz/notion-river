@@ -126,6 +126,41 @@ while true; do
 done
 ```
 
+### Rofi launcher & window switcher
+
+The `launcher` command in `config.toml` is what `spawn_launcher` (e.g. `Super+o`)
+runs. The packaged `notion-rofi-launch` helper opens rofi **on the focused
+output** with the window switcher first, so typing an app name (e.g. `keepass`)
+jumps straight to a running window — even on another workspace — and falls
+through to `drun`/`run` launchers for everything else.
+
+```toml
+[commands]
+launcher = ["notion-rofi-launch"]
+```
+
+Two details it handles that a plain `rofi -show combi` does not:
+
+- It targets the focused output by name (`-m <output>`); notion-river reports
+  every output at position `0,0` to layer-shell clients, so coordinate-based
+  placement does not work and rofi would otherwise always open on the same
+  monitor.
+- It uses separate modi (`windows,drun,run`) rather than `-combi-modi`, because
+  combi mode swallows the script-modi selection callback on rofi-wayland and the
+  picked window would never get focused.
+
+Both `notion-rofi-launch` and `notion-rofi-window-mode` are installed to
+`PATH` by the packages. The optional Catppuccin Mocha rofi theme is shipped
+under the examples directory:
+
+```sh
+mkdir -p ~/.config/rofi
+cp /usr/share/notion-river/examples/rofi/*.rasi ~/.config/rofi/
+```
+
+Edit `~/.config/rofi/config.rasi` to set your preferred `font` and
+`icon-theme`.
+
 ### Monitor configuration
 
 notion-river owns monitor layout (mode, position, scale, transform) directly

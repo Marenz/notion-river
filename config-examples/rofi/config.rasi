@@ -1,0 +1,20 @@
+/*
+ * Example rofi config for notion-river.
+ *
+ * Copy this directory to ~/.config/rofi/ :
+ *   mkdir -p ~/.config/rofi
+ *   cp /usr/share/notion-river/examples/rofi/* ~/.config/rofi/
+ *
+ * Adjust "font" and "icon-theme" below to taste; "JetBrains Mono" + "Papirus"
+ * look great if installed, otherwise any installed monospace font / icon theme
+ * works (e.g. "DejaVu Sans Mono" and "Adwaita").
+ */
+configuration {
+    font: "DejaVu Sans Mono 13";
+    show-icons: true;
+    icon-theme: "Adwaita";
+    drun-display-format: "{name}";
+    disable-history: false;
+}
+
+@theme "catppuccin-mocha"
