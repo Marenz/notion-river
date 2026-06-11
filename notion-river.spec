@@ -46,6 +46,7 @@ install -Dm755 target/release/notion-river %{buildroot}%{_bindir}/notion-river
 install -Dm755 target/release/notion-ctl %{buildroot}%{_bindir}/notion-ctl
 install -Dm755 notion-river-session %{buildroot}%{_bindir}/notion-river-session
 install -Dm755 config-examples/notion-rofi-window-mode %{buildroot}%{_bindir}/notion-rofi-window-mode
+install -Dm755 config-examples/notion-rofi-window-switch %{buildroot}%{_bindir}/notion-rofi-window-switch
 install -Dm755 config-examples/notion-rofi-launch %{buildroot}%{_bindir}/notion-rofi-launch
 install -Dm755 config-examples/notion-volume %{buildroot}%{_bindir}/notion-volume
 install -Dm755 config-examples/notion-cycle-workspace %{buildroot}%{_bindir}/notion-cycle-workspace
@@ -71,6 +72,7 @@ install -Dm644 config-examples/rofi/catppuccin-mocha.rasi %{buildroot}%{_datadir
 %{_bindir}/notion-ctl
 %{_bindir}/notion-river-session
 %{_bindir}/notion-rofi-window-mode
+%{_bindir}/notion-rofi-window-switch
 %{_bindir}/notion-rofi-launch
 %{_bindir}/notion-volume
 %{_bindir}/notion-cycle-workspace

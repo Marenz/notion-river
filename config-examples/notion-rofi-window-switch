@@ -1,0 +1,32 @@
+#!/bin/sh
+# Open the rofi window switcher on the currently focused output.
+#
+# Wraps the notion-rofi-window-mode script-modi (list + focus windows via
+# notion-ctl) in a rofi invocation pinned to the focused output. notion-river
+# advertises every output at position 0,0 to layer-shell clients, so rofi
+# cannot place itself by coordinates; it accepts an output name, which we
+# resolve from notion-ctl.
+set -eu
+
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
+
+out=$(notion-ctl list-workspaces | python3 -c '
+import json, sys
+try:
+    wss = json.load(sys.stdin)
+except Exception:
+    wss = []
+for w in wss:
+    if w.get("focused") and w.get("output"):
+        print(w["output"])
+        break
+')
+
+set -- rofi -show window-switch \
+    -modi "window-switch:notion-rofi-window-mode" \
+    -p window
+
+[ -n "$out" ] && set -- "$@" -m "$out"
+
+exec "$@"

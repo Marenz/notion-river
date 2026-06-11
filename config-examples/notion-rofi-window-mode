@@ -1,27 +1,57 @@
 #!/bin/sh
-# rofi script-modi: list open windows and focus the selected one.
+# rofi script-modi: one "switch or launch" menu for notion-river.
 #
-# When invoked with no argument, prints one entry per open window in the form
-#   <id>\t[workspace] <marker> <title> (<app_id>)
-# so it can be matched by title or app_id (e.g. typing "keepass" finds the
-# running KeePassXC window). When rofi calls it back with the chosen entry as
-# $1, the leading numeric id is extracted and focused via notion-ctl.
+# Lists open windows AND launchable desktop applications in a single list, so
+# one search box matches both: type a name to jump to a running window, or to
+# launch the app if it is not open.
+#
+# This replaces rofi's combi mode, which on rofi-wayland would normally merge
+# the window and drun modi — but River exposes no foreign-toplevel-management
+# protocol, so rofi's built-in window modi cannot enumerate or focus windows.
+# Routing window focus through notion-ctl is the supported path, and combi
+# also swallows the script-modi selection callback, so a single custom modi
+# that owns the whole list is the clean solution.
+#
+# Each row carries a hidden action in rofi's "info" field (emitted as
+# \0info\x1f<action>), returned in $ROFI_INFO on selection:
+#   win:<window-id>     focus that window via notion-ctl
+#   app:<desktop-id>    launch that application via gtk-launch
+#
+# Launching is delegated to gtk-launch (the canonical desktop launcher), which
+# correctly handles Exec field codes, Terminal=true and DBusActivatable apps.
+# We do not parse Exec ourselves.
 set -eu
 
-# notion-ctl locates its IPC socket via XDG_RUNTIME_DIR; rofi may launch the
-# modi with a sanitized environment, so provide a sensible fallback.
+# notion-ctl finds its IPC socket via XDG_RUNTIME_DIR; rofi may launch this
+# script with a sanitized environment, so provide a fallback.
 : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
 export XDG_RUNTIME_DIR
 
 if [ "$#" -gt 0 ]; then
-    selected="$1"
-    id=${selected%%	*}
-    [ -n "$id" ] && notion-ctl focus-window "$id" >/dev/null 2>&1 || true
+    action="${ROFI_INFO:-}"
+    case "$action" in
+        win:*)
+            id=${action#win:}
+            [ -n "$id" ] && notion-ctl focus-window "$id" >/dev/null 2>&1 || true
+            ;;
+        app:*)
+            id=${action#app:}
+            [ -n "$id" ] && setsid gtk-launch "$id" >/dev/null 2>&1 &
+            ;;
+    esac
     exit 0
 fi
 
-notion-ctl list-windows | python3 -c '
-import json, sys
+notion-ctl list-windows 2>/dev/null | python3 -c '
+import json, os, sys
+
+US = "\x1f"
+NUL = "\0"
+
+def row(label, info):
+    sys.stdout.write(f"{label}{NUL}info{US}{info}\n")
+
+# --- open windows ---
 try:
     windows = json.load(sys.stdin)
 except Exception:
@@ -31,6 +61,52 @@ for w in windows:
     app = w.get("app_id") or ""
     ws = w.get("workspace") or "?"
     marker = "*" if w.get("focused") else " "
-    wid = w["id"]
-    print(f"{wid}\t[{ws}] {marker} {title} ({app})")
+    wid = w.get("id")
+    row(f"\u2192 [{ws}] {marker} {title} ({app})", f"win:{wid}")
+
+# --- launchable applications (.desktop), keyed by desktop ID for gtk-launch ---
+data_home = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+data_dirs = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+roots = [os.path.join(b, "applications") for b in [data_home, *data_dirs.split(":")] if b]
+
+seen = set()
+apps = []
+for base in roots:
+    if not os.path.isdir(base):
+        continue
+    for dirpath, _, files in os.walk(base):
+        for fn in files:
+            if not fn.endswith(".desktop"):
+                continue
+            # desktop ID is path relative to the applications dir, "/" -> "-"
+            rel = os.path.relpath(os.path.join(dirpath, fn), base)
+            desktop_id = rel[:-len(".desktop")].replace("/", "-")
+            if desktop_id in seen:
+                continue
+            seen.add(desktop_id)
+            name = None
+            skip = False
+            in_main = False
+            try:
+                with open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.rstrip("\n")
+                        if line.startswith("["):
+                            in_main = line == "[Desktop Entry]"
+                            continue
+                        if not in_main:
+                            continue
+                        if line.startswith("Name=") and name is None:
+                            name = line[5:]
+                        elif line.startswith("NoDisplay=") and line[10:].strip().lower() == "true":
+                            skip = True
+                        elif line.startswith("Hidden=") and line[7:].strip().lower() == "true":
+                            skip = True
+            except OSError:
+                continue
+            if name and not skip:
+                apps.append((name, desktop_id))
+
+for name, desktop_id in sorted(apps, key=lambda x: x[0].lower()):
+    row(name, f"app:{desktop_id}")
 '

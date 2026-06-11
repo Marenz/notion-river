@@ -511,6 +511,9 @@ impl WindowManager {
                 crate::control::ControlRequest::FocusWindow(id) => {
                     self.focus_window_by_id(id);
                 }
+                crate::control::ControlRequest::FocusWindowByIdentifier(identifier) => {
+                    self.focus_window_by_identifier(&identifier);
+                }
                 crate::control::ControlRequest::SwitchWorkspace(name) => {
                     self.workspaces.switch_workspace(&name);
                 }
@@ -571,6 +574,19 @@ impl WindowManager {
                 }
             }
         }
+    }
+
+    fn focus_window_by_identifier(&mut self, identifier: &str) {
+        let Some(id) = self
+            .windows
+            .iter()
+            .find(|w| w.identifier.as_deref() == Some(identifier))
+            .map(|w| w.id)
+        else {
+            log::warn!("focus-window-by-identifier: no window with identifier {identifier}");
+            return;
+        };
+        self.focus_window_by_id(id);
     }
 
     fn focus_window_by_id(&mut self, id: u64) {

@@ -128,30 +128,33 @@ done
 
 ### Rofi launcher & window switcher
 
-The `launcher` command in `config.toml` is what `spawn_launcher` (e.g. `Super+o`)
-runs. The packaged `notion-rofi-launch` helper opens rofi **on the focused
-output** with the window switcher first, so typing an app name (e.g. `keepass`)
-jumps straight to a running window — even on another workspace — and falls
-through to `drun`/`run` launchers for everything else.
+There are two separate rofi commands, each on its own keybinding:
 
 ```toml
 [commands]
+# Super+o — application launcher (rofi drun)
 launcher = ["notion-rofi-launch"]
+# Super+Shift+o — window switcher (list + focus open windows via notion-ctl)
+window_switcher = ["notion-rofi-window-switch"]
 ```
 
-Two details it handles that a plain `rofi -show combi` does not:
+- **`notion-rofi-launch`** runs `rofi -show drun` for launching applications.
+  rofi's built-in `drun` handles desktop entries correctly (Exec field codes,
+  `Terminal=`, DBusActivatable), so we do not reimplement launching.
+- **`notion-rofi-window-switch`** lists open windows and focuses the chosen one
+  via `notion-ctl focus-window`, switching workspaces if the window is hidden.
+  River exposes no foreign-toplevel-management protocol to clients, so generic
+  switchers like `rofi -show window` cannot enumerate or focus windows; routing
+  through `notion-ctl` works *with* notion-river's focus model instead.
 
-- It targets the focused output by name (`-m <output>`); notion-river reports
-  every output at position `0,0` to layer-shell clients, so coordinate-based
-  placement does not work and rofi would otherwise always open on the same
-  monitor.
-- It uses separate modi (`windows,drun,run`) rather than `-combi-modi`, because
-  combi mode swallows the script-modi selection callback on rofi-wayland and the
-  picked window would never get focused.
+Both wrappers target the focused output by name (`-m <output>`): notion-river
+reports every output at position `0,0` to layer-shell clients, so coordinate
+placement does not work and rofi would otherwise always open on the same
+monitor.
 
-Both `notion-rofi-launch` and `notion-rofi-window-mode` are installed to
-`PATH` by the packages. The optional Catppuccin Mocha rofi theme is shipped
-under the examples directory:
+The window switcher and its `notion-rofi-window-mode` script-modi, the launcher,
+and `notion-ctl` are all installed to `PATH` by the packages. The optional
+Catppuccin Mocha rofi theme is shipped under the examples directory:
 
 ```sh
 mkdir -p ~/.config/rofi

@@ -78,6 +78,7 @@ jobs:
           cp target/release/notion-ctl "${PKGDIR}/usr/bin/"
           # rofi launcher + window switcher on PATH (referenced by config.toml)
           cp config-examples/notion-rofi-launch "${PKGDIR}/usr/bin/"
+          cp config-examples/notion-rofi-window-switch "${PKGDIR}/usr/bin/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/bin/"
           # Include River binary if built
           test -f vendor/river/zig-out/bin/river && cp vendor/river/zig-out/bin/river "${PKGDIR}/usr/bin/" || true
@@ -86,6 +87,7 @@ jobs:
           cp config-examples/river-init "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/autostart "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-launch "${PKGDIR}/usr/share/notion-river/examples/"
+          cp config-examples/notion-rofi-window-switch "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"
           mkdir -p "${PKGDIR}/usr/share/notion-river/examples/waybar"
           cp config-examples/waybar/config.jsonc "${PKGDIR}/usr/share/notion-river/examples/waybar/"
@@ -99,6 +101,7 @@ jobs:
           chmod 755 "${PKGDIR}/usr/share/notion-river/examples/start-river" \
                     "${PKGDIR}/usr/share/notion-river/examples/river-init" \
                     "${PKGDIR}/usr/share/notion-river/examples/notion-rofi-launch" \
+                    "${PKGDIR}/usr/share/notion-river/examples/notion-rofi-window-switch" \
                     "${PKGDIR}/usr/share/notion-river/examples/notion-rofi-window-mode"
 
           INSTALLED_SIZE=$(du -sk "${PKGDIR}" | cut -f1)

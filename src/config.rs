@@ -63,6 +63,7 @@ pub struct GeneralConfig {
 pub struct CommandsConfig {
     pub terminal: String,
     pub launcher: Vec<String>,
+    pub window_switcher: Vec<String>,
 }
 
 /// Output specifier for workspace assignment.
@@ -365,7 +366,8 @@ impl Default for CommandsConfig {
     fn default() -> Self {
         Self {
             terminal: "contour".to_string(),
-            launcher: vec!["rofi".to_string(), "-show".to_string(), "combi".to_string()],
+            launcher: vec!["rofi".to_string(), "-show".to_string(), "drun".to_string()],
+            window_switcher: vec!["notion-rofi-window-switch".to_string()],
         }
     }
 }

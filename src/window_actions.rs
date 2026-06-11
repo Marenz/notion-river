@@ -369,6 +369,12 @@ impl WindowManager {
                 spawn_command(&refs);
             }
 
+            Action::SpawnWindowSwitcher => {
+                let args: Vec<String> = self.config.commands.window_switcher.clone();
+                let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                spawn_command(&refs);
+            }
+
             Action::Spawn(args) => {
                 let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                 spawn_command(&refs);

@@ -115,13 +115,7 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super", "space", "spawn_terminal", &[]);
     bind(&mut b, "super", "c", "close", &[]);
     bind(&mut b, "super", "o", "spawn_launcher", &[]);
-    bind(
-        &mut b,
-        "super+shift",
-        "o",
-        "spawn",
-        &["notion-rofi-windows"],
-    );
+    bind(&mut b, "super+shift", "o", "spawn_window_switcher", &[]);
     bind(&mut b, "super", "Return", "toggle_fullscreen", &[]);
 
     // ── Focus (Neo: i/a/l/e) ──
@@ -310,13 +304,7 @@ pub fn builtin_notion_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super", "Return", "spawn_terminal", &[]);
     bind(&mut b, "super", "c", "close", &[]);
     bind(&mut b, "super", "p", "spawn_launcher", &[]);
-    bind(
-        &mut b,
-        "super+shift",
-        "p",
-        "spawn",
-        &["notion-rofi-windows"],
-    );
+    bind(&mut b, "super+shift", "p", "spawn_window_switcher", &[]);
     bind(&mut b, "super", "f", "toggle_fullscreen", &[]);
 
     // ── Focus (Vim: h/j/k/l) ──

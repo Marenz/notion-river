@@ -17,6 +17,7 @@ fn socket_path() -> PathBuf {
 #[derive(Debug, Clone)]
 pub enum ControlRequest {
     FocusWindow(u64),
+    FocusWindowByIdentifier(String),
     SwitchWorkspace(String),
     SetFixedDimensions(String, Option<(i32, i32)>),
     Bind {
@@ -37,6 +38,7 @@ pub struct WindowInfo {
     pub frame_id: u64,
     pub title: String,
     pub app_id: String,
+    pub identifier: Option<String>,
     pub focused: bool,
     pub x: i32,
     pub y: i32,
@@ -296,6 +298,17 @@ fn handle_client(
                 }
             }
         }
+        "focus-window-by-identifier" => {
+            let Some(identifier) = parts.next() else {
+                let _ = stream.write_all(b"ERR missing identifier\n");
+                return;
+            };
+            pending
+                .lock()
+                .expect("control pending poisoned")
+                .push(ControlRequest::FocusWindowByIdentifier(identifier.to_string()));
+            let _ = stream.write_all(b"OK\n");
+        }
         "switch-workspace" => {
             let name = parts.collect::<Vec<_>>().join(" ");
             if name.is_empty() {
@@ -534,6 +547,14 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
     let focused_frame = wm.workspaces.workspaces[focused_ws.0].focused_frame;
     let gap = wm.config.general.gap as i32;
 
+    // Map window id -> stable River identifier (used by rofi's ext-foreign-
+    // toplevel-list window switcher to focus via focus-window-by-identifier).
+    let identifiers: std::collections::HashMap<u64, String> = wm
+        .windows
+        .iter()
+        .filter_map(|w| w.identifier.clone().map(|id| (w.id, id)))
+        .collect();
+
     for ws in &wm.workspaces.workspaces {
         let ws_name = ws.name.clone();
 
@@ -562,6 +583,7 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
                         frame_id: frame_id.0,
                         title: win.title.clone(),
                         app_id: win.app_id.clone(),
+                        identifier: identifiers.get(&win.window_id).cloned(),
                         focused: ws.id == focused_ws
                             && frame_id == focused_frame
                             && frame

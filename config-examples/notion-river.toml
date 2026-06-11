@@ -13,9 +13,11 @@ border_width = 2
 
 [commands]
 terminal = "foot"
-# Opens rofi on the focused output, window switcher first (type an app name
-# like "keepass" to jump to a running window), with drun/run as adjacent modi.
+# Application launcher (Super+o): rofi drun on the focused output.
 launcher = ["notion-rofi-launch"]
+# Window switcher (Super+Shift+o): lists open windows and focuses the pick via
+# notion-ctl, switching workspaces if needed. Type a title or app_id to filter.
+window_switcher = ["notion-rofi-window-switch"]
 
 [appearance]
 active_border = "#9b8ec4"

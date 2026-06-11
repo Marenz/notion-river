@@ -12,7 +12,7 @@ fn socket_path() -> PathBuf {
 
 fn usage() {
     eprintln!(
-        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl subscribe-workspaces\n  notion-ctl subscribe-workspace <name>\n  notion-ctl subscribe-output <output-name>\n  notion-ctl focus-window <id>\n  notion-ctl switch-workspace <name>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>\n  notion-ctl save-monitors\n  notion-ctl forget-monitors"
+        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl subscribe-workspaces\n  notion-ctl subscribe-workspace <name>\n  notion-ctl subscribe-output <output-name>\n  notion-ctl focus-window <id>\n  notion-ctl focus-window-by-identifier <identifier>\n  notion-ctl switch-workspace <name>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>\n  notion-ctl save-monitors\n  notion-ctl forget-monitors"
     );
 }
 
@@ -51,6 +51,13 @@ fn main() {
                 std::process::exit(2);
             }
             format!("focus-window {}", args[1])
+        }
+        "focus-window-by-identifier" => {
+            if args.len() != 2 {
+                usage();
+                std::process::exit(2);
+            }
+            format!("focus-window-by-identifier {}", args[1])
         }
         "switch-workspace" => {
             if args.len() < 2 {
