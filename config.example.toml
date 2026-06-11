@@ -18,13 +18,16 @@ border_width = 2
 
 [commands]
 terminal = "contour"
-# Application launcher (Super+o). notion-rofi-launch runs rofi drun on the
-# focused output. A plain ["rofi", "-show", "drun"] works too.
+# Unified switch-or-launch (Super+o). notion-rofi-launch opens rofi combi
+# (window + drun) on the focused output: type a name to jump to a running
+# window or launch the app. Needs a rofi build with ext-foreign-toplevel-list
+# window enumeration + window-activate-command (set in rofi config.rasi to
+# "notion-ctl focus-window-by-identifier {identifier}"). On stock rofi it
+# degrades to a plain app launcher; ["rofi", "-show", "drun"] works too.
 launcher = ["notion-rofi-launch"]
-# Window switcher (Super+Shift+o). notion-rofi-window-switch lists open windows
-# and focuses the chosen one via notion-ctl (switching workspaces if needed).
-# River has no foreign-toplevel protocol, so generic rofi -show window cannot
-# enumerate or focus windows; this goes through notion-ctl instead.
+# Fallback window switcher (Super+Shift+o) for stock rofi builds:
+# script-modi that lists open windows + apps and focuses picks via notion-ctl
+# (switching workspaces if needed).
 window_switcher = ["notion-rofi-window-switch"]
 
 # Choose keybinding profile: "i3_neo" or "notion"

@@ -15,6 +15,11 @@ configuration {
     icon-theme: "Adwaita";
     drun-display-format: "{name}";
     disable-history: false;
+    /* Used by notion-rofi-launch (combi window+drun): River's
+     * ext-foreign-toplevel-list protocol is list-only, so window focus is
+     * delegated to notion-ctl. Requires a rofi build supporting this option;
+     * stock rofi-wayland ignores it. */
+    window-activate-command: "notion-ctl focus-window-by-identifier {identifier}";
 }
 
 @theme "catppuccin-mocha"

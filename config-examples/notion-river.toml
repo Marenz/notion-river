@@ -13,10 +13,12 @@ border_width = 2
 
 [commands]
 terminal = "foot"
-# Application launcher (Super+o): rofi drun on the focused output.
+# Unified switch-or-launch (Super+o): rofi combi (window + drun) on the
+# focused output. Needs a rofi build with ext-foreign-toplevel-list window
+# enumeration + window-activate-command (see rofi config.rasi example).
 launcher = ["notion-rofi-launch"]
-# Window switcher (Super+Shift+o): lists open windows and focuses the pick via
-# notion-ctl, switching workspaces if needed. Type a title or app_id to filter.
+# Fallback window switcher (Super+Shift+o) for stock rofi: lists open windows
+# and focuses the pick via notion-ctl, switching workspaces if needed.
 window_switcher = ["notion-rofi-window-switch"]
 
 [appearance]
