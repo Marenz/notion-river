@@ -64,6 +64,7 @@ install -Dm644 config-examples/waybar/style.css %{buildroot}%{_datadir}/notion-r
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples/rofi
 install -Dm644 config-examples/rofi/config.rasi %{buildroot}%{_datadir}/notion-river/examples/rofi/config.rasi
 install -Dm644 config-examples/rofi/catppuccin-mocha.rasi %{buildroot}%{_datadir}/notion-river/examples/rofi/catppuccin-mocha.rasi
+install -Dm644 completions/notion-ctl.fish %{buildroot}%{_datadir}/fish/vendor_completions.d/notion-ctl.fish
 
 %files
 %license LICENSE
@@ -79,6 +80,7 @@ install -Dm644 config-examples/rofi/catppuccin-mocha.rasi %{buildroot}%{_datadir
 %ghost %{_bindir}/river
 %{_datadir}/wayland-sessions/notion-river.desktop
 %{_datadir}/notion-river/
+%{_datadir}/fish/vendor_completions.d/notion-ctl.fish
 
 %changelog
 * Sun Mar 29 2026 Marenz <marenz@users.noreply.github.com> - 0.5.1-1

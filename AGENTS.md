@@ -125,6 +125,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `notion-rofi-window-switch` — packaged window switcher wrapper (`config-examples/notion-rofi-window-switch`, installed to `/usr/bin`). Runs `rofi -show window-switch -m <output>` using the `notion-rofi-window-mode` script-modi. Set as `commands.window_switcher = ["notion-rofi-window-switch"]` (bound to `Super+Shift+o` / `Super+Shift+p`). The `SpawnWindowSwitcher` action (`spawn_window_switcher` / `window_switcher`) runs `commands.window_switcher`.
 - `notion-rofi-window-mode` — packaged rofi script-modi (`config-examples/notion-rofi-window-mode`, installed to `/usr/bin`). Lists open windows (`id\t[ws] marker title (app)`) and focuses the picked one via `notion-ctl focus-window` (switches workspaces if hidden). Pure switcher, no app launching. Has an `XDG_RUNTIME_DIR` fallback for rofi's sanitized env.
 - `/usr/share/wayland-sessions/river-custom.desktop` — lightdm session entry
+- `completions/notion-ctl.fish` — fish shell completions for `notion-ctl` (dynamic workspace/window/app_id completion via the control socket; jq optional for richer descriptions). Installed to `/usr/share/fish/vendor_completions.d/` by the packages; copy to `~/.config/fish/completions/` for local installs.
 
 ## Common Pitfalls
 

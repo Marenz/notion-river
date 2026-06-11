@@ -23,6 +23,7 @@ override_dh_auto_install:
 	install -Dm755 config-examples/notion-rofi-launch $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/notion-rofi-launch
 	install -Dm644 config-examples/rofi/config.rasi $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/rofi/config.rasi
 	install -Dm644 config-examples/rofi/catppuccin-mocha.rasi $(CURDIR)/debian/notion-river/usr/share/notion-river/examples/rofi/catppuccin-mocha.rasi
+	install -Dm644 completions/notion-ctl.fish $(CURDIR)/debian/notion-river/usr/share/fish/vendor_completions.d/notion-ctl.fish
 
 override_dh_auto_test:
 	cargo test --release --locked

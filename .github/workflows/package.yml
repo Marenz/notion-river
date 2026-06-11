@@ -95,6 +95,8 @@ jobs:
           mkdir -p "${PKGDIR}/usr/share/notion-river/examples/rofi"
           cp config-examples/rofi/config.rasi "${PKGDIR}/usr/share/notion-river/examples/rofi/"
           cp config-examples/rofi/catppuccin-mocha.rasi "${PKGDIR}/usr/share/notion-river/examples/rofi/"
+          mkdir -p "${PKGDIR}/usr/share/fish/vendor_completions.d"
+          cp completions/notion-ctl.fish "${PKGDIR}/usr/share/fish/vendor_completions.d/"
 
           chmod 755 "${PKGDIR}/usr/bin/"*
           find "${PKGDIR}/usr/share/notion-river/examples" -type f -exec chmod 644 {} +

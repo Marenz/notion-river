@@ -44,6 +44,7 @@ install -Dm644 notion-river.desktop %{buildroot}%{_datadir}/wayland-sessions/not
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples
 install -Dm755 config-examples/start-river %{buildroot}%{_datadir}/notion-river/examples/start-river
 install -Dm755 config-examples/notion-rofi-window-mode %{buildroot}%{_datadir}/notion-river/examples/notion-rofi-window-mode
+install -Dm644 completions/notion-ctl.fish %{buildroot}%{_datadir}/fish/vendor_completions.d/notion-ctl.fish
 
 %files
 %license LICENSE
@@ -52,6 +53,7 @@ install -Dm755 config-examples/notion-rofi-window-mode %{buildroot}%{_datadir}/n
 %{_bindir}/notion-ctl
 %{_datadir}/wayland-sessions/notion-river.desktop
 %{_datadir}/notion-river/
+%{_datadir}/fish/vendor_completions.d/notion-ctl.fish
 
 %changelog
 * Wed Mar 18 2026 Marenz <marenz@users.noreply.github.com> - 0.1.0-1
