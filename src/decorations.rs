@@ -104,9 +104,9 @@ impl DecorationManager {
 
         // Compute a simple hash to avoid unnecessary redraws
         let content_hash = compute_hash(frame, is_focused_frame, width)
-            ^ (buffer_scale as u64 * 0x9e3779b9)
+            ^ (buffer_scale as u64).wrapping_mul(0x9e3779b9)
             ^ bound_tabs_hash(bound_tabs)
-            ^ (hovered_tab.unwrap_or(usize::MAX) as u64 * 0x6c62272e);
+            ^ (hovered_tab.unwrap_or(usize::MAX) as u64).wrapping_mul(0x6c62272e);
 
         let surface_to_window = &mut self.surface_to_window;
         let dec = self.decorations.entry(window_id).or_insert_with(|| {
