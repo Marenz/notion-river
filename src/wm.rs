@@ -948,6 +948,21 @@ impl WindowManager {
                 .app_bindings
                 .find_target(&window.app_id, &self.workspaces);
 
+            // Track whether placement came from an app binding (vs. restore or
+            // default). Bound apps launching onto a hidden workspace should
+            // auto-switch so the user actually sees them — otherwise a window
+            // silently lands at 0x0 on an off-screen workspace and the only
+            // way to find it is `notion-ctl focus-window-by-identifier`.
+            // Restores are exempt (they preserve the user's last on-screen
+            // view at startup); the default branch targets the focused
+            // workspace which is already visible.
+            let from_binding = restored.is_none()
+                && matches!(
+                    &binding_target,
+                    crate::app_bindings::FindTargetResult::Target(_, _)
+                        | crate::app_bindings::FindTargetResult::AlreadyPlaced(_, _)
+                );
+
             let (target_ws_idx, frame_id) = if let Some((ws_id, fid)) = restored {
                 log::info!(
                     "Restoring window '{}' to workspace '{}' frame {:?}",
@@ -971,6 +986,32 @@ impl WindowManager {
                 let ws_idx = self.workspaces.focused_workspace.0;
                 (ws_idx, self.workspaces.workspaces[ws_idx].focused_frame)
             };
+
+            // Reveal the target workspace if the binding placed this window on
+            // a hidden one. Without this, a bound app launched from the
+            // keyboard/launcher vanishes onto an off-screen workspace — the
+            // window gets 0x0 dimensions and rofi sees it but cannot surface
+            // it (single-instance apps like KeePassXC won't even spawn a new
+            // window to retarget). Switching here mirrors what
+            // `focus-window-by-identifier` does manually.
+            //
+            // The decision is a pure predicate so the policy can be unit-tested
+            // without spinning up Wayland proxies (see
+            // [`should_reveal_bound_workspace`]).
+            if should_reveal_bound_workspace(
+                restored.is_some(),
+                from_binding,
+                self.workspaces.workspaces[target_ws_idx]
+                    .active_output
+                    .is_some(),
+            ) {
+                let ws_name = self.workspaces.workspaces[target_ws_idx].name.clone();
+                log::info!(
+                    "Bound target workspace '{}' is hidden; switching to reveal newly placed window",
+                    ws_name
+                );
+                self.workspaces.switch_workspace(&ws_name);
+            }
 
             if let Some(frame) = self.workspaces.workspaces[target_ws_idx]
                 .root
@@ -1424,5 +1465,42 @@ impl ManagedWindow {
                 self.float_y = area.y + (area.height - win_h) / 2;
             }
         }
+    }
+}
+
+/// Decide whether a newly placed bound window should trigger a workspace
+/// switch to reveal its target frame.
+///
+/// Returns `true` only when *all* of:
+/// - placement came from an app binding (`from_binding`), not a state
+///   restore or the default focused-frame path,
+/// - there is no saved-state restore taking precedence,
+/// - the target workspace is currently hidden (no active output).
+///
+/// Exposing this as a pure predicate keeps the policy unit-testable without
+/// standing up a live WindowManager + Wayland proxies.
+pub(crate) fn should_reveal_bound_workspace(
+    restored: bool,
+    from_binding: bool,
+    target_visible: bool,
+) -> bool {
+    from_binding && !restored && !target_visible
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_reveal_bound_workspace;
+
+    #[test]
+    fn reveal_bound_only_when_hidden_and_not_restored() {
+        // Bound app landing on a hidden workspace -> reveal it.
+        assert!(should_reveal_bound_workspace(false, true, false));
+        // Already visible: nothing to do.
+        assert!(!should_reveal_bound_workspace(false, true, true));
+        // Restore path: never reveal, even if hidden (preserves startup view).
+        assert!(!should_reveal_bound_workspace(true, true, false));
+        // Default placement (not from a binding): never reveal.
+        assert!(!should_reveal_bound_workspace(false, false, false));
+        assert!(!should_reveal_bound_workspace(false, false, true));
     }
 }
