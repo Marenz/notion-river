@@ -445,15 +445,6 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 {
                     window.floating = true;
                     window.floating_kind = crate::wm::FloatingKind::Dialog;
-                    // If already placed in a frame, remove it (late DimensionsHint)
-                    if let Some(frame_id) = window.frame_id {
-                        for ws in &mut state.wm.workspaces.workspaces {
-                            if let Some(frame) = ws.root.find_frame_mut(frame_id) {
-                                frame.remove_window(window.id);
-                            }
-                        }
-                        window.frame_id = None;
-                    }
                     log::info!(
                         "Auto-floating window {} ({}x{}-{}x{})",
                         window.id,

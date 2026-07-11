@@ -515,7 +515,7 @@ impl WindowManager {
                     self.focus_window_by_identifier(&identifier);
                 }
                 crate::control::ControlRequest::SwitchWorkspace(name) => {
-                    self.workspaces.switch_workspace(&name);
+                    self.switch_workspace_hiding_hidden_windows(&name);
                 }
                 crate::control::ControlRequest::Bind {
                     app_id,
@@ -600,7 +600,7 @@ impl WindowManager {
             };
 
             if !was_visible {
-                self.workspaces.switch_workspace(&ws_name);
+                self.switch_workspace_hiding_hidden_windows(&ws_name);
             }
 
             if let Some(ws) = self.workspaces.workspaces.get_mut(ws_id.0) {
@@ -904,6 +904,10 @@ impl WindowManager {
             // second windows (e.g. Vivaldi's multiple browser windows).
 
             if window.floating {
+                if window.frame_id.is_none() {
+                    let focused_ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+                    window.frame_id = Some(focused_ws.focused_frame);
+                }
                 // River requires propose_dimensions() for new windows to render.
                 let (fw, fh) = if window.width > 0 && window.height > 0 {
                     (window.width, window.height)
@@ -1196,7 +1200,7 @@ impl WindowManager {
                             if ws.active_output.is_none() {
                                 // Hidden workspace — switch to it
                                 let ws_name = ws.name.clone();
-                                self.workspaces.switch_workspace(&ws_name);
+                                self.switch_workspace_hiding_hidden_windows(&ws_name);
                                 log::info!(
                                     "Floating click: switched to workspace '{ws_name}' for parent app '{app_id}'",
                                 );

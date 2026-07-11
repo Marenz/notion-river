@@ -51,28 +51,69 @@ impl WindowManager {
             }
 
             Action::ToggleFullscreen => {
-                let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
-                let frame_id = ws.focused_frame;
-                if let Some(frame) = ws.root.find_frame(frame_id)
-                    && let Some(win_ref) = frame.active_window()
+                let floating_target = self.focused_floating.and_then(|fid| {
+                    self.windows
+                        .iter()
+                        .any(|w| w.id == fid && w.floating && !w.closed)
+                        .then_some(fid)
+                });
+                let tiled_target = || {
+                    let ws = &self.workspaces.workspaces[self.workspaces.focused_workspace.0];
+                    let frame_id = ws.focused_frame;
+                    ws.root
+                        .find_frame(frame_id)
+                        .and_then(|frame| frame.active_window())
+                        .map(|win_ref| win_ref.window_id)
+                };
+
+                if let Some(wid) = floating_target.or_else(tiled_target)
+                    && let Some(win) = self.windows.iter_mut().find(|w| w.id == wid)
                 {
-                    let wid = win_ref.window_id;
-                    if let Some(win) = self.windows.iter_mut().find(|w| w.id == wid) {
-                        if win.fullscreen {
-                            win.proxy.exit_fullscreen();
-                            win.proxy.inform_not_fullscreen();
-                            win.fullscreen = false;
-                            log::info!("Exiting fullscreen for window {wid}");
+                    if win.fullscreen {
+                        win.proxy.exit_fullscreen();
+                        win.proxy.inform_not_fullscreen();
+                        win.fullscreen = false;
+                        log::info!("Exiting fullscreen for window {wid}");
+                    } else {
+                        let output_id = if win.floating {
+                            self.workspaces
+                                .outputs
+                                .iter()
+                                .find(|output| {
+                                    win.float_x >= output.x
+                                        && win.float_x < output.x + output.width
+                                        && win.float_y >= output.y
+                                        && win.float_y < output.y + output.height
+                                })
+                                .map(|output| output.id)
                         } else {
-                            // Find the output proxy for the workspace's output
-                            let output_proxy =
-                                ws.active_output.and_then(|oid| river_outputs.get(&oid.0));
-                            if let Some(output) = output_proxy {
-                                win.proxy.fullscreen(output);
-                                win.proxy.inform_fullscreen();
-                                win.fullscreen = true;
-                                log::info!("Entering fullscreen for window {wid}");
+                            self.workspaces.workspaces[self.workspaces.focused_workspace.0]
+                                .active_output
+                        };
+                        let output_proxy = output_id.and_then(|oid| river_outputs.get(&oid.0));
+                        if let Some(output) = output_proxy {
+                            if win.floating
+                                && let Some(output_info) = output_id.and_then(|oid| self.workspaces.output(oid))
+                            {
+                                win.float_x = output_info.x;
+                                win.float_y = output_info.y;
+                                win.float_positioned = true;
+                                if win.last_proposed_width != output_info.width
+                                    || win.last_proposed_height != output_info.height
+                                {
+                                    win.proxy.propose_dimensions(
+                                        output_info.width,
+                                        output_info.height,
+                                    );
+                                    win.last_proposed_width = output_info.width;
+                                    win.last_proposed_height = output_info.height;
+                                }
+                                win.node.set_position(output_info.x, output_info.y);
                             }
+                            win.proxy.fullscreen(output);
+                            win.proxy.inform_fullscreen();
+                            win.fullscreen = true;
+                            log::info!("Entering fullscreen for window {wid}");
                         }
                     }
                 }
@@ -338,7 +379,7 @@ impl WindowManager {
             }
 
             Action::SwitchWorkspace(name) => {
-                self.workspaces.switch_workspace(&name);
+                self.switch_workspace_hiding_hidden_windows(&name);
             }
 
             Action::EnterResizeMode => {
@@ -395,6 +436,40 @@ impl WindowManager {
                 log::info!("Configuration reloaded");
                 // TODO: re-parse bindings and re-register with seats
             }
+        }
+    }
+
+    pub(crate) fn switch_workspace_hiding_hidden_windows(&mut self, name: &str) {
+        self.workspaces.switch_workspace(name);
+
+        let visible_frame_ids: std::collections::HashSet<FrameId> = self
+            .workspaces
+            .visible_workspaces()
+            .iter()
+            .flat_map(|ws| ws.root.all_frame_ids())
+            .collect();
+
+        for win in &mut self.windows {
+            let visible = win
+                .frame_id
+                .is_some_and(|frame_id| visible_frame_ids.contains(&frame_id));
+            if !visible {
+                if win.fullscreen {
+                    win.proxy.exit_fullscreen();
+                    win.proxy.inform_not_fullscreen();
+                    win.fullscreen = false;
+                }
+                win.proxy.hide();
+            }
+        }
+
+        if self.focused_floating.is_some_and(|fid| {
+            self.windows.iter().find(|w| w.id == fid).is_some_and(|w| {
+                w.frame_id
+                    .is_none_or(|frame_id| !visible_frame_ids.contains(&frame_id))
+            })
+        }) {
+            self.focused_floating = None;
         }
     }
 

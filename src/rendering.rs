@@ -3,6 +3,7 @@
 
 use wayland_client::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
 use wayland_client::{Proxy, QueueHandle};
+use std::collections::HashSet;
 
 use crate::decorations::TAB_BAR_HEIGHT;
 use crate::layout::FrameId;
@@ -82,8 +83,21 @@ impl WindowManager {
             .and_then(|oid| self.workspaces.output(oid))
             .map(|o| o.usable_rect());
         let mut newly_positioned_float: Option<u64> = None;
+        let visible_frame_ids: HashSet<FrameId> = self
+            .workspaces
+            .visible_workspaces()
+            .iter()
+            .flat_map(|ws| ws.root.all_frame_ids())
+            .collect();
         for win in &mut self.windows {
             if win.floating {
+                let on_visible_workspace = win
+                    .frame_id
+                    .is_some_and(|frame_id| visible_frame_ids.contains(&frame_id));
+                if !on_visible_workspace {
+                    win.proxy.hide();
+                    continue;
+                }
                 if win.width > 0 && win.height > 0 {
                     // Recenter if the window hasn't been positioned with real dims yet
                     if !win.float_positioned {
@@ -129,9 +143,6 @@ impl WindowManager {
 
         // Hide windows on non-visible workspaces
         for win in &self.windows {
-            if win.floating {
-                continue;
-            }
             if let Some(frame_id) = win.frame_id {
                 let in_visible_ws = self
                     .workspaces
