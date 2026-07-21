@@ -12,10 +12,12 @@ A window manager process for River 0.4.x that implements "static tiling" from th
 cargo build            # debug build
 cargo build --release  # release build
 cargo test             # run unit tests (layout + focus tests)
-cp target/release/notion-river ~/.local/bin/
+cp -f target/release/notion-river ~/.local/bin/
 ```
 
 After installing, press `Super+Shift+R` inside River to restart the WM with the new binary. Windows survive restarts.
+
+**Installing over the running binary**: the target `~/.local/bin/notion-river` is the live WM and is "busy" (ETXTBSY) — a plain `cp` fails. `cp -f` works: it unlinks the old dir entry and writes a new file. Just use `cp -f`. Do NOT hesitate, retry with temp-file+mv, or report "is busy" — `-f` is the answer, every time.
 
 ### Native (from TTY / login manager)
 
@@ -100,6 +102,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Monitor disconnect**: Workspace on the disconnected monitor becomes invisible (its `active_output` clears). Other monitors keep their assignments untouched. Focus moves to a still-visible workspace. No window migration, no layout tearing.
 - **Monitor reconnect**: Monitor's EDID-keyed memory is consulted, restoring whatever was last on it. If memory is empty (first time seeing this monitor), falls through to the `preferred_output` chain.
 - **Monitor layout (mode/scale/position/transform)**: Owned by `monitors.rs` via `wlr-output-management-unstable-v1`. State machine on every `Done` event: (1) build a snapshot keyed by sorted EDID set; (2) if pending self-apply for this set → ack and persist actual post-apply state; (3) if topology changed → apply saved profile if present, else save current as initial profile; (4) if topology unchanged → save snapshot if it differs from saved (catches `wdisplays` edits with no time gate). Refresh rate is intentionally not part of profile equality (only used when picking a `wl_output` mode: exact w+h+refresh first, fall back to w+h). Suspend/resume preserves layout because the EDID set doesn't change → no apply path triggered. Manual edits via wdisplays/etc. are saved instantly.
+- **Monitor-apply debounce + retry (resume/hotplug safety)**: A divergence from the saved profile does **not** apply immediately. `Done` schedules a *pending apply* (`Monitors::schedule_apply`) with a settle deadline of `SETTLE_DELAY` (600ms). Every topology change — `Done`, river `New output`, river `Output removed` — pushes the deadline forward (`bump_pending_deadline`). The main loop (`main.rs`) calls `AppData::maybe_fire_pending_apply` each iteration and shortens its `poll` timeout to the pending deadline; the apply only fires once the topology has been quiet for the full delay and the live set still matches. This stops notion-river racing the compositor's own modeset while the dock's outputs flap up/down on resume — the original "freeze on dock attach after resume" bug. Rationale: on resume the kernel/DRM re-enumerates DP-MST dock outputs with a burst of add/remove events; applying mid-burst is rejected (`Failed`) and leaves the screen half-configured. Retry is bounded: `Failed` increments a per-set counter (`note_apply_failure`); after `MAX_APPLY_ATTEMPTS` (5) the set is left alone until its topology changes again (counter reset via `reset_attempts_except` when the live set key changes). `RETRY_BACKOFF` (800ms) spaces retries. `Cancelled` (stale serial during a topology shift) reschedules cheaply without burning the retry budget. The old permanent `failed_sets` "will not retry this session" latch is gone. The apply path also refuses to run until every enabled head has a usable mode (`heads_have_apply_modes`), since head metadata can arrive before its `wl_output` modes during hotplug; a not-ready apply reschedules without counting as a failure. River `Output removed` also drops the `river_outputs` proxy and `wl_output_map` entry so they don't accumulate across hotplug cycles.
 - **Runtime keyboard layout switching**: `Ctrl+F12` toggles between `de/neo` and `de` layouts at runtime.
 
 ## Built-in Keybinding Profiles

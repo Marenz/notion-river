@@ -47,8 +47,11 @@ impl AppData {
         }
         // Whatever we just saved is, by definition, what the user wants;
         // clear any failure state so future divergence will trigger reapply
-        // again.
-        self.monitors.apply_failures.remove(&set_key);
+        // again, and drop any pending apply that would fight the user. Also
+        // lift any flap quarantine: an explicit save is a deliberate override.
+        self.monitors.clear_failure(&set_key);
+        self.monitors.clear_flap(&set_key);
+        self.monitors.clear_pending_apply();
     }
 
     /// Forget the saved profile for the current monitor set. After this the
@@ -62,49 +65,12 @@ impl AppData {
         };
         if self.monitors.profiles.map.remove(&set_key).is_some() {
             self.monitors.profiles.save();
-            self.monitors.apply_failures.remove(&set_key);
+            self.monitors.clear_failure(&set_key);
+            self.monitors.clear_flap(&set_key);
+            self.monitors.clear_pending_apply();
             log::info!("forget-monitors: removed saved profile for set '{set_key}'");
         } else {
             log::info!("forget-monitors: no saved profile for set '{set_key}'");
-        }
-    }
-
-    /// Shared handler for both `Failed` and `Cancelled` events on an
-    /// output-configuration. Increments the per-set failure counter and,
-    /// if budget remains, immediately retries the apply with the current
-    /// saved profile. Boot-time DRM races (link training, EDID negotiation)
-    /// often reject the first apply but accept a retry milliseconds later,
-    /// so this gives us automatic recovery without waiting for an external
-    /// nudge.
-    fn handle_apply_failure(&mut self, kind: &'static str, qh: &QueueHandle<Self>) {
-        let Some(key) = self.monitors.pending_self_apply.take() else {
-            log::warn!("Output config {kind} (no pending self-apply tracked)");
-            return;
-        };
-        let n = self.monitors.apply_failures.entry(key.clone()).or_insert(0);
-        *n += 1;
-        let attempts = *n;
-        let max = crate::monitors::MAX_APPLY_RETRIES;
-        if attempts >= max {
-            log::warn!(
-                "Output config {kind} for set '{key}' (attempt {attempts}/{max}); giving up until next topology change or restart"
-            );
-            return;
-        }
-        let Some(target) = self.monitors.profiles.get(&key).cloned() else {
-            log::warn!(
-                "Output config {kind} for set '{key}' (attempt {attempts}/{max}); no saved profile to retry"
-            );
-            return;
-        };
-        log::warn!(
-            "Output config {kind} for set '{key}' (attempt {attempts}/{max}); retrying immediately"
-        );
-        self.monitors.pending_self_apply = Some(key);
-        if let Err(err) = self.apply_monitor_profile(&target, qh) {
-            self.monitors.apply_in_flight = false;
-            self.monitors.pending_self_apply = None;
-            log::warn!("Retry apply failed to dispatch: {err}");
         }
     }
 
@@ -120,9 +86,33 @@ impl AppData {
         if self.monitors.apply_in_flight {
             return Err("output config already in flight");
         }
-        self.monitors.apply_in_flight = true;
-        let config = manager.create_configuration(serial, qh, ());
+        // Don't hand the compositor an underspecified config: every enabled
+        // head must have a usable mode so `set_mode` can be called. During
+        // hotplug/resume the head metadata can arrive before its modes.
+        if !crate::monitors::heads_have_apply_modes(&self.monitors.heads) {
+            return Err("monitor modes not yet available");
+        }
 
+        // Resolve every head's config *before* touching the wire. Enabling a
+        // head without a valid mode makes wlroots try to prepare a swapchain
+        // with no dimensions, which aborts the compositor (it takes the whole
+        // session down). A saved profile carried over from a different monitor
+        // (e.g. an LG panel whose EDID serial changed behind an MST dock) will
+        // name a mode that does not exist on the live head — detect that here
+        // and refuse to apply rather than send a config we know will crash
+        // River.
+        enum Plan<'a> {
+            Disable(&'a crate::protocol::zwlr_output_head_v1::ZwlrOutputHeadV1),
+            Enable {
+                head: &'a crate::protocol::zwlr_output_head_v1::ZwlrOutputHeadV1,
+                mode: Option<crate::protocol::zwlr_output_mode_v1::ZwlrOutputModeV1>,
+                pos: (i32, i32),
+                scale: f64,
+                transform: i32,
+            },
+        }
+
+        let mut plans: Vec<Plan> = Vec::new();
         for (id, head_live) in &self.monitors.heads {
             let Some(head_proxy) = self.output_head_proxies.get(id) else {
                 continue;
@@ -134,15 +124,13 @@ impl AppData {
             let target_head = key.as_deref().and_then(|k| target.get(k));
 
             let Some(target_head) = target_head else {
-                config.disable_head(head_proxy);
+                plans.push(Plan::Disable(head_proxy));
                 continue;
             };
             if !target_head.enabled {
-                config.disable_head(head_proxy);
+                plans.push(Plan::Disable(head_proxy));
                 continue;
             }
-
-            let head_config = config.enable_head(head_proxy, qh, ());
 
             // Pick the wl_output mode for this head: prefer exact match
             // (w+h+refresh, refresh from the live head's current mode), then
@@ -177,29 +165,135 @@ impl AppData {
                         }
                     })
                 });
-            if let Some(mp) = mode_proxy {
-                head_config.set_mode(mp);
+
+            // If the head has modes but none match the saved profile, the
+            // profile is stale for this physical output. Enabling it without a
+            // mode would crash the compositor, so refuse the whole apply.
+            if mode_proxy.is_none() && !head_live.mode_ids.is_empty() {
+                self.monitors.apply_in_flight = false;
+                return Err("saved profile mode not available on live head");
             }
-            head_config.set_position(target_head.position_x, target_head.position_y);
-            head_config.set_scale(target_head.scale.max(0.1));
-            if let Some(transform) = output_transform(target_head.transform) {
-                head_config.set_transform(transform);
+
+            plans.push(Plan::Enable {
+                head: head_proxy,
+                mode: mode_proxy.cloned(),
+                pos: (target_head.position_x, target_head.position_y),
+                scale: target_head.scale.max(0.1),
+                transform: target_head.transform,
+            });
+        }
+
+        self.monitors.apply_in_flight = true;
+        let config = manager.create_configuration(serial, qh, ());
+        for plan in &plans {
+            match plan {
+                Plan::Disable(head) => config.disable_head(head),
+                Plan::Enable {
+                    head,
+                    mode,
+                    pos,
+                    scale,
+                    transform,
+                } => {
+                    let head_config = config.enable_head(head, qh, ());
+                    if let Some(mp) = mode {
+                        head_config.set_mode(mp);
+                    }
+                    head_config.set_position(pos.0, pos.1);
+                    head_config.set_scale(*scale);
+                    if let Some(t) = output_transform(*transform) {
+                        head_config.set_transform(t);
+                    }
+                }
             }
-            log::info!(
-                "apply head '{}': mode {}x{} pos ({},{}) scale {:.3} transform {} mode_proxy_found={}",
-                key.as_deref().unwrap_or("<unknown>"),
-                target_head.mode_w,
-                target_head.mode_h,
-                target_head.position_x,
-                target_head.position_y,
-                target_head.scale.max(0.1),
-                target_head.transform,
-                mode_proxy.is_some(),
-            );
         }
 
         config.apply();
         Ok(())
+    }
+
+    /// Fire a debounced monitor-profile apply if one is pending, its settle
+    /// deadline has passed, and the live topology still matches the pending
+    /// set. Called from the main loop. Returns the deadline of any still-
+    /// pending apply so the caller can size its poll timeout.
+    pub fn maybe_fire_pending_apply(
+        &mut self,
+        qh: &QueueHandle<Self>,
+    ) -> Option<std::time::Instant> {
+        let now = std::time::Instant::now();
+        let pending = self.monitors.pending_apply.as_ref()?;
+
+        // Not yet time: report the deadline so the loop can wake up for it.
+        if now < pending.deadline {
+            return Some(pending.deadline);
+        }
+
+        // An apply is already in flight; wait for its ack/failure. Re-check
+        // shortly.
+        if self.monitors.apply_in_flight {
+            return Some(now + std::time::Duration::from_millis(100));
+        }
+
+        // Hard quiet-gate: never fire while the topology is still moving. An
+        // MST dock emits a burst of output add/remove during enumeration;
+        // applying mid-burst fails *and* perturbs the half-built topology,
+        // which kicks off another burst — a self-sustaining flash loop. Only
+        // act once nothing has changed for SETTLE_DELAY. Independent of the
+        // per-apply deadline so reschedules can't bypass it.
+        if !self
+            .monitors
+            .topology_quiet_for(crate::monitors::SETTLE_DELAY, now)
+        {
+            return Some(now + crate::monitors::SETTLE_DELAY);
+        }
+
+        // Confirm the live topology still matches the pending set; if the
+        // topology shifted out from under us, drop the stale apply.
+        let live = crate::monitors::snapshot(&self.monitors.heads, &self.monitors.modes);
+        let pending = self.monitors.pending_apply.clone()?;
+        match live {
+            Some((live_key, _)) if live_key == pending.set_key => {}
+            _ => {
+                self.monitors.clear_pending_apply();
+                return None;
+            }
+        }
+
+        self.monitors.clear_pending_apply();
+        self.monitors.pending_self_apply = Some(pending.set_key.clone());
+        match self.apply_monitor_profile(&pending.target, qh) {
+            Ok(()) => {
+                log::info!("Applying saved profile for set '{}'", pending.set_key);
+                None
+            }
+            Err(err) => {
+                self.monitors.apply_in_flight = false;
+                self.monitors.pending_self_apply = None;
+                // Modes simply not ready yet is transient: reschedule without
+                // counting it as a real failure.
+                if err == "monitor modes not yet available" {
+                    self.monitors
+                        .schedule_apply(pending.set_key.clone(), pending.target, now);
+                    log::debug!(
+                        "Deferring apply for set '{}': {err}",
+                        pending.set_key
+                    );
+                    return self.monitors.pending_apply.as_ref().map(|p| p.deadline);
+                }
+                let more = self.monitors.note_apply_failure(&pending.set_key, now);
+                log::warn!(
+                    "Failed to apply saved profile for set '{}': {err}{}",
+                    pending.set_key,
+                    if more { " (will retry)" } else { " (giving up for this session)" }
+                );
+                if more {
+                    self.monitors
+                        .schedule_apply(pending.set_key.clone(), pending.target, now);
+                    return self.monitors.pending_apply.as_ref().map(|p| p.deadline);
+                }
+                None
+            }
+        }
     }
 }
 
@@ -374,6 +468,12 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
             Event::Output { id } => {
                 let oid = OutputId(id.id().protocol_id() as u64);
                 log::info!("New output: {oid:?}");
+                // Topology changed: reset the quiet timer and extend any pending
+                // monitor-apply settle window so we don't fire mid-flap during
+                // resume/hotplug.
+                state
+                    .monitors
+                    .note_topology_change(std::time::Instant::now());
                 state.river_outputs.insert(oid.0, id.clone());
                 let output = Output::new(oid);
                 state.wm.workspaces.add_output(output);
@@ -445,6 +545,15 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 {
                     window.floating = true;
                     window.floating_kind = crate::wm::FloatingKind::Dialog;
+                    // If already placed in a frame, remove it (late DimensionsHint)
+                    if let Some(frame_id) = window.frame_id {
+                        for ws in &mut state.wm.workspaces.workspaces {
+                            if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                                frame.remove_window(window.id);
+                            }
+                        }
+                        window.frame_id = None;
+                    }
                     log::info!(
                         "Auto-floating window {} ({}x{}-{}x{})",
                         window.id,
@@ -460,6 +569,25 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     log::info!("Window {} app_id: {id}", window.id);
                 }
                 window.app_id = app_id.unwrap_or_default();
+
+                // Keyring/password prompts (gcr-prompter) emit neither Parent
+                // nor DimensionsHint, so the generic dialog auto-float never
+                // fires and they land tiled, hidden behind the active tab,
+                // blocking apps (browsers) that wait on the secret. Force such
+                // prompts to float as a focused dialog so they are visible.
+                if window.app_id == "gcr-prompter" && !window.floating {
+                    window.floating = true;
+                    window.floating_kind = crate::wm::FloatingKind::Dialog;
+                    if let Some(frame_id) = window.frame_id {
+                        for ws in &mut state.wm.workspaces.workspaces {
+                            if let Some(frame) = ws.root.find_frame_mut(frame_id) {
+                                frame.remove_window(window.id);
+                            }
+                        }
+                        window.frame_id = None;
+                    }
+                    log::info!("Window {} is gcr-prompter, forcing floating dialog", window.id);
+                }
             }
             Event::Title { title } => {
                 window.title = title.unwrap_or_default();
@@ -531,9 +659,19 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
         match event {
             Event::Removed => {
                 log::info!("Output removed: {oid:?}");
+                // Topology changed: reset the quiet timer and extend any pending
+                // monitor-apply settle window so we don't fire mid-flap during
+                // resume/hotplug.
+                state
+                    .monitors
+                    .note_topology_change(std::time::Instant::now());
                 if let Some(output) = state.wm.workspaces.output_mut(oid) {
                     output.removed = true;
                 }
+                // Drop the river_output proxy and its wl_output global mapping
+                // so they don't accumulate across hotplug cycles.
+                state.river_outputs.remove(&oid.0);
+                state.wl_output_map.retain(|_, mapped| *mapped != oid);
             }
             Event::WlOutput { name: global_name } => {
                 log::info!("Output {oid:?} wl_output global name: {global_name}");
@@ -1108,7 +1246,7 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
         event: <ZwlrOutputManagerV1 as Proxy>::Event,
         _data: &(),
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
     ) {
         use crate::protocol::zwlr_output_manager_v1::Event;
         match event {
@@ -1123,6 +1261,12 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
             }
             Event::Done { serial } => {
                 state.monitors.serial = Some(serial);
+                let now = std::time::Instant::now();
+
+                // Every Done is a topology change signal: reset the quiet timer
+                // and push any pending apply's deadline forward so we only act
+                // once things have been quiet for SETTLE_DELAY.
+                state.monitors.note_topology_change(now);
 
                 let Some((set_key, snap)) =
                     crate::monitors::snapshot(&state.monitors.heads, &state.monitors.modes)
@@ -1131,7 +1275,37 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
                     return;
                 };
 
+                // When the live set key changes, this is a (re)appearance of a
+                // monitor set: reset retry budgets so a freshly connected set
+                // starts clean, drop any pending apply for the old set, and feed
+                // the flap detector. A set that keeps reappearing on its own
+                // (failing link, flaky dock) gets quarantined so we stop
+                // chasing it — even when each individual apply "succeeds".
+                let is_reappearance =
+                    state.monitors.last_set_key.as_deref() != Some(set_key.as_str());
+                let quarantined = if is_reappearance {
+                    state.monitors.reset_attempts_except(&set_key);
+                    if state
+                        .monitors
+                        .pending_apply
+                        .as_ref()
+                        .is_some_and(|p| p.set_key != set_key)
+                    {
+                        state.monitors.clear_pending_apply();
+                    }
+                    state.monitors.note_set_appearance(&set_key, now)
+                } else {
+                    state.monitors.flap_quarantined(&set_key, now)
+                };
                 state.monitors.last_set_key = Some(set_key.clone());
+
+                if quarantined {
+                    // Do not apply, do not save, do not schedule. The link is
+                    // unstable; poking it just perpetuates the loop. Wait for it
+                    // to settle (quarantine lifts after FLAP_COOLDOWN of quiet).
+                    state.monitors.clear_pending_apply();
+                    return;
+                }
 
                 // Case 1: we just issued an apply for this set; this Done is
                 // the compositor's ack of our apply. Don't treat it as a
@@ -1145,45 +1319,33 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
                 // Case 2: we have a saved profile. It is authoritative.
                 // Reapply if the live state diverges from it. We never
                 // overwrite the saved profile from a Done event; explicit
-                // user save is a separate path (not yet implemented; until
-                // then, hand-edit monitors.json or use wdisplays + save).
+                // user save is a separate path (`notion-ctl save-monitors`).
                 if let Some(target) = state.monitors.profiles.get(&set_key).cloned() {
                     if target == snap {
-                        // Live already matches saved. Nothing to do.
-                        state.monitors.apply_failures.remove(&set_key);
+                        // Live already matches saved. Nothing to do; clear any
+                        // stale failure bookkeeping and drop a pending apply.
+                        state.monitors.clear_failure(&set_key);
+                        state.monitors.clear_pending_apply();
+                    } else if state.monitors.attempts_exhausted(&set_key) {
+                        // We tried MAX_APPLY_ATTEMPTS times and the compositor
+                        // kept rejecting. Stop looping until the topology
+                        // changes again (which resets the counter).
                     } else {
-                        let attempts = state
-                            .monitors
-                            .apply_failures
-                            .get(&set_key)
-                            .copied()
-                            .unwrap_or(0);
-                        if attempts >= crate::monitors::MAX_APPLY_RETRIES {
-                            // Exhausted retry budget. Stop trying. The user
-                            // can fix monitors.json and restart, or the
-                            // topology can change to clear this. The
-                            // counter persists in-memory only.
-                        } else {
-                            state.monitors.pending_self_apply = Some(set_key.clone());
-                            match state.apply_monitor_profile(&target, qh) {
-                                Ok(()) => log::info!(
-                                    "Set '{set_key}' diverged from saved profile; reapplying (attempt {}/{})",
-                                    attempts + 1,
-                                    crate::monitors::MAX_APPLY_RETRIES
-                                ),
-                                Err(err) => {
-                                    state.monitors.apply_in_flight = false;
-                                    state.monitors.pending_self_apply = None;
-                                    log::warn!("Failed to apply saved profile: {err}");
-                                }
-                            }
-                        }
+                        // Diverged: schedule (or refresh) a debounced apply.
+                        // The main loop fires it once the deadline passes and
+                        // the topology is still this set. This avoids racing
+                        // the compositor's own modeset during resume/hotplug.
+                        state.monitors.schedule_apply(set_key.clone(), target, now);
+                        log::debug!(
+                            "Set '{set_key}' diverged from saved profile; scheduling apply after settle"
+                        );
                     }
                 } else {
                     // Case 3: no saved profile for this set. Stay out of the
                     // way: do not apply, do not save. The user configures the
                     // layout (e.g. via wdisplays) and runs `notion-ctl
                     // save-monitors` to persist it.
+                    state.monitors.clear_pending_apply();
                     log::info!(
                         "Monitor set '{set_key}' has no saved profile; not applying. Run 'notion-ctl save-monitors' to persist current live state."
                     );
@@ -1318,20 +1480,50 @@ impl Dispatch<ZwlrOutputConfigurationV1, ()> for AppData {
         event: <ZwlrOutputConfigurationV1 as Proxy>::Event,
         _data: &(),
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
     ) {
         use crate::protocol::zwlr_output_configuration_v1::Event;
+        let now = std::time::Instant::now();
         state.monitors.apply_in_flight = false;
         match event {
             Event::Succeeded => {
                 log::info!("Output config applied successfully");
-                if let Some(key) = &state.monitors.pending_self_apply {
-                    state.monitors.apply_failures.remove(key);
+                if let Some(key) = state.monitors.pending_self_apply.clone() {
+                    state.monitors.clear_failure(&key);
+                }
+            }
+            Event::Failed => {
+                if let Some(key) = state.monitors.pending_self_apply.clone() {
+                    let more = state.monitors.note_apply_failure(&key, now);
+                    if more {
+                        log::warn!("Output config failed for set '{key}'; will retry");
+                        if let Some(target) = state.monitors.profiles.get(&key).cloned() {
+                            state.monitors.schedule_apply(key, target, now);
+                        }
+                    } else {
+                        log::warn!(
+                            "Output config failed for set '{key}'; giving up until topology changes"
+                        );
+                    }
+                } else {
+                    log::warn!("Output config failed");
                 }
                 state.monitors.pending_self_apply = None;
             }
-            Event::Failed => state.handle_apply_failure("failed", qh),
-            Event::Cancelled => state.handle_apply_failure("cancelled", qh),
+            Event::Cancelled => {
+                // Cancelled means the serial was stale (topology changed under
+                // us). This is expected during hotplug; reschedule cheaply
+                // without burning the retry budget. The next Done re-evaluates.
+                if let Some(key) = state.monitors.pending_self_apply.clone() {
+                    log::info!("Output config cancelled for set '{key}'; topology changed, will re-evaluate");
+                    if let Some(target) = state.monitors.profiles.get(&key).cloned() {
+                        state.monitors.schedule_apply(key, target, now);
+                    }
+                } else {
+                    log::info!("Output config cancelled");
+                }
+                state.monitors.pending_self_apply = None;
+            }
         }
         proxy.destroy();
     }
