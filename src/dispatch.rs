@@ -404,8 +404,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
         use crate::protocol::river_window_manager_v1::Event;
         match event {
             Event::Unavailable => {
-                log::error!("Another WM is already running");
-                std::process::exit(1);
+                state.wm_unavailable = true;
             }
             Event::Finished => {
                 log::info!("Compositor finished, exiting");
@@ -1161,10 +1160,21 @@ impl Dispatch<WlOutput, u32> for AppData {
             Event::Description { description } => {
                 log::info!("wl_output global {} description: {description}", data);
                 state.wl_output_descriptions.insert(*data, description.clone());
-                if let Some(&oid) = state.wl_output_map.get(data)
-                    && let Some(output) = state.wm.workspaces.output_mut(oid) {
+                if let Some(&oid) = state.wl_output_map.get(data) {
+                    if let Some(output) = state.wm.workspaces.output_mut(oid) {
                         output.description = Some(description);
                     }
+                    // The description carries the EDID identity, and it is
+                    // routinely the LAST piece of metadata to arrive for a
+                    // hotplugged monitor. Without reassigning here, the earlier
+                    // Dimensions/Name attempts all bail on the stable-identity
+                    // gate and nothing ever retries, leaving the monitor with
+                    // no workspace.
+                    state.wm.workspaces.maybe_reassign_outputs();
+                    if let Some(wm_proxy) = &state.river_wm {
+                        wm_proxy.manage_dirty();
+                    }
+                }
             }
             _ => {}
         }
