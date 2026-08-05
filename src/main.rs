@@ -152,15 +152,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(0);
         }
 
+        // Fire any debounced monitor-profile apply whose settle window has
+        // elapsed. Returns the next wake-up deadline if an apply is still
+        // pending, so we can shorten the poll timeout to service it promptly.
+        let pending_deadline = {
+            let qh = event_queue.handle();
+            app_data.maybe_fire_pending_apply(&qh)
+        };
+
         // Flush outgoing requests
         conn.flush()?;
+
+        // Poll timeout: 1s for the shutdown check, shortened when a monitor
+        // apply is pending so the debounce deadline is honored on time.
+        let timeout_ms = match pending_deadline {
+            Some(deadline) => {
+                let remaining = deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis();
+                (remaining as i32).clamp(10, 1000)
+            }
+            None => 1000,
+        };
 
         // Poll both fds
         let mut fds = [
             libc::pollfd { fd: wayland_fd, events: libc::POLLIN, revents: 0 },
             libc::pollfd { fd: control_fd, events: libc::POLLIN, revents: 0 },
         ];
-        unsafe { libc::poll(fds.as_mut_ptr(), 2, 1000) }; // 1s timeout for shutdown check
+        unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
 
         // If control socket has data, drain it and trigger manage_dirty
         if fds[1].revents & libc::POLLIN != 0 {

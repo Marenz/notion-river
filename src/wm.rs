@@ -26,6 +26,7 @@ use crate::protocol::{
 #[derive(Debug)]
 pub struct AppData {
     pub river_wm: Option<RiverWindowManagerV1>,
+    pub wm_unavailable: bool,
     pub river_xkb: Option<RiverXkbBindingsV1>,
     pub river_layer_shell: Option<crate::protocol::river_layer_shell_v1::RiverLayerShellV1>,
     pub wl_compositor: Option<WlCompositor>,
@@ -72,6 +73,7 @@ impl Default for AppData {
     fn default() -> Self {
         Self {
             river_wm: None,
+            wm_unavailable: false,
             river_xkb: None,
             river_layer_shell: None,
             wl_compositor: None,
