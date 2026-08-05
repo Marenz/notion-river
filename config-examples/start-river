@@ -12,4 +12,8 @@ export MOZ_ENABLE_WAYLAND=1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export RUST_LOG=info
 
+# Prefer user-installed builds over distribution packages. Display managers
+# commonly put /usr/bin before ~/.local/bin even for user sessions.
+export PATH="$HOME/.local/bin:$PATH"
+
 exec river -c ~/.config/river/init

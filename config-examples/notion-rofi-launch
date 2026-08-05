@@ -2,35 +2,53 @@
 # Unified launcher on the focused output: one box that switches to an open
 # window or launches an app.
 #
-# This uses rofi's native combi (window + drun). It requires a rofi build with
-# ext-foreign-toplevel-list-v1 support in the window modi, since River does not
-# serve wlr-foreign-toplevel-management. Focus is delegated to notion-ctl via
-# the `window-activate-command` rofi option (set in ~/.config/rofi/config.rasi):
+# The whole list is owned by the notion-rofi-window-mode script-modi, which
+# lists open windows (focused via notion-ctl) and launchable .desktop apps
+# (started via gtk-launch) in a single searchable list.
 #
-#   window-activate-command: "notion-ctl focus-window-by-identifier {identifier}";
+# This deliberately does NOT use rofi's built-in `window` modi, and therefore
+# needs no foreign-toplevel protocol and no patched rofi. River's window
+# management protocol keeps focus decisions in the window manager, so routing
+# focus through notion-ctl is the supported path. Two concrete reasons the
+# built-in modi is unusable here:
+#
+#   * ext-foreign-toplevel-list-v1, which River serves, is list-only: it can
+#     enumerate windows but cannot activate them.
+#   * River also serves zwlr_foreign_toplevel_manager_v1, but only a subset
+#     that reports title/app_id/activated state; it ignores the `activate`
+#     request. rofi prefers that protocol whenever it is advertised (it binds
+#     both and then destroys the ext-foreign-toplevel-list object), so the
+#     built-in modi would list windows and silently fail to focus them.
+#
+# rofi's `combi` modi is likewise avoided: it swallows the script-modi
+# selection callback, so a single custom modi that owns the whole list is the
+# clean solution.
 #
 # notion-river advertises every output at position 0,0 to layer-shell clients,
-# so rofi cannot place itself by coordinates; we resolve the focused output
-# from notion-ctl and pass it via -m.
+# so rofi cannot place itself by coordinates; it accepts an output name, which
+# we resolve from notion-ctl.
 set -eu
 
+# notion-ctl finds its IPC socket via XDG_RUNTIME_DIR; keep a fallback for
+# sanitized environments.
 : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
 export XDG_RUNTIME_DIR
 
-out=$(notion-ctl list-workspaces | python3 -c '
+out=$(notion-ctl list-workspaces 2>/dev/null | python3 -c '
 import json, sys
 try:
-    wss = json.load(sys.stdin)
+    workspaces = json.load(sys.stdin)
 except Exception:
-    wss = []
-for w in wss:
-    if w.get("focused") and w.get("output"):
-        print(w["output"])
+    workspaces = []
+for workspace in workspaces:
+    if workspace.get("focused") and workspace.get("output"):
+        print(workspace["output"])
         break
 ')
 
-set -- rofi -show combi -modi "combi" -combi-modi "window,drun" \
-    -drun-match-fields "name,generic,exec,categories,keywords,comment"
+set -- rofi -show launch \
+    -modi "launch:notion-rofi-window-mode" \
+    -p run
 
 [ -n "$out" ] && set -- "$@" -m "$out"
 

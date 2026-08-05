@@ -49,6 +49,8 @@ pub struct AppData {
     pub wl_output_descriptions: std::collections::HashMap<u32, String>,
     /// wl_seat global name (for binding wl_pointer).
     pub wl_seat_name: Option<u32>,
+    /// Pointer created only while wl_seat advertises pointer capability.
+    pub wl_pointer: Option<wayland_client::protocol::wl_pointer::WlPointer>,
     /// Pending tab click: (workspace_index, frame_id, tab_index) from decoration click
     pub pending_tab_click: Option<(usize, FrameId, usize)>,
     /// Current wl_pointer surface (protocol id) and surface-local x
@@ -83,6 +85,7 @@ impl Default for AppData {
             wl_output_transforms: std::collections::HashMap::new(),
             wl_output_descriptions: std::collections::HashMap::new(),
             wl_seat_name: None,
+            wl_pointer: None,
             pending_tab_click: None,
             wl_pointer_surface: None,
             wl_pointer_surface_x: 0.0,
@@ -179,6 +182,8 @@ pub struct ManagedWindow {
     /// Whether this window is floating.
     pub floating: bool,
     pub fullscreen: bool,
+    /// Number of active screen-capture sessions involving this window.
+    pub capture_sessions: u32,
     /// Whether the window prefers server-side decorations.
     pub prefers_ssd: bool,
     /// How this floating window should be positioned and focused.
@@ -1439,6 +1444,7 @@ impl ManagedWindow {
             frame_id: None,
             floating: false,
             fullscreen: false,
+            capture_sessions: 0,
             prefers_ssd: false,
             floating_kind: FloatingKind::Dialog,
             float_x: 100,

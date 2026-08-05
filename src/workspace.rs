@@ -477,6 +477,8 @@ pub struct Output {
     pub transform: i32,
     /// Whether the output has been removed.
     pub removed: bool,
+    /// Number of active screen-capture sessions involving this output.
+    pub capture_sessions: u32,
 }
 
 impl Output {
@@ -499,6 +501,7 @@ impl Output {
             physical_height: 0,
             transform: 0,
             removed: false,
+            capture_sessions: 0,
         }
     }
 

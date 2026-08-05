@@ -15,6 +15,12 @@ BuildRequires:  pkgconfig(pango)
 BuildRequires:  pkgconfig(pangocairo)
 BuildRequires:  pkgconfig(xkbcommon)
 BuildRequires:  pkgconfig(freetype2)
+BuildRequires:  pkgconfig(wlroots-0.20)
+
+# River 0.4.7 requires zig 0.16, which openSUSE does not package. Point this
+# macro at the verified upstream toolchain when building the RPM:
+#   rpmbuild --define 'zig %{_builddir}/../zig-0.16.0/zig' ...
+%{!?zig: %global zig zig}
 
 # Runtime deps are auto-detected from shared library linkage
 
@@ -36,9 +42,10 @@ Requires the River compositor (0.4.x+) to be installed separately.
 
 %build
 cargo build --release
-# Build River from vendored source
+# Build the pinned River release from vendored source. A package without River
+# is unusable, so dependency or compiler failures must fail the build.
 cd vendor/river
-zig build -Doptimize=ReleaseSafe -Dxwayland || zig build -Doptimize=ReleaseSafe || true
+%{zig} build -Doptimize=ReleaseSafe -Dxwayland
 cd ../..
 
 %install
@@ -50,8 +57,7 @@ install -Dm755 config-examples/notion-rofi-window-switch %{buildroot}%{_bindir}/
 install -Dm755 config-examples/notion-rofi-launch %{buildroot}%{_bindir}/notion-rofi-launch
 install -Dm755 config-examples/notion-volume %{buildroot}%{_bindir}/notion-volume
 install -Dm755 config-examples/notion-cycle-workspace %{buildroot}%{_bindir}/notion-cycle-workspace
-# Include River if built
-test -f vendor/river/zig-out/bin/river && install -Dm755 vendor/river/zig-out/bin/river %{buildroot}%{_bindir}/river || true
+install -Dm755 vendor/river/zig-out/bin/river %{buildroot}%{_bindir}/river
 install -Dm644 notion-river.desktop %{buildroot}%{_datadir}/wayland-sessions/notion-river.desktop
 install -dm755 %{buildroot}%{_datadir}/notion-river/examples
 install -Dm644 config-examples/start-river %{buildroot}%{_datadir}/notion-river/examples/start-river

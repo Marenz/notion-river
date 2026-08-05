@@ -21,12 +21,23 @@ After installing, press `Super+Shift+R` inside River to restart the WM with the 
 
 ### Native (from TTY / login manager)
 
-River is built from source at `~/repos/river` with XWayland support:
+River is pinned as the `vendor/river` submodule and built with XWayland support.
+The current pin is v0.4.7, which requires Zig 0.16 and wlroots 0.20. openSUSE
+Tumbleweed and OBS currently stop at Zig 0.15.2, so the verified upstream Zig
+0.16.0 release lives at `~/.local/opt/zig-0.16.0`; do not replace the distro
+Zig on PATH globally.
 
 ```sh
-cd ~/repos/river && zig build -Doptimize=ReleaseSafe -Dxwayland=true
-cp zig-out/bin/river ~/.local/bin/
+PATH="$HOME/.local/opt/zig-0.16.0:$PATH" \
+  zig build -Doptimize=ReleaseSafe -Dxwayland # from vendor/river
+cp -f vendor/river/zig-out/bin/river ~/.local/bin/
 ```
+
+`~/repos/river` is a separate upstream development checkout and is not used by
+the running session. The package-installed `/usr/bin/river` may also be stale;
+`~/.local/bin/start-river` prepends `~/.local/bin` so the coherent user-local
+River/notion-river pair wins after the next session start. Verify the running
+binary with `readlink /proc/$(pgrep -x river)/exe` and `river -version`.
 
 lightdm is configured with a "Notion River" session (`/usr/share/wayland-sessions/river-custom.desktop`) pointing to `~/.local/bin/start-river`.
 
@@ -148,12 +159,13 @@ WAYLAND_DISPLAY=wayland-2 foot &
   - *Snap-back to `terminal_size` after a screen/DPR change*: commit `753f7b7a`, one-shot `Component.onCompleted` initialiser in `src/contour/ui/main.qml` instead of a permanent `width: vtui.implicitWidth` binding. Upstream as [contour#1950](https://github.com/contour-terminal/contour/pull/1950) (closes #1941).
   - *Newly-spawned terminal's prompt is off-screen until a manual resize*: the cell-grid snap in `sizeChanged()` (added by our own commit `938c5792`) is suppressed for the first 500 ms (`_initialResizeDeadline`) to avoid fighting the stale-geometry/DPR configure reversion. But a tiling WM assigns the tile size *inside* that window and nothing re-triggers `sizeChanged()` afterward, so the renderer keeps the raw, non-cell-aligned tile size (e.g. surface 1524×1378 while the grid wants 1508×1367) and the bottom row renders off-screen. Diagnosis from `/tmp/notion-river.log`: on spawn contour commits the tile size *once* (== `last_proposed`); during a manual resize it repeatedly snaps proposed sizes down to its cell-aligned size — that round-trip is what fixes it. **Fix**: a one-shot `QTimer::singleShot(550, ...)` right after `_initialResizeDeadline` is set (`TerminalDisplay.cpp`) re-runs `sizeChanged()` past the deadline so the grid snaps to whatever size the WM left us at. Not yet upstreamed.
 - Fractional scale 1.5x is the best fractional scale — it's a clean fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or integer scales (1x, 2x).
-- XWayland support requires rebuilding River with `-Dxwayland=true`. Some apps (Steam) need it.
+- XWayland support requires rebuilding River with `-Dxwayland`. Some apps (Steam) need it.
 - Monitor configuration is **fully owned by notion-river**. Do **not** install kanshi or any external `wlr-output-management` client. Two clients fighting over the same protocol = the layout-loss-on-replug bug we spent over a month chasing. Use `wdisplays` for one-shot interactive edits — notion-river observes the result and saves it.
 - **rofi on the wrong monitor**: notion-river advertises every output at position `0,0` to layer-shell clients, so rofi-wayland cannot place itself by coordinates and always opens on the same output. Target the focused output **by name** with `-m <output>` (rofi-wayland accepts output names). `notion-rofi-launch` resolves it from `notion-ctl list-workspaces`. Negative `-m` indices (`-1` focused-monitor etc.) do not reliably follow notion-river focus.
-- **rofi window switching needs a patched rofi**: the desired UX is **one box** that switches to an open window or launches an app (`notion-rofi-launch`, native `combi` over `window,drun`). Stock rofi-wayland cannot do this: its built-in `window` modi needs `zwlr_foreign_toplevel_manager_v1`, which River does not serve — River serves `ext-foreign-toplevel-list-v1`, which is **list-only** (no activation). The local rofi build (`rofi -version` → `9b0363c-dirty`) is patched to (a) enumerate windows via `ext-foreign-toplevel-list-v1` and (b) add a `window-activate-command` option that substitutes `{identifier}`/`{app-id}`/`{title}` and shells out for focus — set in `~/.config/rofi/config.rasi` to `notion-ctl focus-window-by-identifier {identifier}`. **The patch exists only in the installed `/usr/bin/rofi` binary**: the build tree is deleted and the patch is neither committed nor upstreamed — do not let the rofi package overwrite it (currently rpm `rofi-2.0.0-1.4` claims the path) without re-creating the patch. On stock rofi, fall back to separate keybinds: `notion-rofi-window-switch` (the `notion-rofi-window-mode` script-modi). Do **not** put a script-modi inside `combi` — rofi-wayland's combi swallows the script-modi selection callback, so the pick never fires. Upstream River activation support is tracked in river#1281 (xdg-activation → WM event, accepted but unscheduled) — it covers *activation requests*, not window *enumeration*, so it alone will not enable stock `rofi -show window`.
+- **rofi must use the custom script-modi, not its built-in window modi**: River v0.4.7 advertises both `ext-foreign-toplevel-list-v1` and a deliberately partial `zwlr_foreign_toplevel_manager_v1`. The ext protocol cannot activate windows; the wlr subset ignores activation requests. rofi binds both, destroys the ext object, and keeps wlr, so its built-in window list displays entries but silently fails to focus them. `notion-rofi-launch` uses `notion-rofi-window-mode`, which owns one combined window+app list and routes focus through `notion-ctl`; this works with stock rofi and binds neither foreign-toplevel protocol. Do not put the script-modi inside `combi`: rofi swallows its selection callback.
 - **`commands.launcher` is read once at startup** (`window_actions.rs` clones `self.config.commands.launcher`), not hot-reloaded. After editing the launcher line, restart notion-river (`Super+Shift+R`) for it to take effect.
-- **`cargo test` deletes the live control socket**: control-server tests use the real `$XDG_RUNTIME_DIR/notion-river.sock` and unlink it, breaking `notion-ctl` (and waybar subscriptions) for the running session. Restart notion-river (`Super+Shift+R` or kill the process — the init loop restarts it) to recreate the socket. Tests should be isolated to a temp dir eventually.
+- **Isolate tests from the live control socket**: run `XDG_RUNTIME_DIR=/tmp/notion-river-test-runtime cargo test`. Without the override, control-server tests use and unlink the live `$XDG_RUNTIME_DIR/notion-river.sock`, breaking `notion-ctl` and waybar subscriptions.
+- `wl_seat.get_pointer` is only valid while the seat advertises pointer capability. Headless backends and hotplug can present a seat without one; pointer creation is therefore capability-driven in `dispatch.rs`, not done at registry bind time.
 
 ## HiDPI / Scaling Deep Dive
 

@@ -5,11 +5,11 @@
 
 use wayland_backend::client::ObjectId;
 use wayland_client::{
+    Connection, Dispatch, Proxy, QueueHandle,
     protocol::{
         wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output::WlOutput, wl_registry,
-        wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface,
+        wl_seat::WlSeat, wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface,
     },
-    Connection, Dispatch, Proxy, QueueHandle,
 };
 
 use crate::protocol::{
@@ -329,23 +329,37 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
             version,
         } = event
         {
-            const WM_VERSION: u32 = 4;
-            const XKB_VERSION: u32 = 2;
+            const WM_MIN_VERSION: u32 = 4;
+            const WM_VERSION: u32 = 5;
+            const XKB_MIN_VERSION: u32 = 2;
+            const XKB_VERSION: u32 = 3;
             match interface.as_str() {
                 "river_window_manager_v1" => {
-                    if version < WM_VERSION {
-                        log::error!("river_window_manager_v1 v{version}, need >= v{WM_VERSION}");
+                    if version < WM_MIN_VERSION {
+                        log::error!(
+                            "river_window_manager_v1 v{version}, need >= v{WM_MIN_VERSION}"
+                        );
                         std::process::exit(1);
                     }
-                    let wm = registry.bind::<RiverWindowManagerV1, _, _>(name, WM_VERSION, qh, ());
+                    let wm = registry.bind::<RiverWindowManagerV1, _, _>(
+                        name,
+                        version.min(WM_VERSION),
+                        qh,
+                        (),
+                    );
                     state.river_wm = Some(wm);
                 }
                 "river_xkb_bindings_v1" => {
-                    if version < XKB_VERSION {
-                        log::error!("river_xkb_bindings_v1 v{version}, need >= v{XKB_VERSION}");
+                    if version < XKB_MIN_VERSION {
+                        log::error!("river_xkb_bindings_v1 v{version}, need >= v{XKB_MIN_VERSION}");
                         std::process::exit(1);
                     }
-                    let xkb = registry.bind::<RiverXkbBindingsV1, _, _>(name, XKB_VERSION, qh, ());
+                    let xkb = registry.bind::<RiverXkbBindingsV1, _, _>(
+                        name,
+                        version.min(XKB_VERSION),
+                        qh,
+                        (),
+                    );
                     state.river_xkb = Some(xkb);
                 }
                 "river_layer_shell_v1" => {
@@ -358,10 +372,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let _output = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, name);
                 }
                 "wl_seat" => {
-                    use wayland_client::protocol::wl_seat::WlSeat;
-                    let seat = registry.bind::<WlSeat, _, _>(name, version.min(8), qh, ());
-                    // Get a wl_pointer to receive pointer events on shell surfaces
-                    let _pointer = seat.get_pointer(qh, ());
+                    let _seat = registry.bind::<WlSeat, _, _>(name, version.min(8), qh, ());
                 }
                 "wl_compositor" => {
                     let comp = registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ());
@@ -386,6 +397,37 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+impl Dispatch<WlSeat, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        proxy: &WlSeat,
+        event: <WlSeat as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        use wayland_client::protocol::wl_seat::{Capability, Event};
+
+        match event {
+            Event::Capabilities { capabilities } => {
+                let has_pointer = capabilities
+                    .into_result()
+                    .is_ok_and(|value| value.contains(Capability::Pointer));
+                if has_pointer && state.wl_pointer.is_none() {
+                    state.wl_pointer = Some(proxy.get_pointer(qh, ()));
+                    log::info!("wl_seat pointer capability added");
+                } else if !has_pointer && let Some(pointer) = state.wl_pointer.take() {
+                    pointer.release();
+                    state.wl_pointer_surface = None;
+                    log::info!("wl_seat pointer capability removed");
+                }
+            }
+            Event::Name { name } => log::debug!("wl_seat name: {name}"),
+            _ => {}
         }
     }
 }
@@ -638,6 +680,16 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 log::info!("Window {} identifier: {identifier}", window.id);
                 window.identifier = Some(identifier);
             }
+            Event::CaptureSessions { count } => {
+                if window.capture_sessions != count {
+                    log::info!(
+                        "Window {} capture sessions: {} -> {count}",
+                        window.id,
+                        window.capture_sessions
+                    );
+                    window.capture_sessions = count;
+                }
+            }
         }
     }
 }
@@ -729,6 +781,17 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
                 // this is when reassignment should fire. The maybe_ guard makes
                 // it cheap when the connected set hasn't really changed.
                 state.wm.workspaces.maybe_reassign_outputs();
+            }
+            Event::CaptureSessions { count } => {
+                if let Some(output) = state.wm.workspaces.output_mut(oid)
+                    && output.capture_sessions != count
+                {
+                    log::info!(
+                        "Output {oid:?} capture sessions: {} -> {count}",
+                        output.capture_sessions
+                    );
+                    output.capture_sessions = count;
+                }
             }
         }
     }
@@ -1541,7 +1604,6 @@ impl Dispatch<ZwlrOutputConfigurationV1, ()> for AppData {
 
 // ── WlSeat ───────────────────────────────────────────────────────────────
 
-wayland_client::delegate_noop!(AppData: ignore wayland_client::protocol::wl_seat::WlSeat);
 
 // ── WlPointer (for focus-follows-mouse on shell surfaces) ────────────────
 

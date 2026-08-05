@@ -129,34 +129,39 @@ done
 ### Rofi launcher & window switcher
 
 The primary entry point is one unified box (`Super+o`) that switches to an
-open window or launches an app, with a standalone window switcher available
-as a fallback:
+open window or launches an app:
 
 ```toml
 [commands]
-# Super+o — unified switch-or-launch (rofi combi: window + drun)
+# Super+o — unified switch-or-launch
 launcher = ["notion-rofi-launch"]
-# Super+Shift+o — standalone window switcher (fallback for stock rofi)
+# Super+Shift+o — same menu, bound separately for muscle memory
 window_switcher = ["notion-rofi-window-switch"]
 ```
 
-- **`notion-rofi-launch`** runs rofi's native `combi` over `window,drun`: type
-  a name to jump to a running window, or launch the app if it is not open.
-  This needs a rofi build whose `window` modi can enumerate windows via
-  `ext-foreign-toplevel-list-v1` (the only foreign-toplevel protocol River
-  serves, and it is list-only) and that supports a `window-activate-command`
-  option — set it in `~/.config/rofi/config.rasi` to delegate focus:
+- **`notion-rofi-launch`** shows the `notion-rofi-window-mode` script-modi,
+  which owns the whole list: open windows alongside launchable apps. Type a
+  name to jump to a running window, or launch the app if it is not open.
+  Picks are focused via `notion-ctl focus-window` (switching workspaces if the
+  window is hidden) and apps are started via `gtk-launch`.
+- **`notion-rofi-window-switch`** opens the same menu; a windows-only switcher
+  would be a strict subset of it.
 
-  ```
-  window-activate-command: "notion-ctl focus-window-by-identifier {identifier}";
-  ```
+This works with **stock rofi** and needs no foreign-toplevel protocol, which
+is deliberate. River keeps focus decisions in the window manager, so rofi's
+built-in `window` modi cannot be used:
 
-  Stock rofi-wayland has neither; without them `combi` degrades to a plain
-  app launcher.
-- **`notion-rofi-window-switch`** is the fallback window switcher for stock
-  rofi: a script-modi (`notion-rofi-window-mode`) lists open windows and
-  launchable apps, focusing picks via `notion-ctl focus-window` (switching
-  workspaces if the window is hidden) and launching apps via `gtk-launch`.
+- `ext-foreign-toplevel-list-v1`, which River serves, is list-only: it can
+  enumerate windows but not activate them.
+- River also serves `zwlr_foreign_toplevel_manager_v1`, but only a subset that
+  reports title/app_id/activated state and ignores the `activate` request.
+  rofi prefers that protocol whenever it is advertised — it binds both and
+  then destroys the `ext-foreign-toplevel-list` object — so the built-in modi
+  would list windows and then silently fail to focus them.
+
+rofi's `combi` modi is avoided for a separate reason: it swallows the
+script-modi selection callback, so a single custom modi that owns the whole
+list is the clean solution.
 
 Both wrappers target the focused output by name (`-m <output>`): notion-river
 reports every output at position `0,0` to layer-shell clients, so coordinate

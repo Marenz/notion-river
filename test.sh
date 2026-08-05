@@ -26,12 +26,12 @@ WAYLAND_DISPLAY=wayland-1 \
 XKB_DEFAULT_LAYOUT=de \
 XKB_DEFAULT_VARIANT=neo \
 XKB_DEFAULT_MODEL=pc105 \
-~/repos/river/zig-out/bin/river \
+~/Projects/notion-river/vendor/river/zig-out/bin/river \
   -c ~/Projects/notion-river/target/release/notion-river \
   -no-xwayland 2>/tmp/river.log &
 sleep 3
 
-if ! pgrep -f "zig-out/bin/river" > /dev/null; then
+if ! pgrep -f "vendor/river/zig-out/bin/river" > /dev/null; then
     echo "ERROR: river failed to start"
     tail -5 /tmp/river.log
     exit 1

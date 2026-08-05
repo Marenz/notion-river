@@ -5,11 +5,12 @@
 # one search box matches both: type a name to jump to a running window, or to
 # launch the app if it is not open.
 #
-# This replaces rofi's combi mode, which on rofi-wayland would normally merge
-# the window and drun modi — but River exposes no foreign-toplevel-management
-# protocol, so rofi's built-in window modi cannot enumerate or focus windows.
-# Routing window focus through notion-ctl is the supported path, and combi
-# also swallows the script-modi selection callback, so a single custom modi
+# This replaces rofi's combi mode, which would normally merge the window and
+# drun modi. River v0.4.7 exposes a list-only ext-foreign-toplevel protocol and
+# a partial wlr-foreign-toplevel protocol that ignores activation requests;
+# rofi prefers the latter, so its built-in window modi can enumerate but not
+# focus windows. Routing focus through notion-ctl is the supported path, and
+# combi also swallows the script-modi selection callback, so one custom modi
 # that owns the whole list is the clean solution.
 #
 # Each row carries a hidden action in rofi's "info" field (emitted as
