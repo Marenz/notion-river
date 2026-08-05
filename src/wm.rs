@@ -679,7 +679,10 @@ impl WindowManager {
             let gap = self.config.general.gap as i32;
             let target = crate::pointer_ops::find_drop_target(&self.workspaces, px, py, gap);
             if let Some((_ws_id, _frame_id, rect, zone)) = target {
-                self.drag_preview.show(&rect, &zone, compositor, wm_proxy, shm, qh);
+                let ratio = self.config.general.default_split_ratio;
+                let area = zone.preview_rect(&rect, ratio, gap);
+                self.drag_preview
+                    .show(&area, &zone, compositor, wm_proxy, shm, qh);
                 return;
             }
         }

@@ -221,6 +221,20 @@ impl Frame {
     pub fn contains_window(&self, window_id: u64) -> bool {
         self.windows.iter().any(|w| w.window_id == window_id)
     }
+
+    /// Replace the window with `window_id` by `win`, keeping its tab position
+    /// and its slot in the focus history. Returns the window it displaced.
+    pub fn replace_window(&mut self, window_id: u64, win: WindowRef) -> Option<WindowRef> {
+        let pos = self.windows.iter().position(|w| w.window_id == window_id)?;
+        let new_id = win.window_id;
+        let old = std::mem::replace(&mut self.windows[pos], win);
+        for id in &mut self.focus_history {
+            if *id == window_id {
+                *id = new_id;
+            }
+        }
+        Some(old)
+    }
 }
 
 // ── SplitNode operations ─────────────────────────────────────────────────
@@ -260,6 +274,20 @@ impl SplitNode {
         orientation: Orientation,
         ratio: f32,
     ) -> Option<FrameId> {
+        self.split_frame_at(target_id, orientation, ratio, false)
+    }
+
+    /// Like [`SplitNode::split_frame`], but `new_first` places the new empty
+    /// frame as the *first* child (left/top) instead of the second. The
+    /// existing frame keeps its id and windows either way, so nothing that
+    /// refers to a frame by id has to be rewritten.
+    pub fn split_frame_at(
+        &mut self,
+        target_id: FrameId,
+        orientation: Orientation,
+        ratio: f32,
+        new_first: bool,
+    ) -> Option<FrameId> {
         match self {
             SplitNode::Leaf(frame) => {
                 if frame.id == target_id {
@@ -267,11 +295,17 @@ impl SplitNode {
                     let new_id = new_frame.id;
                     // Take ownership of the current leaf, replace self with a Split.
                     let old_self = std::mem::replace(self, SplitNode::single_frame());
+                    let new_self = SplitNode::Leaf(new_frame);
+                    let (first, second) = if new_first {
+                        (new_self, old_self)
+                    } else {
+                        (old_self, new_self)
+                    };
                     *self = SplitNode::Split {
                         orientation,
                         ratio,
-                        first: Box::new(old_self),
-                        second: Box::new(SplitNode::Leaf(new_frame)),
+                        first: Box::new(first),
+                        second: Box::new(second),
                     };
                     Some(new_id)
                 } else {
@@ -279,8 +313,8 @@ impl SplitNode {
                 }
             }
             SplitNode::Split { first, second, .. } => first
-                .split_frame(target_id, orientation, ratio)
-                .or_else(|| second.split_frame(target_id, orientation, ratio)),
+                .split_frame_at(target_id, orientation, ratio, new_first)
+                .or_else(|| second.split_frame_at(target_id, orientation, ratio, new_first)),
         }
     }
 
@@ -1201,6 +1235,65 @@ mod tests {
         assert!(new_id.is_some());
         let layout = tree.calculate_layout(Rect::new(0, 0, 1920, 1080), 4);
         assert_eq!(layout.len(), 2);
+    }
+
+    #[test]
+    fn split_frame_at_can_place_the_new_frame_first() {
+        let mut tree = SplitNode::single_frame();
+        let existing = tree.first_frame_id();
+        tree.find_frame_mut(existing).unwrap().add_window(WindowRef {
+            window_id: 1,
+            app_id: "foot".to_string(),
+            title: "terminal".to_string(),
+        });
+
+        let new_id = tree
+            .split_frame_at(existing, Orientation::Vertical, 0.5, true)
+            .unwrap();
+
+        // The new (empty) frame takes the top slot; the existing frame keeps
+        // its id and its window and moves below it.
+        let layout = tree.calculate_layout(Rect::new(0, 0, 1000, 800), 0);
+        let new_rect = layout.iter().find(|(id, _)| *id == new_id).unwrap().1;
+        let old_rect = layout.iter().find(|(id, _)| *id == existing).unwrap().1;
+        assert!(new_rect.y < old_rect.y);
+        assert_eq!(tree.find_frame(existing).unwrap().windows.len(), 1);
+        assert!(tree.find_frame(new_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn replace_window_keeps_tab_position() {
+        let mut frame = Frame::new();
+        for id in [1, 2, 3] {
+            frame.add_window(WindowRef {
+                window_id: id,
+                app_id: "a".to_string(),
+                title: "t".to_string(),
+            });
+        }
+        frame.set_active_tab(1);
+
+        let old = frame
+            .replace_window(
+                2,
+                WindowRef {
+                    window_id: 9,
+                    app_id: "b".to_string(),
+                    title: "u".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(old.window_id, 2);
+        assert_eq!(frame.active_tab, 1);
+        assert_eq!(
+            frame.windows.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            vec![1, 9, 3]
+        );
+        // The replacement inherits the old window's place in the MRU stack, so
+        // closing it hands focus back to whatever was focused before.
+        frame.remove_window(9);
+        assert_eq!(frame.active_window().unwrap().window_id, 3);
     }
 
     #[test]

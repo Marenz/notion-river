@@ -772,6 +772,138 @@ fn draw_text(
     }
 }
 
+/// Padding around the label text inside its backdrop pill.
+const LABEL_PAD_X: i32 = 10;
+const LABEL_PAD_Y: i32 = 5;
+const LABEL_PAD_RADIUS: i32 = 5;
+
+/// Draw `text` centered in a `w` x `h` premultiplied-ARGB buffer, over a
+/// rounded `backdrop` pill that makes it readable against whatever window
+/// content shows through the translucent overlay.
+///
+/// Unlike [`draw_text`] this keeps the rest of the destination translucent: the
+/// glyphs are composited source-over in premultiplied space, so only the pill
+/// is denser and the box as a whole stays see-through.
+fn draw_centered_label(
+    pixels: &mut [u32],
+    w: usize,
+    h: usize,
+    text: &str,
+    color: u32,
+    backdrop: u32,
+) {
+    // Below this the box is too small for a legible label; leave it blank.
+    if w < 40 || h < 16 {
+        return;
+    }
+
+    let text_r = ((color >> 16) & 0xFF) as f32;
+    let text_g = ((color >> 8) & 0xFF) as f32;
+    let text_b = (color & 0xFF) as f32;
+
+    let mut surface = match cairo::ImageSurface::create(cairo::Format::ARgb32, w as i32, h as i32) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let cairo_stride = surface.stride() as usize;
+
+    let Ok(cr) = cairo::Context::new(&surface) else {
+        return;
+    };
+
+    let layout = pangocairo::functions::create_layout(&cr);
+    let font_size_px = (h as f64 * 0.12).clamp(12.0, 20.0);
+    let mut font_desc = pango::FontDescription::from_string("Noto Sans Bold");
+    font_desc.set_absolute_size(font_size_px * pango::SCALE as f64);
+    layout.set_font_description(Some(&font_desc));
+    layout.set_text(text);
+    layout.set_single_paragraph_mode(true);
+
+    // Measure unconstrained first: with a width set, the layout's logical
+    // extents span the whole box and tell us nothing about the ink width.
+    let (text_width, text_height) = layout.pixel_size();
+
+    layout.set_width(w as i32 * pango::SCALE);
+    layout.set_alignment(pango::Alignment::Center);
+    layout.set_ellipsize(pango::EllipsizeMode::End);
+
+    fill_label_backdrop(pixels, w, h, text_width, text_height, backdrop);
+
+    cr.move_to(0.0, ((h as i32 - text_height) / 2).max(0) as f64);
+    cr.set_source_rgb(
+        text_r as f64 / 255.0,
+        text_g as f64 / 255.0,
+        text_b as f64 / 255.0,
+    );
+    pangocairo::functions::show_layout(&cr, &layout);
+    drop(cr);
+
+    let Ok(data) = surface.data() else { return };
+
+    for row in 0..h {
+        for col in 0..w {
+            let src = row * cairo_stride + col * 4;
+            if src + 3 >= data.len() {
+                continue;
+            }
+            // Cairo ARGB32 is native-endian, i.e. BGRA in memory here.
+            let coverage = data[src + 3] as f32 / 255.0;
+            if coverage <= 0.0 {
+                continue;
+            }
+
+            let dst = pixels[row * w + col];
+            let inv = 1.0 - coverage;
+            let blend = |src_c: f32, dst_c: u32| {
+                (src_c * coverage + dst_c as f32 * inv).round().min(255.0) as u32
+            };
+            let a = (coverage * 255.0 + ((dst >> 24) & 0xFF) as f32 * inv)
+                .round()
+                .min(255.0) as u32;
+
+            pixels[row * w + col] = (a << 24)
+                | (blend(text_r, (dst >> 16) & 0xFF) << 16)
+                | (blend(text_g, (dst >> 8) & 0xFF) << 8)
+                | blend(text_b, dst & 0xFF);
+        }
+    }
+}
+
+/// Paint the rounded pill that sits behind a drag-preview label.
+fn fill_label_backdrop(
+    pixels: &mut [u32],
+    w: usize,
+    h: usize,
+    text_width: i32,
+    text_height: i32,
+    backdrop: u32,
+) {
+    let pill_w = (text_width + LABEL_PAD_X * 2).min(w as i32);
+    let pill_h = (text_height + LABEL_PAD_Y * 2).min(h as i32);
+    if pill_w <= 0 || pill_h <= 0 {
+        return;
+    }
+    let x0 = (w as i32 - pill_w) / 2;
+    let y0 = (h as i32 - pill_h) / 2;
+    let radius = LABEL_PAD_RADIUS.min(pill_w / 2).min(pill_h / 2);
+
+    for row in 0..pill_h {
+        for col in 0..pill_w {
+            // Round the corners: outside the corner circle, leave the pixel be.
+            let dx = (radius - col).max(col - (pill_w - 1 - radius)).max(0);
+            let dy = (radius - row).max(row - (pill_h - 1 - radius)).max(0);
+            if dx * dx + dy * dy > radius * radius {
+                continue;
+            }
+            let (x, y) = (x0 + col, y0 + row);
+            if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                continue;
+            }
+            pixels[y as usize * w + x as usize] = backdrop;
+        }
+    }
+}
+
 // ── Drag preview overlay ─────────────────────────────────────────────────
 
 /// Visual overlay showing drop zones during window drag.
@@ -788,12 +920,25 @@ pub struct DragPreview {
 /// Color with alpha for preview zones (ARGB premultiplied)
 const PREVIEW_TAB: u32 = 0x4089b4fa; // blue, semi-transparent
 const PREVIEW_SPLIT: u32 = 0x40a6e3a1; // green, semi-transparent
-const PREVIEW_BORDER: u32 = 0x8089b4fa; // blue, more opaque
+const PREVIEW_SWAP: u32 = 0x40fab387; // peach, semi-transparent
+const PREVIEW_TAB_BORDER: u32 = 0x8089b4fa;
+const PREVIEW_SPLIT_BORDER: u32 = 0x80a6e3a1;
+const PREVIEW_SWAP_BORDER: u32 = 0x80fab387;
+/// Same hue as the zone fill but far less see-through, so the label reads no
+/// matter what window content is behind the overlay.
+const PREVIEW_TAB_LABEL_BG: u32 = 0xd889b4fa;
+const PREVIEW_SPLIT_LABEL_BG: u32 = 0xd8a6e3a1;
+const PREVIEW_SWAP_LABEL_BG: u32 = 0xd8fab387;
+/// Label color: dark enough to read on all three (light) zone tints.
+const PREVIEW_LABEL: u32 = 0x11111b;
 
 impl DragPreview {
+    /// Draw the overlay over `area` — the region the drop will actually
+    /// occupy, as computed by [`crate::pointer_ops::DropZone::preview_rect`].
+    /// `zone` only picks the color here.
     pub fn show(
         &mut self,
-        rect: &Rect,
+        area: &Rect,
         zone: &crate::pointer_ops::DropZone,
         compositor: &WlCompositor,
         wm_proxy: &RiverWindowManagerV1,
@@ -812,32 +957,16 @@ impl DragPreview {
             self.node = Some(node);
         }
 
-        // Compute the preview area based on zone
-        let (px, py, pw, ph) = match zone {
-            DropZone::Tab => (rect.x, rect.y, rect.width, rect.height),
-            DropZone::Top => (rect.x, rect.y, rect.width, rect.height / 4),
-            DropZone::Bottom => (
-                rect.x,
-                rect.y + rect.height * 3 / 4,
-                rect.width,
-                rect.height / 4,
-            ),
-            DropZone::Left => (rect.x, rect.y, rect.width / 4, rect.height),
-            DropZone::Right => (
-                rect.x + rect.width * 3 / 4,
-                rect.y,
-                rect.width / 4,
-                rect.height,
-            ),
-        };
+        let (px, py, pw, ph) = (area.x, area.y, area.width, area.height);
 
         if pw <= 0 || ph <= 0 {
             return;
         }
 
-        let color = match zone {
-            DropZone::Tab => PREVIEW_TAB,
-            _ => PREVIEW_SPLIT,
+        let (color, border, label_bg) = match zone {
+            DropZone::Tab => (PREVIEW_TAB, PREVIEW_TAB_BORDER, PREVIEW_TAB_LABEL_BG),
+            DropZone::Swap => (PREVIEW_SWAP, PREVIEW_SWAP_BORDER, PREVIEW_SWAP_LABEL_BG),
+            _ => (PREVIEW_SPLIT, PREVIEW_SPLIT_BORDER, PREVIEW_SPLIT_LABEL_BG),
         };
 
         // Destroy old buffer
@@ -878,9 +1007,11 @@ impl DragPreview {
         for y in 0..h {
             for x in 0..w {
                 let on_border = y < bw || y >= h - bw || x < bw || x >= w - bw;
-                pixels[y * w + x] = if on_border { PREVIEW_BORDER } else { color };
+                pixels[y * w + x] = if on_border { border } else { color };
             }
         }
+
+        draw_centered_label(pixels, w, h, zone.label(), PREVIEW_LABEL, label_bg);
 
         unsafe {
             libc::munmap(map, size as usize);
