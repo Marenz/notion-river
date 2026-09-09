@@ -9,9 +9,11 @@
   <a href="#features">Features</a> &bull;
   <a href="#how-it-works">How it Works</a> &bull;
   <a href="#getting-started">Getting Started</a> &bull;
+  <a href="#install">Install</a> &bull;
   <a href="#keybindings">Keybindings</a> &bull;
   <a href="#ipc">IPC</a> &bull;
-  <a href="#configuration">Configuration</a>
+  <a href="#configuration">Configuration</a> &bull;
+  <a href="#releasing">Releasing</a>
 </p>
 
 ---
@@ -37,11 +39,13 @@ Unlike dynamic tiling WMs (i3, Sway, Hyprland) where the layout reflows every ti
 
 The result: a predictable, stable workspace that doesn't rearrange itself.
 
+![A notion-river frame tab bar with several windows](docs/img/notion-river-tab-bar.png)
+
 ## Features
 
 ### Tiling
 - **Static split tree** — manual horizontal/vertical splits with adjustable ratios
-- **Tabbed frames** — multiple windows per frame, click tab bar or `Super+n/p` to switch
+- **Tabbed frames** — multiple windows per frame; click the tab bar or use the profile's tab bindings to switch
 - **Empty frame indicators** — visible wireframe cells waiting for windows
 - **Cross-monitor focus & move** — seamless window movement between outputs with edge-position matching
 - **Resize mode** — `Super+R` enters resize mode with absolute direction semantics
@@ -55,7 +59,7 @@ The result: a predictable, stable workspace that doesn't rearrange itself.
 - **Borders** — floating windows get a colored border matching your theme
 
 ### App Bindings
-- **Bind apps to frames** — `Super+F` toggles, `Super+Shift+F` makes exclusive
+- **Bind apps to frames** — built-in profiles provide bindings for normal and exclusive binding
 - **Wildcard matching** — `steam_app_*` binds all Steam games to one frame
 - **Fixed dimensions** — force a resolution per binding (e.g. 1920x1080 for game streaming)
 - **Auto-enforcement** — bound windows are moved to the correct frame automatically
@@ -98,7 +102,17 @@ The result: a predictable, stable workspace that doesn't rearrange itself.
 - `rofi` for app launcher / window switcher
 - `wdisplays` (optional) for one-shot interactive monitor layout edits — notion-river itself owns and remembers the layout via `wlr-output-management-unstable-v1`. Do **not** run kanshi or another wlr-output-management client alongside notion-river.
 
-### Building
+### Install
+
+Download the `.deb`, openSUSE Tumbleweed `.rpm`, or `linux-amd64.tar.gz` from
+the [GitHub Releases page](https://github.com/Marenz/notion-river/releases).
+
+```sh
+sudo dpkg -i notion-river_*_amd64.deb
+sudo zypper in notion-river-*.x86_64.rpm
+```
+
+To build from source instead:
 
 ```sh
 git clone https://github.com/Marenz/notion-river
@@ -216,7 +230,7 @@ border_width = 2
 
 [commands]
 terminal = "foot"
-launcher = ["rofi", "-show", "combi", "-normal-window"]
+launcher = ["notion-rofi-launch"]
 
 [appearance]
 active_border = "#cba6f7"
@@ -254,10 +268,11 @@ river -c ~/.config/river/init
 
 | Binding | Action |
 |---|---|
-| `Super+Return` | Fullscreen toggle |
+| `Super+Return` | Terminal |
 | `Super+p` | Launcher |
 | `Super+Shift+p` | Window switcher |
-| `Super+c` | Close window / unsplit empty frame |
+| `Super+c` | Close focused window |
+| `Super+f` | Fullscreen toggle |
 | `Super+h/j/k/l` | Focus left/down/up/right |
 | `Super+Shift+h/j/k/l` | Move window (cross-monitor) |
 | `Super+s` | Split horizontal |
@@ -266,26 +281,38 @@ river -c ~/.config/river/init
 | `Super+x` | Remove empty frame |
 | `Super+Tab` / `Shift+Tab` | Next / previous tab |
 | `Super+1..6` | Switch workspace |
-| `Super+f` | Toggle app binding |
-| `Super+Shift+f` | Exclusive app binding |
+| `Super+Shift+1..6` | Move window to workspace |
+| `Super+g` / `Super+Shift+g` | Bind app / toggle exclusive binding |
+| `Super+Shift+f` | Toggle floating |
 | `Super+R` | Enter / exit resize mode |
-| `Super+Shift+R` | Restart WM (preserves windows) |
+| `Super+Shift+R` | Reload configuration |
+| `Super+Shift+e` | Exit WM |
 
 ### `i3_neo` profile (Neo layout)
 
 | Binding | Action |
 |---|---|
 | `Super+Space` | Terminal |
+| `Super+Return` | Fullscreen toggle |
 | `Super+o` | Launcher |
 | `Super+Shift+o` | Window switcher |
-| `Super+c` | Close / unsplit |
+| `Super+c` | Close focused window |
 | `Super+i/a/l/e` | Focus (Neo directions) |
+| `Super+Arrow keys` | Focus in the arrow direction |
 | `Super+Shift+i/a/l/e` | Move window |
+| `Super+Shift+Arrow keys` | Move window in the arrow direction |
 | `Super+b` | Split horizontal |
 | `Super+v` | Split vertical |
+| `Super+t` | Toggle split orientation |
 | `Super+n/p` | Next / previous tab |
 | `Super+1..4` | Workspaces (primary) |
 | `Alt+1..3` | Workspaces (secondary) |
+| `Super+Shift+1..4`, `Alt+Shift+1..3` | Move window to workspace |
+| `Super+f` / `Super+Shift+f` | Bind app / toggle exclusive binding |
+| `Super+Shift+Space` | Toggle floating |
+| `Super+R` | Enter / exit resize mode |
+| `Super+Shift+c` | Reload configuration |
+| `Super+Shift+r` | Restart WM |
 
 ### Mouse
 
@@ -308,12 +335,16 @@ Unix socket at `$XDG_RUNTIME_DIR/notion-river.sock`. Use `notion-ctl`:
 notion-ctl list-windows                         # JSON list of all windows
 notion-ctl list-workspaces                      # JSON list of workspaces
 notion-ctl focus-window <id>                    # Focus window (switches workspace if needed)
+notion-ctl focus-window-by-identifier <id>      # Focus by River's stable identifier
 notion-ctl switch-workspace <name>              # Switch to workspace
 notion-ctl subscribe-workspaces                 # Stream all workspace state changes (waybar)
 notion-ctl subscribe-workspace <name>           # Stream single workspace state (waybar)
+notion-ctl subscribe-output <output>            # Stream state for one output
 notion-ctl bind <app_id> <ws> <frame> [WxH]    # Bind app to frame
 notion-ctl unbind <app_id>                      # Remove binding
-notion-ctl set-fixed-dimensions <app_id> <WxH>  # Fixed window size
+notion-ctl set-fixed-dimensions <app_id> <WxH|clear> # Set or clear fixed window size
+notion-ctl save-monitors                         # Persist current monitor layout
+notion-ctl forget-monitors                       # Forget saved monitor layouts
 ```
 
 ### Event-driven waybar
@@ -350,6 +381,13 @@ All tab bar and border colors are configurable in `config.toml` under `[appearan
 | `empty_focused` | Empty frame indicator (focused) |
 | `empty_unfocused` | Empty frame indicator (unfocused) |
 | `monitor_colors` | Per-monitor accent colors for waybar |
+
+## Releasing
+
+Commit the release changes, then tag and push `vX.Y.Z`. The tag-triggered
+package workflow uses that tag as the package version and publishes the `.deb`,
+openSUSE Tumbleweed `.rpm` (including debug packages), and `linux-amd64.tar.gz`
+release assets.
 
 ## License
 
