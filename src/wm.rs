@@ -9,7 +9,7 @@ use crate::actions::Action;
 use crate::bindings::{get_profile_bindings, parse_all_bindings, Binding};
 use crate::config::Config;
 use crate::decorations::{DecorationManager, EmptyFrameManager};
-use crate::layout::{FrameId, Rect, WindowRef};
+use crate::layout::{FloatRect, FrameId, Rect, WindowRef};
 use crate::workspace::{OutputId, WorkspaceManager};
 
 use crate::protocol::{
@@ -297,6 +297,22 @@ pub enum SeatOp {
         h_boundary_path: Option<Vec<bool>>,
         /// Path to the vertical split boundary grabbed at drag start.
         v_boundary_path: Option<Vec<bool>>,
+    },
+    /// Resize one half of a floating split by dragging its edges.
+    ResizeFloat {
+        /// Path (from the focused workspace root) to the floating split.
+        split_path: Vec<bool>,
+        /// Which half is being resized.
+        first_half: bool,
+        /// Which edges follow the pointer.
+        grab_left: bool,
+        grab_right: bool,
+        grab_top: bool,
+        grab_bottom: bool,
+        /// The half's fractional rect at drag start.
+        start_rect: FloatRect,
+        /// The floating split's area at drag start, to normalize the pointer.
+        start_area: Rect,
     },
 }
 
