@@ -54,9 +54,41 @@ pub enum SavedNode {
     Split {
         orientation: String, // "h" or "v"
         ratio: f32,
+        /// Whether this split was in floating mode. Defaults false so old
+        /// state files load unchanged.
+        #[serde(default)]
+        floating: bool,
+        /// Fractional rect of the first half in floating mode.
+        #[serde(default = "saved_float_first_default")]
+        float_first: SavedFloatRect,
+        /// Fractional rect of the second half in floating mode.
+        #[serde(default = "saved_float_second_default")]
+        float_second: SavedFloatRect,
         first: Box<SavedNode>,
         second: Box<SavedNode>,
     },
+}
+
+fn saved_float_first_default() -> SavedFloatRect {
+    SavedFloatRect {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    }
+}
+
+fn saved_float_second_default() -> SavedFloatRect {
+    saved_float_first_default()
+}
+
+/// Serialized form of a [`crate::layout::FloatRect`].
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct SavedFloatRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -140,6 +172,9 @@ fn save_node(node: &SplitNode, windows: &[crate::wm::ManagedWindow]) -> SavedNod
         SplitNode::Split {
             orientation,
             ratio,
+            floating,
+            float_first,
+            float_second,
             first,
             second,
         } => SavedNode::Split {
@@ -148,6 +183,19 @@ fn save_node(node: &SplitNode, windows: &[crate::wm::ManagedWindow]) -> SavedNod
                 Orientation::Vertical => "v".to_string(),
             },
             ratio: *ratio,
+            floating: *floating,
+            float_first: SavedFloatRect {
+                x: float_first.x,
+                y: float_first.y,
+                width: float_first.width,
+                height: float_first.height,
+            },
+            float_second: SavedFloatRect {
+                x: float_second.x,
+                y: float_second.y,
+                width: float_second.width,
+                height: float_second.height,
+            },
             first: Box::new(save_node(first, windows)),
             second: Box::new(save_node(second, windows)),
         },
@@ -282,6 +330,9 @@ fn restore_node(saved: &SavedNode) -> SplitNode {
         SavedNode::Split {
             orientation,
             ratio,
+            floating,
+            float_first,
+            float_second,
             first,
             second,
         } => SplitNode::Split {
@@ -290,6 +341,19 @@ fn restore_node(saved: &SavedNode) -> SplitNode {
                 _ => Orientation::Vertical,
             },
             ratio: *ratio,
+            floating: *floating,
+            float_first: crate::layout::FloatRect {
+                x: float_first.x,
+                y: float_first.y,
+                width: float_first.width,
+                height: float_first.height,
+            },
+            float_second: crate::layout::FloatRect {
+                x: float_second.x,
+                y: float_second.y,
+                width: float_second.width,
+                height: float_second.height,
+            },
             first: Box::new(restore_node(first)),
             second: Box::new(restore_node(second)),
         },
@@ -384,5 +448,105 @@ fn count_leaves(node: &SavedNode) -> usize {
     match node {
         SavedNode::Leaf { .. } => 1,
         SavedNode::Split { first, second, .. } => count_leaves(first) + count_leaves(second),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn floating_split() -> SavedNode {
+        SavedNode::Split {
+            orientation: "h".to_string(),
+            ratio: 0.5,
+            floating: true,
+            float_first: SavedFloatRect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.8,
+                height: 0.5,
+            },
+            float_second: SavedFloatRect {
+                x: 0.4,
+                y: 0.3,
+                width: 0.6,
+                height: 0.7,
+            },
+            first: Box::new(SavedNode::Leaf {
+                windows: vec![],
+                active_tab: 0,
+            }),
+            second: Box::new(SavedNode::Leaf {
+                windows: vec![],
+                active_tab: 0,
+            }),
+        }
+    }
+
+    #[test]
+    fn saved_floating_split_round_trips() {
+        let node = floating_split();
+        let json = serde_json::to_string(&node).unwrap();
+        let back: SavedNode = serde_json::from_str(&json).unwrap();
+
+        match back {
+            SavedNode::Split {
+                floating,
+                float_first,
+                float_second,
+                ..
+            } => {
+                assert!(floating);
+                assert_eq!(float_first.width, 0.8);
+                assert_eq!(float_second.height, 0.7);
+            }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn old_state_without_floating_fields_loads_as_normal_split() {
+        // A state file written before floating existed has no floating or
+        // float rect fields. It must deserialize to a non-floating split with
+        // full default rects.
+        let json = r#"{"Split": {
+            "orientation": "h",
+            "ratio": 0.5,
+            "first": {"Leaf": {"windows": [], "active_tab": 0}},
+            "second": {"Leaf": {"windows": [], "active_tab": 0}}
+        }}"#;
+        let node: SavedNode = serde_json::from_str(json).unwrap();
+        match node {
+            SavedNode::Split {
+                floating,
+                float_first,
+                float_second,
+                ..
+            } => {
+                assert!(!floating);
+                assert_eq!(float_first.width, 1.0);
+                assert_eq!(float_second.width, 1.0);
+            }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn restore_node_rebuilds_floating_split() {
+        let node = floating_split();
+        let restored = restore_node(&node);
+        match restored {
+            crate::layout::SplitNode::Split {
+                floating,
+                float_first,
+                float_second,
+                ..
+            } => {
+                assert!(floating);
+                assert!((float_first.width - 0.8).abs() < 1e-6);
+                assert!((float_second.x - 0.4).abs() < 1e-6);
+            }
+            _ => panic!("expected split"),
+        }
     }
 }
