@@ -142,8 +142,8 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 ## Built-in Keybinding Profiles
 
-- `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher, Super+Shift+o window switcher, Super+b/v split, Super+n/p tabs
-- `notion`: Vim-style (h/j/k/l), Super+Return terminal, Super+p launcher, Super+Shift+p window switcher, Super+s/v split, Super+Tab tabs
+- `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher (one menu: windows + apps), Super+b/v split, Super+n/p tabs
+- `notion`: Vim-style (h/j/k/l), Super+Return terminal, Super+p launcher (one menu: windows + apps), Super+s/v split, Super+Tab tabs
 - Both: media keys (XF86Audio*, XF86MonBrightness*), Super+Shift+R restart, Super+t toggle split, Super+f bind app to frame, Super+Shift+f exclusive bind, Super+Return fullscreen toggle, Super+R resize mode, Ctrl+F12 keyboard layout toggle
 
 ## Config Files
@@ -159,9 +159,8 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `~/.config/waybar/style.css` — Waybar styling (Catppuccin Mocha, per-monitor colors, floating pill modules, rounded corners)
 - `~/.config/rofi/config.rasi` — Rofi config (Catppuccin Mocha Mauve theme); example shipped at `config-examples/rofi/config.rasi`, installed to `/usr/share/notion-river/examples/rofi/`
 - `~/.config/rofi/catppuccin-mocha.rasi` — Rofi theme file (example shipped alongside `config.rasi`)
-- `notion-rofi-launch` — packaged unified launcher (`config-examples/notion-rofi-launch`, installed to `/usr/bin`). **The primary rofi entry point**: one box that switches to an open window or launches an app, via rofi's native `combi` (`window,drun`) on the focused output. Requires a rofi build with `ext-foreign-toplevel-list-v1` support in the window modi plus the `window-activate-command` option (see pitfall below); focus is delegated to `notion-ctl focus-window-by-identifier {identifier}` via `~/.config/rofi/config.rasi`. Set as `commands.launcher = ["notion-rofi-launch"]` (bound to `Super+o`).
-- `notion-rofi-window-switch` — packaged window switcher wrapper (`config-examples/notion-rofi-window-switch`, installed to `/usr/bin`). Fallback for stock rofi builds without the foreign-toplevel patch: runs `rofi -show window-switch -m <output>` using the `notion-rofi-window-mode` script-modi. Set as `commands.window_switcher = ["notion-rofi-window-switch"]` (bound to `Super+Shift+o` / `Super+Shift+p`). The `SpawnWindowSwitcher` action (`spawn_window_switcher` / `window_switcher`) runs `commands.window_switcher`.
-- `notion-rofi-window-mode` — packaged rofi script-modi (`config-examples/notion-rofi-window-mode`, installed to `/usr/bin`). Backs the fallback switcher: lists open windows and launchable `.desktop` apps in one list; rows carry a hidden `win:<id>`/`app:<desktop-id>` action in rofi's info field — windows focused via `notion-ctl focus-window`, apps launched via `gtk-launch`. Has an `XDG_RUNTIME_DIR` fallback for rofi's sanitized env.
+- `notion-rofi-launch` — packaged unified launcher (`config-examples/notion-rofi-launch`, installed to `/usr/bin`). **The one rofi entry point**, bound to `Super+o`: shows the `notion-rofi-window-mode` script-modi on the focused output, a single searchable list of open windows and launchable apps. Window focus goes through `notion-ctl focus-window` (not the built-in rofi `window` modi — see pitfall below). Set as `commands.launcher = ["notion-rofi-launch"]`.
+- `notion-rofi-window-mode` — packaged rofi script-modi (`config-examples/notion-rofi-window-mode`, installed to `/usr/bin`). Backs `notion-rofi-launch`: lists open windows and launchable `.desktop` apps in one list; rows carry a hidden `win:<id>`/`app:<desktop-id>` action in rofi's info field — windows focused via `notion-ctl focus-window`, apps launched via `gtk-launch`. Has an `XDG_RUNTIME_DIR` fallback for rofi's sanitized env.
 - `/usr/share/wayland-sessions/river-custom.desktop` — lightdm session entry
 - `completions/notion-ctl.fish` — fish shell completions for `notion-ctl` (dynamic workspace/window/app_id completion via the control socket; jq optional for richer descriptions). Installed to `/usr/share/fish/vendor_completions.d/` by the packages; copy to `~/.config/fish/completions/` for local installs.
 

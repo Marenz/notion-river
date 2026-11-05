@@ -61,8 +61,6 @@ pub enum Action {
     SpawnTerminal,
     /// Spawn the configured launcher.
     SpawnLauncher,
-    /// Spawn the configured window switcher.
-    SpawnWindowSwitcher,
     /// Spawn an arbitrary command.
     Spawn(Vec<String>),
 
@@ -153,7 +151,12 @@ impl Action {
 
             "spawn_terminal" | "terminal" => Action::SpawnTerminal,
             "spawn_launcher" | "launcher" => Action::SpawnLauncher,
-            "spawn_window_switcher" | "window_switcher" => Action::SpawnWindowSwitcher,
+            "spawn_window_switcher" | "window_switcher" => {
+                log::warn!(
+                    "spawn_window_switcher/window_switcher is removed: Super+o already opens the unified window+launcher menu"
+                );
+                Action::None
+            }
             "spawn" => {
                 if args.is_empty() {
                     log::warn!("spawn action needs at least one arg");
