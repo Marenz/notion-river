@@ -277,6 +277,19 @@ impl WindowManager {
             }
         }
 
+        // In a floating split the two halves may overlap, so the focused half
+        // must be drawn on top. Reorder only when focus is actually inside a
+        // floating split; normal tiled stacking order stays exactly as before.
+        let focused_in_floating = self.workspaces.workspaces[focused_ws_id.0]
+            .root
+            .floating_split_path(focused_frame_id)
+            .is_some();
+        if focused_in_floating {
+            // Stable sort: the focused command moves last, everything else
+            // keeps its relative order.
+            draw_cmds.sort_by_key(|c| c.is_focused);
+        }
+
         // Execute draw commands
         for cmd in &draw_cmds {
             let win = &self.windows[cmd.win_idx];
