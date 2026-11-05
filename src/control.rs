@@ -34,6 +34,7 @@ pub enum ControlRequest {
     Unbind(String),
     SaveMonitors,
     ForgetMonitors,
+    ToggleFloatingSplit,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -461,6 +462,13 @@ fn handle_client(
                 .lock()
                 .expect("control pending poisoned")
                 .push(ControlRequest::ForgetMonitors);
+            let _ = stream.write_all(b"OK\n");
+        }
+        "toggle-floating-split" => {
+            pending
+                .lock()
+                .expect("control pending poisoned")
+                .push(ControlRequest::ToggleFloatingSplit);
             let _ = stream.write_all(b"OK\n");
         }
         "set-log-level" => {

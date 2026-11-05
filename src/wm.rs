@@ -600,6 +600,9 @@ impl WindowManager {
                 crate::control::ControlRequest::ForgetMonitors => {
                     self.forget_monitors_pending = true;
                 }
+                crate::control::ControlRequest::ToggleFloatingSplit => {
+                    self.toggle_floating_split();
+                }
                 crate::control::ControlRequest::SetFixedDimensions(app_id, dims) => {
                     // Apply to all current bindings for this app
                     if let Some(locs) = self.app_bindings.bindings.get(&app_id) {

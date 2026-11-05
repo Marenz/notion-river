@@ -50,6 +50,11 @@ The result: a predictable, stable workspace that doesn't rearrange itself.
 - **Cross-monitor focus & move** — seamless window movement between outputs with edge-position matching
 - **Resize mode** — `Super+R` enters resize mode with absolute direction semantics
 
+### Floating splits
+- **Toggle per split** — `Super+Shift+t` turns a split into a floating split: its two halves are no longer bound by the split line
+- **Independent resize** — `Super+RMB` resizes one half freely; the halves may overlap
+- **Focused on top** — the focused half is always drawn above its sibling
+
 ### Floating
 - **Auto-float dialogs** — secondary windows from bound apps float automatically
 - **Auto-float notifications** — untitled popups (e.g. Thunderbird) float in the top-right corner
@@ -283,6 +288,7 @@ river -c ~/.config/river/init
 | `Super+s` | Split horizontal |
 | `Super+v` | Split vertical |
 | `Super+t` | Toggle split orientation |
+| `Super+Shift+t` | Toggle floating split |
 | `Super+x` | Remove empty frame |
 | `Super+Tab` / `Shift+Tab` | Next / previous tab |
 | `Super+1..6` | Switch workspace |
@@ -308,6 +314,7 @@ river -c ~/.config/river/init
 | `Super+w` | Split horizontal |
 | `Super+v` | Split vertical |
 | `Super+t` | Toggle split orientation |
+| `Super+Shift+t` | Toggle floating split |
 | `Super+n/p` | Next / previous tab |
 | `Super+1..4` | Workspaces (primary) |
 | `Alt+1..3` | Workspaces (secondary) |
