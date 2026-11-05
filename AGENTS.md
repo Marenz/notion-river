@@ -142,7 +142,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 ## Built-in Keybinding Profiles
 
-- `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher (one menu: windows + apps), Super+b/v split, Super+n/p tabs
+- `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher (one menu: windows + apps), Super+w/v split, Super+n/p tabs
 - `notion`: Vim-style (h/j/k/l), Super+Return terminal, Super+p launcher (one menu: windows + apps), Super+s/v split, Super+Tab tabs
 - Both: media keys (XF86Audio*, XF86MonBrightness*), Super+Shift+R restart, Super+t toggle split, Super+f bind app to frame, Super+Shift+f exclusive bind, Super+Return fullscreen toggle, Super+R resize mode, Ctrl+F12 keyboard layout toggle
 

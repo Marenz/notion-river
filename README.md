@@ -305,7 +305,7 @@ river -c ~/.config/river/init
 | `Super+Arrow keys` | Focus in the arrow direction |
 | `Super+Shift+i/a/l/e` | Move window |
 | `Super+Shift+Arrow keys` | Move window in the arrow direction |
-| `Super+b` | Split horizontal |
+| `Super+w` | Split horizontal |
 | `Super+v` | Split vertical |
 | `Super+t` | Toggle split orientation |
 | `Super+n/p` | Next / previous tab |

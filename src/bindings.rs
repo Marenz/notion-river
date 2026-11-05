@@ -139,13 +139,11 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super+shift", "Right", "move", &["right"]);
 
     // ── Layout manipulation ──
-    bind(&mut b, "super", "b", "split_horizontal", &[]);
+    bind(&mut b, "super", "w", "split_horizontal", &[]);
     bind(&mut b, "super", "v", "split_vertical", &[]);
     bind(&mut b, "super", "t", "toggle_split", &[]);
 
     // ── Tabbing ──
-    bind(&mut b, "super", "w", "next_tab", &[]);
-    bind(&mut b, "super", "q", "prev_tab", &[]);
     bind(&mut b, "super", "n", "next_tab", &[]);
     bind(&mut b, "super", "p", "prev_tab", &[]);
 
