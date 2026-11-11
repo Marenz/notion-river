@@ -3,6 +3,17 @@ name: Package
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to package
+        required: true
+        type: string
+      package:
+        description: Package format to rebuild
+        type: choice
+        default: rpm
+        options: [rpm, deb, all]
 
 permissions:
   contents: write
@@ -13,10 +24,12 @@ env:
 jobs:
   deb:
     name: Build .deb
+    if: github.event_name != 'workflow_dispatch' || inputs.package != 'rpm'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           submodules: recursive
 
       - name: Install build dependencies
@@ -61,7 +74,9 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build .deb package
         run: |
@@ -135,10 +150,12 @@ jobs:
       - name: Upload .deb
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: "*.deb"
 
   rpm:
     name: Build .rpm
+    if: github.event_name != 'workflow_dispatch' || inputs.package != 'deb'
     runs-on: ubuntu-latest
     container:
       image: registry.opensuse.org/opensuse/tumbleweed:latest
@@ -152,7 +169,7 @@ jobs:
             rpm-build \
             cargo \
             rust \
-            zig \
+            xz \
             pkg-config \
             wayland-devel \
             wayland-protocols-devel \
@@ -169,11 +186,19 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           submodules: recursive
+
+      - name: Install Zig for the pinned River version
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
 
       - name: Extract version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare source tarball
         run: |
@@ -190,6 +215,7 @@ jobs:
           VER=${{ steps.version.outputs.version }}
           rpmbuild -bb ~/rpmbuild/SPECS/notion-river.spec \
             --define "version ${VER}" \
+            --define "zig $(command -v zig)" \
             --define "_topdir $HOME/rpmbuild"
 
       - name: Copy RPM to workspace
@@ -198,4 +224,5 @@ jobs:
       - name: Upload .rpm
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: "*.rpm"
