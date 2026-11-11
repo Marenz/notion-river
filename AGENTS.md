@@ -148,6 +148,11 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 ## Common Pitfalls
 
+- RPM CI must install Zig 0.16.0 explicitly for River v0.4.7 and pass its full
+  path through `rpmbuild --define "zig ..."`; Tumbleweed's distro Zig is older.
+  The Package workflow accepts `workflow_dispatch` inputs `tag` and `package`
+  (`rpm`, `deb`, `all`) to repair assets on an existing release without retagging.
+
 - Live workspace moves use `notion-ctl move-workspace [workspace] <output>` or the
   `move_workspace_to_output` keybinding action. Only the moved workspace changes
   output; the destination occupant is hidden, never swapped. Runtime destinations
