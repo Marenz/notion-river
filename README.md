@@ -337,6 +337,8 @@ notion-ctl list-workspaces                      # JSON list of workspaces
 notion-ctl focus-window <id>                    # Focus window (switches workspace if needed)
 notion-ctl focus-window-by-identifier <id>      # Focus by River's stable identifier
 notion-ctl switch-workspace <name>              # Switch to workspace
+notion-ctl move-workspace term laptop           # Move term to the laptop now
+notion-ctl move-workspace DP-2                  # Move the focused workspace
 notion-ctl subscribe-workspaces                 # Stream all workspace state changes (waybar)
 notion-ctl subscribe-workspace <name>           # Stream single workspace state (waybar)
 notion-ctl subscribe-output <output>            # Stream state for one output
@@ -346,6 +348,23 @@ notion-ctl set-fixed-dimensions <app_id> <WxH|clear> # Set or clear fixed window
 notion-ctl save-monitors                         # Persist current monitor layout
 notion-ctl forget-monitors                       # Forget saved monitor layouts
 ```
+
+### Moving a workspace between monitors
+
+`notion-ctl move-workspace [workspace] <output>` moves and focuses one workspace
+immediately. Omit the workspace name to move the focused workspace. Output matchers
+are connector names (`eDP-1`, `DP-2`), `laptop`, `center`, `portrait`, or a logical
+position such as `0,0`. Workspace names containing spaces can be quoted.
+
+The destination's previous workspace becomes hidden; it is **not swapped** onto
+another monitor. The source monitor is left empty, and other workspaces stay put.
+Splits, tabs, and windows move together. Invalid workspace/output names fail without
+changing the layout. No config file or saved monitor preference is modified.
+
+The workspace remembers its new output for this session, including when switched
+away and back. Disconnecting that output or restarting the WM restores normal
+configured output selection. To bind this operation to a key, use the
+`move_workspace_to_output` action with an output matcher in `args`.
 
 ### Event-driven waybar
 

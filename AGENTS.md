@@ -148,6 +148,15 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 ## Common Pitfalls
 
+- Live workspace moves use `notion-ctl move-workspace [workspace] <output>` or the
+  `move_workspace_to_output` keybinding action. Only the moved workspace changes
+  output; the destination occupant is hidden, never swapped. Runtime destinations
+  survive switching away/back and unrelated hotplug, but clear on destination
+  disconnect or WM restart. Never implement a live move by editing the user's
+  `preferred_output`, config, or monitor memory.
+- `move-workspace` IPC waits for the main-loop result. Its handler must notify
+  the self-pipe before waiting, otherwise the listener and main loop deadlock.
+
 - TOML top-level keys must come before any `[section]` headers.
 - River reads XKB env vars at startup, not from the init script. Set them in `start-river` before `exec river`.
 - `kill -9` on River leaves stale logind sessions that block GPU access. Use `loginctl terminate-session` to clean up.
