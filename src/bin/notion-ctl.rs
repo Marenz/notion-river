@@ -12,7 +12,7 @@ fn socket_path() -> PathBuf {
 
 fn usage() {
     eprintln!(
-        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl subscribe-workspaces\n  notion-ctl subscribe-workspace <name>\n  notion-ctl subscribe-output <output-name>\n  notion-ctl focus-window <id>\n  notion-ctl focus-window-by-identifier <identifier>\n  notion-ctl switch-workspace <name>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>\n  notion-ctl save-monitors\n  notion-ctl forget-monitors"
+        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl subscribe-workspaces\n  notion-ctl subscribe-workspace <name>\n  notion-ctl subscribe-output <output-name>\n  notion-ctl focus-window <id>\n  notion-ctl focus-window-by-identifier <identifier>\n  notion-ctl switch-workspace <name>\n  notion-ctl move-workspace [workspace] <output>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>\n  notion-ctl save-monitors\n  notion-ctl forget-monitors"
     );
 }
 
@@ -65,6 +65,13 @@ fn main() {
                 std::process::exit(2);
             }
             format!("switch-workspace {}", args[1..].join(" "))
+        }
+        "move-workspace" => {
+            if args.len() < 2 {
+                usage();
+                std::process::exit(2);
+            }
+            format!("move-workspace {}", args[1..].join(" "))
         }
         "set-fixed-dimensions" => {
             if args.len() != 3 {
@@ -142,6 +149,9 @@ fn main() {
         match stream.read_to_string(&mut response) {
             Ok(_) => {
                 print!("{response}");
+                if response.starts_with("ERR ") {
+                    std::process::exit(1);
+                }
             }
             Err(e) => {
                 eprintln!("failed to read response: {e}");

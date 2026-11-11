@@ -45,6 +45,8 @@ pub enum Action {
     // ── Workspaces ──
     /// Switch to workspace by name.
     SwitchWorkspace(String),
+    /// Move the focused workspace to a connected output without changing defaults.
+    MoveWorkspaceToOutput(String),
 
     // ── Resize mode ──
     /// Enter resize mode.
@@ -125,6 +127,15 @@ impl Action {
                     Action::SwitchWorkspace(name.clone())
                 } else {
                     log::warn!("workspace action needs workspace name arg");
+                    Action::None
+                }
+            }
+
+            "move_workspace_to_output" => {
+                if let Some(output) = args.first() {
+                    Action::MoveWorkspaceToOutput(output.clone())
+                } else {
+                    log::warn!("move_workspace_to_output needs an output matcher");
                     Action::None
                 }
             }

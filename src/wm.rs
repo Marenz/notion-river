@@ -384,7 +384,7 @@ impl WindowManager {
 
         self.handle_pending_actions(proxy, river_outputs);
         let t_actions = manage_t0.elapsed();
-        self.handle_control_requests();
+        self.handle_control_requests(river_outputs);
         let t_control = manage_t0.elapsed();
         self.enforce_app_bindings();
         let t_bindings = manage_t0.elapsed();
@@ -511,7 +511,13 @@ impl WindowManager {
         }
     }
 
-    fn handle_control_requests(&mut self) {
+    fn handle_control_requests(
+        &mut self,
+        river_outputs: &std::collections::HashMap<
+            u64,
+            crate::protocol::river_output_v1::RiverOutputV1,
+        >,
+    ) {
         let requests = self.control.take_pending();
         for req in requests {
             match req {
@@ -523,6 +529,10 @@ impl WindowManager {
                 }
                 crate::control::ControlRequest::SwitchWorkspace(name) => {
                     self.switch_workspace_hiding_hidden_windows(&name);
+                }
+                crate::control::ControlRequest::MoveWorkspace { name, output, reply } => {
+                    let result = self.move_workspace_to_output(name.as_deref(), &output, river_outputs);
+                    let _ = reply.send(result);
                 }
                 crate::control::ControlRequest::Bind {
                     app_id,

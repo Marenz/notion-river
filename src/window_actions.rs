@@ -399,6 +399,12 @@ impl WindowManager {
                 ws.root.resize_frame(frame_id, dir, delta);
             }
 
+            Action::MoveWorkspaceToOutput(output) => {
+                if let Err(error) = self.move_workspace_to_output(None, &output, river_outputs) {
+                    log::warn!("move_workspace_to_output: {error}");
+                }
+            }
+
             Action::SpawnTerminal => {
                 let cmd = self.config.commands.terminal.clone();
                 spawn_command(&[&cmd]);
@@ -441,7 +447,63 @@ impl WindowManager {
 
     pub(crate) fn switch_workspace_hiding_hidden_windows(&mut self, name: &str) {
         self.workspaces.switch_workspace(name);
+        self.hide_hidden_workspace_windows();
+    }
 
+    pub(crate) fn move_workspace_to_output(
+        &mut self,
+        name: Option<&str>,
+        output: &str,
+        river_outputs: &std::collections::HashMap<
+            u64,
+            crate::protocol::river_output_v1::RiverOutputV1,
+        >,
+    ) -> Result<(), String> {
+        let source = name.and_then(|name| self.workspaces.workspace_by_name(name))
+            .unwrap_or_else(|| self.workspaces.focused_workspace())
+            .active_output.and_then(|id| self.workspaces.output(id))
+            .map(|output| output.usable_rect());
+        self.workspaces.move_workspace_to_output(name, output)?;
+        let workspace = self.workspaces.focused_workspace();
+        let focused_frame = workspace.focused_frame;
+        let frames = workspace.root.all_frame_ids();
+        let destination_output = workspace.active_output.and_then(|id| self.workspaces.output(id))
+            .expect("a successful move has a connected output");
+        let destination = destination_output.usable_rect();
+        for win in &mut self.windows {
+            if !win.frame_id.is_some_and(|id| frames.contains(&id)) {
+                continue;
+            }
+            if win.fullscreen {
+                if let Some(proxy) = river_outputs.get(&destination_output.id.0) {
+                    win.proxy.fullscreen(proxy);
+                }
+                if win.floating {
+                    win.float_x = destination_output.x;
+                    win.float_y = destination_output.y;
+                    win.proxy.propose_dimensions(destination_output.width, destination_output.height);
+                    win.last_proposed_width = destination_output.width;
+                    win.last_proposed_height = destination_output.height;
+                }
+            } else if win.floating {
+                if let Some(source) = source {
+                    win.float_x = (win.float_x + destination.x - source.x)
+                        .clamp(destination.x, destination.x + (destination.width - win.width).max(0));
+                    win.float_y = (win.float_y + destination.y - source.y)
+                        .clamp(destination.y, destination.y + (destination.height - win.height).max(0));
+                } else {
+                    win.position_floating(destination);
+                }
+            }
+        }
+        self.hide_hidden_workspace_windows();
+        if self.config.general.cursor_follows_focus {
+            self.warp_cursor_to_frame(focused_frame);
+        }
+        Ok(())
+    }
+
+    fn hide_hidden_workspace_windows(&mut self) {
         let visible_frame_ids: std::collections::HashSet<FrameId> = self
             .workspaces
             .visible_workspaces()

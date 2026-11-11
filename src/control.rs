@@ -19,6 +19,11 @@ pub enum ControlRequest {
     FocusWindow(u64),
     FocusWindowByIdentifier(String),
     SwitchWorkspace(String),
+    MoveWorkspace {
+        name: Option<String>,
+        output: String,
+        reply: std::sync::mpsc::Sender<Result<(), String>>,
+    },
     SetFixedDimensions(String, Option<(i32, i32)>),
     Bind {
         app_id: String,
@@ -121,6 +126,7 @@ impl ControlState {
                     &pending_thread,
                     &snapshot_thread,
                     &subscribers_thread,
+                    write_fd,
                 );
                 // Signal the main loop to trigger a manage cycle
                 unsafe { libc::write(write_fd, b"x".as_ptr() as _, 1) };
@@ -163,6 +169,7 @@ fn handle_client(
     pending: &Arc<Mutex<Vec<ControlRequest>>>,
     snapshot: &Arc<Mutex<Snapshot>>,
     subscribers: &Arc<Mutex<Vec<Subscriber>>>,
+    notify_fd: std::os::fd::RawFd,
 ) {
     // Try line-based read first (for subscribe-workspaces), fall back to
     // read-to-EOF for legacy clients that shutdown(Write) before we read.
@@ -320,6 +327,30 @@ fn handle_client(
                 .expect("control pending poisoned")
                 .push(ControlRequest::SwitchWorkspace(name));
             let _ = stream.write_all(b"OK\n");
+        }
+        "move-workspace" => {
+            let args = parts.collect::<Vec<_>>();
+            let Some((output, names)) = args.split_last() else {
+                let _ = stream.write_all(b"ERR usage: move-workspace [workspace] <output>\n");
+                return;
+            };
+            let name = (!names.is_empty()).then(|| names.join(" "));
+            let (reply, response) = std::sync::mpsc::channel();
+            pending.lock().expect("control pending poisoned")
+                .push(ControlRequest::MoveWorkspace {
+                    name,
+                    output: (*output).to_owned(),
+                    reply,
+                });
+            // This command waits for the actual operation, so wake the main loop
+            // now rather than after handle_client returns.
+            unsafe { libc::write(notify_fd, b"x".as_ptr() as _, 1) };
+            let message = match response.recv_timeout(std::time::Duration::from_secs(3)) {
+                Ok(Ok(())) => "OK\n".to_owned(),
+                Ok(Err(error)) => format!("ERR {error}\n"),
+                Err(_) => "ERR workspace move timed out\n".to_owned(),
+            };
+            let _ = stream.write_all(message.as_bytes());
         }
         "bind" => {
             // Usage: bind <app_id> <workspace> <frame_index> [WxH]
@@ -623,5 +654,53 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
     Snapshot {
         windows,
         workspaces,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    fn move_request(command: &str, expected_name: Option<&str>, result: Result<(), String>) -> String {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        let write = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+        let pending = Arc::new(Mutex::new(Vec::new()));
+        let queued = Arc::clone(&pending);
+        let handler = std::thread::spawn(move || {
+            handle_client(server, &queued, &Arc::new(Mutex::new(Snapshot::default())),
+                &Arc::new(Mutex::new(Vec::new())), write.as_raw_fd());
+        });
+        client.write_all(format!("{command}\n").as_bytes()).unwrap();
+        let mut notify = [0];
+        // The handler must wake the main loop *before* waiting for its reply.
+        let mut poll = libc::pollfd { fd: read.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        assert_eq!(unsafe { libc::poll(&mut poll, 1, 1000) }, 1);
+        assert_eq!(unsafe { libc::read(read.as_raw_fd(), notify.as_mut_ptr() as _, 1) }, 1);
+        let requests = std::mem::take(&mut *pending.lock().unwrap());
+        assert_eq!(requests.len(), 1);
+        let ControlRequest::MoveWorkspace { name, output, reply } = &requests[0] else {
+            panic!("expected a workspace move");
+        };
+        assert_eq!(name.as_deref(), expected_name);
+        assert_eq!(output, "laptop");
+        reply.send(result).unwrap();
+        handler.join().unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        response
+    }
+
+    #[test]
+    fn move_ipc_wakes_main_loop_and_waits_for_result() {
+        assert_eq!(move_request("move-workspace term laptop", Some("term"), Ok(())), "OK\n");
+        assert_eq!(move_request("move-workspace laptop", None, Ok(())), "OK\n");
+        assert_eq!(move_request("move-workspace terminal tools laptop", Some("terminal tools"),
+            Err("no connected output matches: laptop".into())),
+            "ERR no connected output matches: laptop\n");
     }
 }

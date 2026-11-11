@@ -227,6 +227,101 @@ mod tests {
         assert_eq!(workspace_for(&wm, OutputId(30)), Some("social"));
     }
 
+    fn live_move_setup() -> WorkspaceManager {
+        let mut wm = three_workspace_setup();
+        wm.outputs = vec![
+            named_output(10, "eDP-1", "Sharp 0x1515", 0, 1692, 1280, 800),
+            named_output(20, "DP-2", "LG main", 1280, 611, 2560, 1440),
+            named_output(30, "DP-10", "LG portrait", 3840, 0, 1440, 2560),
+        ];
+        wm.reassign_outputs();
+        wm
+    }
+
+    #[test]
+    fn live_move_only_replaces_destination_without_changing_defaults() {
+        let mut wm = live_move_setup();
+        let preferences: Vec<_> = wm.workspaces.iter()
+            .map(|w| w.preferred_output.clone()).collect();
+        let memory = wm.monitor_memory.entries.clone();
+        let frames = wm.workspace_by_name("term").unwrap().root.all_frame_ids();
+
+        wm.move_workspace_to_output(Some("term"), "laptop").unwrap();
+
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("term"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        assert_eq!(workspace_for(&wm, OutputId(30)), Some("social"));
+        assert!(wm.workspace_by_name("work").unwrap().active_output.is_none());
+        assert_eq!(wm.focused_workspace().name, "term");
+        assert_eq!(wm.monitor_memory.entries, memory);
+        assert_eq!(wm.workspaces.iter().map(|w| w.preferred_output.clone())
+            .collect::<Vec<_>>(), preferences);
+        assert_eq!(wm.workspace_by_name("term").unwrap().root.all_frame_ids(), frames);
+    }
+
+    #[test]
+    fn moving_visible_workspace_does_not_swap_or_fill_vacated_output() {
+        let mut wm = live_move_setup();
+        wm.move_workspace_to_output(Some("social"), "eDP-1").unwrap();
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("social"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        assert_eq!(workspace_for(&wm, OutputId(30)), None);
+        assert!(!wm.output_workspace.contains_key(&OutputId(30)));
+        assert!(wm.workspace_by_name("work").unwrap().active_output.is_none());
+    }
+
+    #[test]
+    fn moved_workspace_returns_to_live_destination_when_switched_back() {
+        let mut wm = live_move_setup();
+        wm.move_workspace_to_output(Some("term"), "laptop").unwrap();
+        wm.switch_workspace("work");
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("main"));
+        wm.switch_workspace("term");
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("term"));
+        assert_eq!(workspace_for(&wm, OutputId(30)), Some("social"));
+    }
+
+    #[test]
+    fn live_move_survives_unrelated_hotplug_but_not_destination_disconnect() {
+        let mut wm = live_move_setup();
+        wm.move_workspace_to_output(Some("term"), "laptop").unwrap();
+        wm.remove_output(OutputId(20));
+        wm.reassign_outputs();
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("term"));
+        wm.remove_output(OutputId(10));
+        wm.reassign_outputs();
+        wm.switch_workspace("term");
+        assert_eq!(workspace_for(&wm, OutputId(30)), Some("term"));
+        assert!(!wm.moved_outputs.contains_key(&wm.focused_workspace));
+    }
+
+    #[test]
+    fn live_move_errors_leave_all_assignments_and_focus_untouched() {
+        let mut wm = live_move_setup();
+        let assignments = wm.output_workspace.clone();
+        let focus = wm.focused_workspace;
+        assert!(wm.move_workspace_to_output(Some("missing"), "laptop").is_err());
+        assert!(wm.move_workspace_to_output(Some("term"), "DP-404").is_err());
+        wm.output_mut(OutputId(10)).unwrap().removed = true;
+        assert!(wm.move_workspace_to_output(Some("term"), "laptop").is_err());
+        assert_eq!(wm.output_workspace, assignments);
+        assert_eq!(wm.focused_workspace, focus);
+        assert!(wm.moved_outputs.is_empty());
+    }
+
+    #[test]
+    fn live_move_focused_workspace_and_same_output_are_supported() {
+        let mut wm = live_move_setup();
+        wm.switch_workspace("social");
+        wm.move_workspace_to_output(None, "1280,611").unwrap();
+        assert_eq!(workspace_for(&wm, OutputId(20)), Some("social"));
+        assert_eq!(workspace_for(&wm, OutputId(10)), Some("work"));
+        let assignments = wm.output_workspace.clone();
+        wm.move_workspace_to_output(None, "DP-2").unwrap();
+        assert_eq!(wm.output_workspace, assignments);
+    }
+
     #[test]
     fn memory_overrides_preferred_on_subsequent_runs() {
         let mut wm = three_workspace_setup();
@@ -555,6 +650,8 @@ pub struct WorkspaceManager {
     /// Snapshot of monitor keys present the last time `reassign_outputs` ran.
     /// Used to decide whether the connected-monitor set actually changed.
     last_connected_keys: std::collections::BTreeSet<String>,
+    /// Explicit workspace moves for this session; never written to config or memory.
+    moved_outputs: std::collections::HashMap<WorkspaceId, OutputId>,
 }
 
 impl WorkspaceManager {
@@ -595,6 +692,7 @@ impl WorkspaceManager {
             monitor_memory: crate::monitor_memory::MonitorMemory::load(),
             outputs_changed: false,
             last_connected_keys: std::collections::BTreeSet::new(),
+            moved_outputs: std::collections::HashMap::new(),
         }
     }
 
@@ -664,6 +762,7 @@ impl WorkspaceManager {
     /// alive (just becomes invisible until the monitor returns or the user
     /// switches to it on another monitor).
     pub fn remove_output(&mut self, output_id: OutputId) {
+        self.moved_outputs.retain(|_, target| *target != output_id);
         self.output_workspace.retain(|oid, _| *oid != output_id);
 
         for ws in &mut self.workspaces {
@@ -717,6 +816,13 @@ impl WorkspaceManager {
     /// actually changed (see `connected_monitor_keys_changed`).
     pub fn reassign_outputs(&mut self) {
         let connected_keys = self.connected_monitor_keys();
+        let live_moves: Vec<_> = self.workspaces.iter()
+            .filter(|ws| !ws.auto_created)
+            .filter_map(|ws| {
+                let output = ws.active_output?;
+                (self.moved_outputs.get(&ws.id) == Some(&output))
+                    .then_some((ws.id, output))
+            }).collect();
 
         // Wipe assignments so this function is idempotent and prior partial
         // assignments don't leak into the result.
@@ -730,6 +836,7 @@ impl WorkspaceManager {
             .map(|w| w.id)
             .collect();
         if !auto_ids.is_empty() {
+            self.moved_outputs.retain(|id, _| !auto_ids.contains(id));
             self.workspaces.retain(|w| !w.auto_created);
             // Re-pack ids so they remain dense (vec index = id).
             for (i, ws) in self.workspaces.iter_mut().enumerate() {
@@ -756,8 +863,19 @@ impl WorkspaceManager {
         let mut placed: std::collections::HashSet<WorkspaceId> =
             std::collections::HashSet::new();
 
+        // An unrelated hotplug must not undo a live move on a surviving output.
+        for (ws_id, oid) in live_moves {
+            if output_ids.contains(&oid) {
+                self.assign_workspace_to_output(ws_id, oid);
+                placed.insert(ws_id);
+            }
+        }
+
         // Tier 1: monitor memory.
         for &oid in &output_ids {
+            if self.output_workspace.contains_key(&oid) {
+                continue;
+            }
             let key = match self.output(oid).and_then(crate::monitor_memory::monitor_key) {
                 Some(k) => k,
                 None => continue,
@@ -908,8 +1026,9 @@ impl WorkspaceManager {
             return;
         }
 
-        let preferred_output =
-            find_preferred_output(&self.workspaces[target_ws.0].preferred_output, &self.outputs);
+        let preferred_output = self.moved_outputs.get(&target_ws).copied().or_else(|| {
+            find_preferred_output(&self.workspaces[target_ws.0].preferred_output, &self.outputs)
+        });
 
         let target_output = preferred_output.unwrap_or_else(|| {
             self.workspaces[self.focused_workspace.0]
@@ -927,6 +1046,35 @@ impl WorkspaceManager {
 
         self.assign_workspace_to_output(target_ws, target_output);
         self.focused_workspace = target_ws;
+    }
+
+    /// Move one workspace live. The destination occupant is hidden, never swapped
+    /// onto another monitor. Other workspaces and all persisted defaults stay put.
+    pub fn move_workspace_to_output(
+        &mut self,
+        name: Option<&str>,
+        specifier: &str,
+    ) -> Result<(), String> {
+        let target_ws = match name {
+            Some(name) => self.workspaces.iter()
+                .find(|ws| ws.name == name)
+                .map(|ws| ws.id)
+                .ok_or_else(|| format!("unknown workspace: {name}"))?,
+            None => self.focused_workspace,
+        };
+        let target_output = find_matching_output(specifier, &self.outputs)
+            .ok_or_else(|| format!("no connected output matches: {specifier}"))?;
+
+        // Remove the old mapping before placing the workspace on its destination.
+        // No fallback workspace is pulled onto the vacated monitor.
+        self.output_workspace.retain(|_, ws| *ws != target_ws);
+        if let Some(displaced) = self.output_workspace.remove(&target_output) {
+            self.workspaces[displaced.0].active_output = None;
+        }
+        self.assign_workspace_to_output(target_ws, target_output);
+        self.moved_outputs.insert(target_ws, target_output);
+        self.focused_workspace = target_ws;
+        Ok(())
     }
 
     /// Get the currently focused workspace.
