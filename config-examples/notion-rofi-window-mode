@@ -49,8 +49,9 @@ import json, os, sys
 US = "\x1f"
 NUL = "\0"
 
-def row(label, info):
-    sys.stdout.write(f"{label}{NUL}info{US}{info}\n")
+def row(label, info, meta=""):
+    meta = meta.replace(NUL, " ").replace(US, " ").replace("\n", " ")
+    sys.stdout.write(f"{label}{NUL}info{US}{info}{US}meta{US}{meta}\n")
 
 # --- open windows ---
 try:
@@ -86,6 +87,7 @@ for base in roots:
                 continue
             seen.add(desktop_id)
             name = None
+            search_terms = [desktop_id]
             skip = False
             in_main = False
             try:
@@ -99,6 +101,8 @@ for base in roots:
                             continue
                         if line.startswith("Name=") and name is None:
                             name = line[5:]
+                        elif line.startswith(("Exec=", "GenericName=", "Keywords=", "Comment=", "Name[")):
+                            search_terms.append(line.partition("=")[2])
                         elif line.startswith("NoDisplay=") and line[10:].strip().lower() == "true":
                             skip = True
                         elif line.startswith("Hidden=") and line[7:].strip().lower() == "true":
@@ -106,8 +110,8 @@ for base in roots:
             except OSError:
                 continue
             if name and not skip:
-                apps.append((name, desktop_id))
+                apps.append((name, desktop_id, " ".join(search_terms)))
 
-for name, desktop_id in sorted(apps, key=lambda x: x[0].lower()):
-    row(name, f"app:{desktop_id}")
+for name, desktop_id, meta in sorted(apps, key=lambda x: x[0].lower()):
+    row(name, f"app:{desktop_id}", meta)
 '

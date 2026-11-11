@@ -148,6 +148,10 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 ## Common Pitfalls
 
+- The rofi script-modi must include desktop ID, executable, keywords, generic
+  name, comment, and translated app names in each row's hidden `meta` field.
+  Matching display names alone loses searches such as `pavu` for Volume Control.
+
 - RPM CI must install Zig 0.16.0 explicitly for River v0.4.7 and pass its full
   path through `rpmbuild --define "zig ..."`; Tumbleweed's distro Zig is older.
   The Package workflow accepts `workflow_dispatch` inputs `tag` and `package`
