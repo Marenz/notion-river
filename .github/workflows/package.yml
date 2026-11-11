@@ -166,6 +166,7 @@ jobs:
             git \
             tar \
             gzip \
+            curl \
             rpm-build \
             cargo \
             rust \
@@ -190,9 +191,14 @@ jobs:
           submodules: recursive
 
       - name: Install Zig for the pinned River version
-        uses: mlugg/setup-zig@v2
-        with:
-          version: "0.16.0"
+        run: |
+          archive="$RUNNER_TEMP/zig-0.16.0.tar.xz"
+          curl --fail --location --retry 3 \
+            https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
+            --output "$archive"
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  $archive" | sha256sum --check
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "ZIG=$RUNNER_TEMP/zig-x86_64-linux-0.16.0/zig" >> "$GITHUB_ENV"
 
       - name: Extract version
         id: version
@@ -215,7 +221,7 @@ jobs:
           VER=${{ steps.version.outputs.version }}
           rpmbuild -bb ~/rpmbuild/SPECS/notion-river.spec \
             --define "version ${VER}" \
-            --define "zig $(command -v zig)" \
+            --define "zig $ZIG" \
             --define "_topdir $HOME/rpmbuild"
 
       - name: Copy RPM to workspace

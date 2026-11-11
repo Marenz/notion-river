@@ -154,6 +154,8 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 - RPM CI must install Zig 0.16.0 explicitly for River v0.4.7 and pass its full
   path through `rpmbuild --define "zig ..."`; Tumbleweed's distro Zig is older.
+  Use the checksum-pinned upstream archive inside the container: setup-zig's
+  PATH handling can leave subsequent steps unable to find even `sh` there.
   The Package workflow accepts `workflow_dispatch` inputs `tag` and `package`
   (`rpm`, `deb`, `all`) to repair assets on an existing release without retagging.
 
