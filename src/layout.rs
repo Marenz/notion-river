@@ -32,6 +32,60 @@ impl Rect {
     }
 }
 
+/// A rectangle expressed as fractions (0.0..1.0) of a parent area.
+///
+/// Used to position and size each half of a floating split independently, so
+/// the halves can overlap and are not bound by the split line. Fractions are
+/// relative to the split's own area, so the geometry survives monitor resizes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FloatRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Minimum size of a floating half, as a fraction of the split's area.
+const MIN_FLOAT_SIZE: f32 = 0.1;
+
+impl FloatRect {
+    /// The full parent area (0,0 .. 1,1).
+    pub fn full() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        }
+    }
+
+    /// Normalize `rect` against `area` into fractional coordinates.
+    pub fn from_rect(rect: Rect, area: Rect) -> Self {
+        let w = area.width.max(1) as f32;
+        let h = area.height.max(1) as f32;
+        Self {
+            x: (rect.x - area.x) as f32 / w,
+            y: (rect.y - area.y) as f32 / h,
+            width: rect.width as f32 / w,
+            height: rect.height as f32 / h,
+        }
+    }
+
+    /// Scale this fractional rect onto `area`, clamped so it never ends up
+    /// empty or fully off-area (guards against monitor resizes).
+    pub fn to_rect(self, area: Rect) -> Rect {
+        let x = area.x + (area.width as f32 * self.x).round() as i32;
+        let y = area.y + (area.height as f32 * self.y).round() as i32;
+        let w = (area.width as f32 * self.width).round() as i32;
+        let h = (area.height as f32 * self.height).round() as i32;
+        let x = x.clamp(area.x, area.x + area.width.saturating_sub(1));
+        let y = y.clamp(area.y, area.y + area.height.saturating_sub(1));
+        let w = w.clamp(1, area.width).min(area.x + area.width - x).max(1);
+        let h = h.clamp(1, area.height).min(area.y + area.height - y).max(1);
+        Rect::new(x, y, w, h)
+    }
+}
+
 /// Orientation of a split.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Orientation {
@@ -54,6 +108,13 @@ pub enum SplitNode {
         orientation: Orientation,
         /// Fraction of space given to the first child (0.0..1.0).
         ratio: f32,
+        /// When true, the two halves are no longer bound by the split line:
+        /// each is placed and sized by its own `FloatRect` and may overlap.
+        floating: bool,
+        /// Fractional rect of the first child in floating mode.
+        float_first: FloatRect,
+        /// Fractional rect of the second child in floating mode.
+        float_second: FloatRect,
         first: Box<SplitNode>,
         second: Box<SplitNode>,
     },
@@ -247,21 +308,39 @@ impl SplitNode {
 
     /// Create a horizontal split with two empty frames.
     pub fn hsplit(ratio: f32) -> Self {
-        SplitNode::Split {
-            orientation: Orientation::Horizontal,
+        SplitNode::split(
+            Orientation::Horizontal,
             ratio,
-            first: Box::new(SplitNode::Leaf(Frame::new())),
-            second: Box::new(SplitNode::Leaf(Frame::new())),
-        }
+            SplitNode::Leaf(Frame::new()),
+            SplitNode::Leaf(Frame::new()),
+        )
     }
 
     /// Create a vertical split with two empty frames.
     pub fn vsplit(ratio: f32) -> Self {
-        SplitNode::Split {
-            orientation: Orientation::Vertical,
+        SplitNode::split(
+            Orientation::Vertical,
             ratio,
-            first: Box::new(SplitNode::Leaf(Frame::new())),
-            second: Box::new(SplitNode::Leaf(Frame::new())),
+            SplitNode::Leaf(Frame::new()),
+            SplitNode::Leaf(Frame::new()),
+        )
+    }
+
+    /// Build a (non-floating) split node with default float rects.
+    pub(crate) fn split(
+        orientation: Orientation,
+        ratio: f32,
+        first: SplitNode,
+        second: SplitNode,
+    ) -> Self {
+        SplitNode::Split {
+            orientation,
+            ratio,
+            floating: false,
+            float_first: FloatRect::full(),
+            float_second: FloatRect::full(),
+            first: Box::new(first),
+            second: Box::new(second),
         }
     }
 
@@ -304,6 +383,9 @@ impl SplitNode {
                     *self = SplitNode::Split {
                         orientation,
                         ratio,
+                        floating: false,
+                        float_first: FloatRect::full(),
+                        float_second: FloatRect::full(),
                         first: Box::new(first),
                         second: Box::new(second),
                     };
@@ -436,36 +518,48 @@ impl SplitNode {
             SplitNode::Split {
                 orientation,
                 ratio,
+                floating,
+                float_first,
+                float_second,
                 first,
                 second,
-            } => match orientation {
-                Orientation::Horizontal => {
-                    let first_width = ((area.width - gap) as f32 * ratio) as i32;
-                    let second_width = area.width - gap - first_width;
-                    let first_area = Rect::new(area.x, area.y, first_width, area.height);
-                    let second_area = Rect::new(
-                        area.x + first_width + gap,
-                        area.y,
-                        second_width,
-                        area.height,
-                    );
-                    first.layout_recursive(first_area, gap, out);
-                    second.layout_recursive(second_area, gap, out);
+            } => {
+                if *floating {
+                    // Each half keeps its own fractional rect; no gap between
+                    // them, and they may overlap.
+                    first.layout_recursive(float_first.to_rect(area), gap, out);
+                    second.layout_recursive(float_second.to_rect(area), gap, out);
+                    return;
                 }
-                Orientation::Vertical => {
-                    let first_height = ((area.height - gap) as f32 * ratio) as i32;
-                    let second_height = area.height - gap - first_height;
-                    let first_area = Rect::new(area.x, area.y, area.width, first_height);
-                    let second_area = Rect::new(
-                        area.x,
-                        area.y + first_height + gap,
-                        area.width,
-                        second_height,
-                    );
-                    first.layout_recursive(first_area, gap, out);
-                    second.layout_recursive(second_area, gap, out);
+                match orientation {
+                    Orientation::Horizontal => {
+                        let first_width = ((area.width - gap) as f32 * ratio) as i32;
+                        let second_width = area.width - gap - first_width;
+                        let first_area = Rect::new(area.x, area.y, first_width, area.height);
+                        let second_area = Rect::new(
+                            area.x + first_width + gap,
+                            area.y,
+                            second_width,
+                            area.height,
+                        );
+                        first.layout_recursive(first_area, gap, out);
+                        second.layout_recursive(second_area, gap, out);
+                    }
+                    Orientation::Vertical => {
+                        let first_height = ((area.height - gap) as f32 * ratio) as i32;
+                        let second_height = area.height - gap - first_height;
+                        let first_area = Rect::new(area.x, area.y, area.width, first_height);
+                        let second_area = Rect::new(
+                            area.x,
+                            area.y + first_height + gap,
+                            area.width,
+                            second_height,
+                        );
+                        first.layout_recursive(first_area, gap, out);
+                        second.layout_recursive(second_area, gap, out);
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -562,6 +656,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 let axis_matches = match direction {
                     Direction::Left | Direction::Right => *orientation == Orientation::Horizontal,
@@ -633,6 +728,239 @@ impl SplitNode {
         }
     }
 
+    /// Toggle floating mode for the nearest ancestor split of the target frame.
+    ///
+    /// Turning on initialises each half's float rect from its current layout,
+    /// so nothing jumps. Turning off derives a new ratio from the float rects
+    /// along the split's axis, so toggling on and straight back off restores
+    /// the layout.
+    pub fn toggle_floating(&mut self, target_id: FrameId, area: Rect, gap: i32) -> bool {
+        match self {
+            SplitNode::Leaf(_) => false,
+            SplitNode::Split {
+                orientation,
+                ratio,
+                floating,
+                float_first,
+                float_second,
+                first,
+                second,
+            } => {
+                let in_first = first.contains_frame(target_id);
+                let in_second = second.contains_frame(target_id);
+                if !(in_first || in_second) {
+                    return false;
+                }
+                let (first_area, second_area) = if *floating {
+                    (float_first.to_rect(area), float_second.to_rect(area))
+                } else {
+                    split_child_areas(*orientation, area, *ratio, gap)
+                };
+                // Try children first (deepest floating split wins).
+                let handled = first.toggle_floating(target_id, first_area, gap)
+                    || second.toggle_floating(target_id, second_area, gap);
+                if handled {
+                    return true;
+                }
+                // We are the direct ancestor — toggle.
+                if *floating {
+                    *floating = false;
+                    *ratio = derive_ratio(*orientation, *float_first, *float_second);
+                    *float_first = FloatRect::full();
+                    *float_second = FloatRect::full();
+                } else {
+                    *floating = true;
+                    *float_first = FloatRect::from_rect(first_area, area);
+                    *float_second = FloatRect::from_rect(second_area, area);
+                }
+                true
+            }
+        }
+    }
+
+    /// Path (true = first child at each step) from the root to the nearest
+    /// floating-split ancestor of `target_id`. An empty path means `self` is
+    /// the floating split. Returns None when the frame is not inside one.
+    pub fn floating_split_path(&self, target_id: FrameId) -> Option<Vec<bool>> {
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split {
+                floating,
+                first,
+                second,
+                ..
+            } => {
+                if !(first.contains_frame(target_id) || second.contains_frame(target_id)) {
+                    return None;
+                }
+                if let Some(mut p) = first.floating_split_path(target_id) {
+                    p.insert(0, true);
+                    return Some(p);
+                }
+                if let Some(mut p) = second.floating_split_path(target_id) {
+                    p.insert(0, false);
+                    return Some(p);
+                }
+                (*floating).then(Vec::new)
+            }
+        }
+    }
+
+    /// The other half's first frame when the focused frame is inside a floating
+    /// split. Used for direction navigation between overlapping halves.
+    pub fn floating_sibling(&self, target_id: FrameId) -> Option<FrameId> {
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split {
+                floating,
+                first,
+                second,
+                ..
+            } => {
+                let in_first = first.contains_frame(target_id);
+                let in_second = second.contains_frame(target_id);
+                if in_first || in_second {
+                    if let Some(s) = first
+                        .floating_sibling(target_id)
+                        .or_else(|| second.floating_sibling(target_id))
+                    {
+                        return Some(s);
+                    }
+                    if *floating {
+                        let sibling = if in_first { &**second } else { &**first };
+                        return Some(sibling.first_frame_id());
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Locate the floating split that directly contains `target_id`, returning
+    /// the path to it, which half holds the frame, that half's fractional rect,
+    /// and the split's own area. Needed to start a floating resize drag.
+    pub fn floating_half_info(
+        &self,
+        target_id: FrameId,
+        area: Rect,
+        gap: i32,
+    ) -> Option<(Vec<bool>, bool, FloatRect, Rect)> {
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split {
+                orientation,
+                ratio,
+                floating,
+                float_first,
+                float_second,
+                first,
+                second,
+            } => {
+                let in_first = first.contains_frame(target_id);
+                let in_second = second.contains_frame(target_id);
+                if !(in_first || in_second) {
+                    return None;
+                }
+                let (first_area, second_area) = if *floating {
+                    (float_first.to_rect(area), float_second.to_rect(area))
+                } else {
+                    split_child_areas(*orientation, area, *ratio, gap)
+                };
+                let (child_area, child) = if in_first {
+                    (first_area, &**first)
+                } else {
+                    (second_area, &**second)
+                };
+                if let Some((mut p, half, rect, split_area)) =
+                    child.floating_half_info(target_id, child_area, gap)
+                {
+                    p.insert(0, in_first);
+                    return Some((p, half, rect, split_area));
+                }
+                if *floating {
+                    let (half, rect) = if in_first {
+                        (true, *float_first)
+                    } else {
+                        (false, *float_second)
+                    };
+                    Some((vec![], half, rect, area))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Move the edges of one floating half to the given fractional targets.
+    ///
+    /// `path` locates the floating split (see [`SplitNode::floating_split_path`]),
+    /// `first_half` picks which half, and the four edges are fractional
+    /// coordinates (0..1 of the split area). The caller passes the current
+    /// value for any edge that should stay put. Clamped so the half never
+    /// shrinks below [`MIN_FLOAT_SIZE`] and never leaves the split area.
+    pub fn set_floating_half_edges(
+        &mut self,
+        path: &[bool],
+        first_half: bool,
+        left: f32,
+        right: f32,
+        top: f32,
+        bottom: f32,
+    ) -> bool {
+        match self {
+            SplitNode::Leaf(_) => false,
+            SplitNode::Split {
+                floating,
+                float_first,
+                float_second,
+                first,
+                second,
+                ..
+            } => {
+                if !path.is_empty() {
+                    return if path[0] {
+                        first.set_floating_half_edges(
+                            &path[1..],
+                            first_half,
+                            left,
+                            right,
+                            top,
+                            bottom,
+                        )
+                    } else {
+                        second.set_floating_half_edges(
+                            &path[1..],
+                            first_half,
+                            left,
+                            right,
+                            top,
+                            bottom,
+                        )
+                    };
+                }
+                if !*floating {
+                    return false;
+                }
+                let width = (right - left).clamp(MIN_FLOAT_SIZE, 1.0);
+                let height = (bottom - top).clamp(MIN_FLOAT_SIZE, 1.0);
+                let x = left.clamp(0.0, 1.0 - width);
+                let y = top.clamp(0.0, 1.0 - height);
+                let rect = FloatRect {
+                    x,
+                    y,
+                    width,
+                    height,
+                };
+                if first_half {
+                    *float_first = rect;
+                } else {
+                    *float_second = rect;
+                }
+                true
+            }
+        }
+    }
+
     /// Adjust the split ratio closest to the pointer position.
     /// `area` is the output rect, `px`/`py` is the pointer position.
     pub fn adjust_ratio_at(
@@ -649,6 +977,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 let half_gap = gap / 2;
                 // Compute the boundary position for this split
@@ -749,6 +1078,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 let half_gap = gap / 2;
                 let (first_area, second_area) = match orientation {
@@ -831,6 +1161,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 let half_gap = gap / 2;
                 let boundary = match orientation {
@@ -921,6 +1252,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 if path.is_empty() {
                     // This is the target split — set ratio based on pointer position
@@ -993,6 +1325,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 let half_gap = gap / 2;
                 if path.is_empty() {
@@ -1055,6 +1388,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 let in_first = first.contains_frame(target_id);
                 let in_second = second.contains_frame(target_id);
@@ -1084,7 +1418,11 @@ impl SplitNode {
         match self {
             SplitNode::Leaf(_) => None,
             SplitNode::Split {
-                orientation, ratio, first, second,
+                orientation,
+                ratio,
+                first,
+                second,
+                ..
             } => {
                 let boundary = match orientation {
                     Orientation::Horizontal => {
@@ -1132,6 +1470,56 @@ impl SplitNode {
             }
         }
     }
+}
+
+/// The two child areas of a (non-floating) split.
+fn split_child_areas(orientation: Orientation, area: Rect, ratio: f32, gap: i32) -> (Rect, Rect) {
+    match orientation {
+        Orientation::Horizontal => {
+            let first_width = ((area.width - gap) as f32 * ratio) as i32;
+            let second_width = area.width - gap - first_width;
+            (
+                Rect::new(area.x, area.y, first_width, area.height),
+                Rect::new(
+                    area.x + first_width + gap,
+                    area.y,
+                    second_width,
+                    area.height,
+                ),
+            )
+        }
+        Orientation::Vertical => {
+            let first_height = ((area.height - gap) as f32 * ratio) as i32;
+            let second_height = area.height - gap - first_height;
+            (
+                Rect::new(area.x, area.y, area.width, first_height),
+                Rect::new(
+                    area.x,
+                    area.y + first_height + gap,
+                    area.width,
+                    second_height,
+                ),
+            )
+        }
+    }
+}
+
+/// Recover a split ratio from two float rects along the split's axis.
+fn derive_ratio(orientation: Orientation, first: FloatRect, second: FloatRect) -> f32 {
+    // f64 keeps the share accurate enough to reproduce the pixel layout.
+    let ratio = match orientation {
+        Orientation::Horizontal => {
+            let (a, b) = (first.width as f64, second.width as f64);
+            let total = a + b;
+            if total > 0.0 { a / total } else { 0.5 }
+        }
+        Orientation::Vertical => {
+            let (a, b) = (first.height as f64, second.height as f64);
+            let total = a + b;
+            if total > 0.0 { a / total } else { 0.5 }
+        }
+    };
+    (ratio as f32).clamp(0.1, 0.9)
 }
 
 /// Direction for focus/move navigation.
@@ -1191,6 +1579,7 @@ impl SplitNode {
                 ratio,
                 first,
                 second,
+                ..
             } => {
                 let dir = match orientation {
                     Orientation::Horizontal => "H",
@@ -1462,6 +1851,128 @@ mod tests {
             }
             _ => panic!("Expected split"),
         }
+    }
+
+    // ── Floating split ────────────────────────────────────────────────────
+
+    fn split_flags(tree: &SplitNode) -> Option<(bool, f32, FloatRect, FloatRect)> {
+        match tree {
+            SplitNode::Split {
+                floating,
+                ratio,
+                float_first,
+                float_second,
+                ..
+            } => Some((*floating, *ratio, *float_first, *float_second)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn floating_split_halves_can_overlap() {
+        let area = Rect::new(0, 0, 1920, 1080);
+        let gap = 4;
+        let mut tree = SplitNode::hsplit(0.5);
+        let ids = tree.all_frame_ids();
+        let first = ids[0];
+        let second = ids[1];
+
+        assert!(tree.toggle_floating(first, area, gap));
+        assert!(tree.set_floating_half_edges(&[], true, 0.0, 0.8, 0.0, 0.5));
+        assert!(tree.set_floating_half_edges(&[], false, 0.4, 1.0, 0.3, 0.8));
+
+        let layout = tree.calculate_layout(area, gap);
+        let r1 = layout.iter().find(|(id, _)| *id == first).unwrap().1;
+        let r2 = layout.iter().find(|(id, _)| *id == second).unwrap().1;
+        assert!(
+            horizontal_overlap(r1, r2) > 0 && vertical_overlap(r1, r2) > 0,
+            "floating halves should overlap, got {r1:?} and {r2:?}"
+        );
+    }
+
+    #[test]
+    fn toggle_floating_round_trip_restores_layout() {
+        let area = Rect::new(0, 0, 1920, 1080);
+        let gap = 4;
+        let mut tree = SplitNode::hsplit(0.6);
+        let frame = tree.first_frame_id();
+
+        let before = tree.calculate_layout(area, gap);
+
+        assert!(tree.toggle_floating(frame, area, gap));
+        assert!(split_flags(&tree).unwrap().0, "should be floating");
+
+        // Halves keep their rects, so the layout does not jump.
+        let during = tree.calculate_layout(area, gap);
+        assert_eq!(before, during);
+
+        assert!(tree.toggle_floating(frame, area, gap));
+        let (floating, ratio, ..) = split_flags(&tree).unwrap();
+        assert!(!floating, "should no longer be floating");
+        assert!(
+            (ratio - 0.6).abs() < 1e-3,
+            "round trip should restore ratio ~0.6, got {ratio}"
+        );
+
+        let after = tree.calculate_layout(area, gap);
+        assert_eq!(before, after, "layout must be restored after toggling off");
+    }
+
+    #[test]
+    fn toggle_floating_initializes_halves_from_layout() {
+        let area = Rect::new(0, 0, 1920, 1080);
+        let gap = 4;
+        let mut tree = SplitNode::hsplit(0.5);
+        let frame = tree.first_frame_id();
+        tree.toggle_floating(frame, area, gap);
+
+        let (_, _, ff, fs) = split_flags(&tree).unwrap();
+        // First half: starts at the left edge, width = half of usable width.
+        assert!(ff.x.abs() < 1e-6);
+        assert!((ff.width - 958.0 / 1920.0).abs() < 1e-3);
+        // Second half: starts after first + gap.
+        assert!((fs.x - 962.0 / 1920.0).abs() < 1e-3);
+        assert!((fs.width - 958.0 / 1920.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn set_floating_half_edges_clamps_to_minimum_size() {
+        let area = Rect::new(0, 0, 1920, 1080);
+        let gap = 4;
+        let mut tree = SplitNode::hsplit(0.5);
+        let frame = tree.first_frame_id();
+        tree.toggle_floating(frame, area, gap);
+
+        // A ridiculously tiny rect clamps up to the minimum size.
+        assert!(tree.set_floating_half_edges(&[], true, 0.5, 0.51, 0.5, 0.51));
+        let (_, _, ff, _) = split_flags(&tree).unwrap();
+        assert!(ff.width >= MIN_FLOAT_SIZE - 1e-6);
+        assert!(ff.height >= MIN_FLOAT_SIZE - 1e-6);
+    }
+
+    #[test]
+    fn set_floating_half_edges_keeps_half_on_area() {
+        let area = Rect::new(0, 0, 1920, 1080);
+        let gap = 4;
+        let mut tree = SplitNode::hsplit(0.5);
+        let frame = tree.first_frame_id();
+        tree.toggle_floating(frame, area, gap);
+
+        // Edge dragged far off the left/top must clamp back onto the area.
+        assert!(tree.set_floating_half_edges(&[], true, -5.0, 0.5, -5.0, 0.4));
+        let (_, _, ff, _) = split_flags(&tree).unwrap();
+        assert!(
+            ff.x >= 0.0,
+            "half must not leave the split area, got x={}",
+            ff.x
+        );
+        assert!(
+            ff.y >= 0.0,
+            "half must not leave the split area, got y={}",
+            ff.y
+        );
+        assert!(ff.x + ff.width <= 1.0 + 1e-6);
+        assert!(ff.y + ff.height <= 1.0 + 1e-6);
     }
 
     #[test]

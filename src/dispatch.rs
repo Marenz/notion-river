@@ -1003,9 +1003,14 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                             .workspaces
                             .iter()
                             .find_map(|ws| ws.root.find_frame_with_window(win.id));
-                        let (rh, rv) = frame_id
-                            .map(|fid| state.wm.detect_resize_axes(fid, ptr_x, ptr_y))
-                            .unwrap_or((true, true));
+                        if let Some(op) = frame_id
+                            .and_then(|fid| state.wm.begin_floating_resize(fid, ptr_x, ptr_y))
+                        {
+                            Some(op)
+                        } else {
+                            let (rh, rv) = frame_id
+                                .map(|fid| state.wm.detect_resize_axes(fid, ptr_x, ptr_y))
+                                .unwrap_or((true, true));
                         // Find the specific split boundaries closest to the pointer per axis
                         let gap = state.wm.config.general.gap as i32;
                         let (h_boundary_path, v_boundary_path) = {
@@ -1057,6 +1062,7 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                             h_boundary_path,
                             v_boundary_path,
                         })
+                        }
                     } else {
                         None // No resize for floating windows (for now)
                     }
@@ -1082,6 +1088,9 @@ impl Dispatch<RiverPointerBindingV1, ObjectId> for AppData {
                         })
                     });
                     frame_at_pointer.map(|frame_id| {
+                        if let Some(op) = state.wm.begin_floating_resize(frame_id, ptr_x, ptr_y) {
+                            return op;
+                        }
                         let (rh, rv) = state.wm.detect_resize_axes(frame_id, ptr_x, ptr_y);
                         let (h_boundary_path, v_boundary_path) = {
                             let ws = state.wm.workspaces.focused_workspace();

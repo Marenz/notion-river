@@ -129,6 +129,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **Floating focus**: `focused_floating` in WindowManager tracks the active floating window. Takes priority over tiled focus for keyboard input and actions (Close, etc.). Cleared when clicking a tiled window or when the floating window closes/disappears.
 - **Fullscreen toggle**: `Super+Return` toggles fullscreen for the focused window.
 - **Resize mode**: `Super+R` enters/exits resize mode with absolute direction semantics (Up always moves the boundary up, regardless of which side).
+- **Floating splits**: `Super+Shift+t` toggles a split into floating mode. The `Split` node gains `floating: bool` plus two fractional `FloatRect`s (`float_first`/`float_second`, 0..1 of the split's area). In floating mode the two halves are no longer bound by the split line: each keeps its own rect, they may overlap, and the focused half is drawn on top (draw commands are stably sorted focused-last, but only when focus is inside a floating split). Toggling on initialises the two rects from the current split layout (nothing jumps); toggling off derives a new ratio from the rects along the split's axis (`derive_ratio`, first half's share of the summed extents, clamped 0.1..0.9) so a round trip restores the layout. `Super+RMB` on a floating half resizes it by dragging its nearest edge (`SeatOp::ResizeFloat`); the edges are clamped to a minimum size (`MIN_FLOAT_SIZE` = 0.1) and never leave the split area. Direction focus falls back to the sibling half only when there is no geometric neighbour in that direction (`SplitNode::floating_sibling`). Removing one half collapses the floating split to the surviving child. The `floating` flag and float rects persist in `state.rs` (`SavedNode::Split`) with serde defaults so old state files load unchanged.
 - **Tab drag specificity**: Dragging a tab in the tab bar drags that specific clicked tab, not the active window.
 - **wp_viewporter**: Wayland protocol for fractional scaling support with HiDPI.
 - **Monitor memory**: Per-physical-monitor map of "last workspace shown here", keyed by EDID description (stripped of the `(connector)` suffix wlroots appends, so replugging into a different port keeps identity). Stored in `~/.config/notion-river/monitor-memory.json`. Replaces the old whole-setup `output-profiles.json` and the per-output `visible_workspaces` field in saved state — those layered, geometry-fingerprinted stores were non-deterministic and have been deleted.
@@ -144,7 +145,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 
 - `i3_neo`: Neo layout directions (i/a/l/e), Super+Space terminal, Super+o launcher (one menu: windows + apps), Super+w/v split, Super+n/p tabs
 - `notion`: Vim-style (h/j/k/l), Super+Return terminal, Super+p launcher (one menu: windows + apps), Super+s/v split, Super+Tab tabs
-- Both: media keys (XF86Audio*, XF86MonBrightness*), Super+Shift+R restart, Super+t toggle split, Super+f bind app to frame, Super+Shift+f exclusive bind, Super+Return fullscreen toggle, Super+R resize mode, Ctrl+F12 keyboard layout toggle
+- Both: media keys (XF86Audio*, XF86MonBrightness*), Super+Shift+R restart, Super+t toggle split, Super+Shift+t toggle floating split, Super+f bind app to frame, Super+Shift+f exclusive bind, Super+Return fullscreen toggle, Super+R resize mode, Ctrl+F12 keyboard layout toggle
 
 ## Config Files
 

@@ -185,6 +185,15 @@ impl WindowManager {
                         log::info!("FocusDirection {dir:?}: {frame_id:?} -> {neighbor:?}");
                         let ws_mut = &mut self.workspaces.workspaces[ws_idx];
                         ws_mut.focused_frame = neighbor;
+                    } else if let Some(sibling) = ws.root.floating_sibling(frame_id) {
+                        // No geometric neighbour in this direction. In a floating
+                        // split the halves may overlap, so direction navigation
+                        // still reaches the sibling half.
+                        log::info!(
+                            "FocusDirection {dir:?}: floating sibling {frame_id:?} -> {sibling:?}"
+                        );
+                        let ws_mut = &mut self.workspaces.workspaces[ws_idx];
+                        ws_mut.focused_frame = sibling;
                     } else {
                         // No neighbor in this workspace — try adjacent monitor
                         let frame_rect = ws
@@ -376,6 +385,10 @@ impl WindowManager {
                 if ws.root.toggle_orientation(frame_id) {
                     log::info!("Toggled split orientation for frame {frame_id:?}");
                 }
+            }
+
+            Action::ToggleFloatingSplit => {
+                self.toggle_floating_split();
             }
 
             Action::SwitchWorkspace(name) => {
@@ -673,6 +686,24 @@ impl WindowManager {
         };
 
         best_frame.map(|(fid, _)| (target_ws.id, *fid))
+    }
+
+    /// Toggle floating mode for the split containing the focused frame.
+    pub(crate) fn toggle_floating_split(&mut self) {
+        let ws_idx = self.workspaces.focused_workspace.0;
+        let frame_id = self.workspaces.workspaces[ws_idx].focused_frame;
+        let gap = self.config.general.gap as i32;
+        if let Some(output_id) = self.workspaces.workspaces[ws_idx].active_output
+            && let Some(output) = self.workspaces.output(output_id)
+        {
+            let area = output.usable_rect();
+            if self.workspaces.workspaces[ws_idx]
+                .root
+                .toggle_floating(frame_id, area, gap)
+            {
+                log::info!("Toggled floating split for frame {frame_id:?}");
+            }
+        }
     }
 
     pub(crate) fn perform_split(&mut self, orientation: Orientation) {

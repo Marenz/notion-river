@@ -1,7 +1,7 @@
 //! Pointer operation handling: move-drop, seat ops (resize), resize axis
 //! detection, and cursor warping.
 
-use crate::layout::{FrameId, Orientation, Rect};
+use crate::layout::{FloatRect, FrameId, Orientation, Rect};
 use crate::wm::{SeatOp, WindowManager};
 use crate::workspace::WorkspaceId;
 
@@ -163,7 +163,13 @@ pub fn find_drop_target(
     workspaces.workspaces.iter().find_map(|ws| {
         let output = ws.active_output.and_then(|oid| workspaces.output(oid))?;
         let area = output.usable_rect();
-        let layouts = ws.root.calculate_layout(area, gap);
+        let mut layouts = ws.root.calculate_layout(area, gap);
+        // Test the focused frame first, so a drop in an overlap region lands
+        // on the visually-top half of a floating split.
+        if let Some(pos) = layouts.iter().position(|(id, _)| *id == ws.focused_frame) {
+            let focused = layouts.remove(pos);
+            layouts.insert(0, focused);
+        }
         layouts.into_iter().find_map(|(frame_id, rect)| {
             if px >= rect.x && px < rect.x + rect.width && py >= rect.y && py < rect.y + rect.height
             {
@@ -349,9 +355,22 @@ impl WindowManager {
             h_boundary_path: Option<Vec<bool>>,
             v_boundary_path: Option<Vec<bool>>,
         }
+        struct FloatResizeCmd {
+            split_path: Vec<bool>,
+            first_half: bool,
+            grab_left: bool,
+            grab_right: bool,
+            grab_top: bool,
+            grab_bottom: bool,
+            start_rect: FloatRect,
+            start_area: Rect,
+            pointer_x: i32,
+            pointer_y: i32,
+        }
 
         let mut float_moves: Vec<FloatMoveCmd> = Vec::new();
         let mut tiled_resizes: Vec<TiledResizeCmd> = Vec::new();
+        let mut float_resizes: Vec<FloatResizeCmd> = Vec::new();
 
         for s in self.seats.values_mut().filter(|s| !s.op_release) {
             let ddx = s.op_dx - s.op_prev_dx;
@@ -413,6 +432,31 @@ impl WindowManager {
                         v_boundary_path: v_boundary_path.clone(),
                     });
                 }
+                SeatOp::ResizeFloat {
+                    split_path,
+                    first_half,
+                    grab_left,
+                    grab_right,
+                    grab_top,
+                    grab_bottom,
+                    start_rect,
+                    start_area,
+                } => {
+                    let cur_x = s.op_start_pointer_x + s.op_dx;
+                    let cur_y = s.op_start_pointer_y + s.op_dy;
+                    float_resizes.push(FloatResizeCmd {
+                        split_path: split_path.clone(),
+                        first_half: *first_half,
+                        grab_left: *grab_left,
+                        grab_right: *grab_right,
+                        grab_top: *grab_top,
+                        grab_bottom: *grab_bottom,
+                        start_rect: *start_rect,
+                        start_area: *start_area,
+                        pointer_x: cur_x,
+                        pointer_y: cur_y,
+                    });
+                }
                 _ => {}
             }
         }
@@ -465,6 +509,77 @@ impl WindowManager {
                 }
             }
         }
+
+        // Apply floating-half resizes: the grabbed edges follow the pointer
+        // (fractional, relative to the floating split's area).
+        for cmd in float_resizes {
+            let frac_x =
+                (cmd.pointer_x - cmd.start_area.x) as f32 / cmd.start_area.width.max(1) as f32;
+            let frac_y =
+                (cmd.pointer_y - cmd.start_area.y) as f32 / cmd.start_area.height.max(1) as f32;
+            let left = if cmd.grab_left {
+                frac_x
+            } else {
+                cmd.start_rect.x
+            };
+            let right = if cmd.grab_right {
+                frac_x
+            } else {
+                cmd.start_rect.x + cmd.start_rect.width
+            };
+            let top = if cmd.grab_top {
+                frac_y
+            } else {
+                cmd.start_rect.y
+            };
+            let bottom = if cmd.grab_bottom {
+                frac_y
+            } else {
+                cmd.start_rect.y + cmd.start_rect.height
+            };
+            let ws_idx = self.workspaces.focused_workspace.0;
+            let ws = &mut self.workspaces.workspaces[ws_idx];
+            ws.root.set_floating_half_edges(
+                &cmd.split_path,
+                cmd.first_half,
+                left,
+                right,
+                top,
+                bottom,
+            );
+        }
+    }
+
+    /// Build a floating-half resize op for `frame_id` if it sits inside a
+    /// floating split, capturing which half and which edges the pointer grabs.
+    pub fn begin_floating_resize(&self, frame_id: FrameId, px: i32, py: i32) -> Option<SeatOp> {
+        let gap = self.config.general.gap as i32;
+        let ws = self.workspaces.focused_workspace();
+        let output = ws
+            .active_output
+            .and_then(|oid| self.workspaces.output(oid))?;
+        let area = output.usable_rect();
+        let (split_path, first_half, start_rect, split_area) =
+            ws.root.floating_half_info(frame_id, area, gap)?;
+
+        let half_rect = start_rect.to_rect(split_area);
+        let center_x = half_rect.x + half_rect.width / 2;
+        let center_y = half_rect.y + half_rect.height / 2;
+        let grab_left = px < center_x;
+        let grab_right = !grab_left;
+        let grab_top = py < center_y;
+        let grab_bottom = !grab_top;
+
+        Some(SeatOp::ResizeFloat {
+            split_path,
+            first_half,
+            grab_left,
+            grab_right,
+            grab_top,
+            grab_bottom,
+            start_rect,
+            start_area: split_area,
+        })
     }
 
     /// Determine which resize axes are active based on pointer proximity

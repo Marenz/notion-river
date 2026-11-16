@@ -127,3 +127,8 @@ floating = true
 # modifiers = "super"
 # key = "c"
 # action = "close"
+#
+# [[profiles.custom.bindings]]
+# modifiers = "super+shift"
+# key = "t"
+# action = "toggle_floating_split"

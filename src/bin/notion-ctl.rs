@@ -12,7 +12,7 @@ fn socket_path() -> PathBuf {
 
 fn usage() {
     eprintln!(
-        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl subscribe-workspaces\n  notion-ctl subscribe-workspace <name>\n  notion-ctl subscribe-output <output-name>\n  notion-ctl focus-window <id>\n  notion-ctl focus-window-by-identifier <identifier>\n  notion-ctl switch-workspace <name>\n  notion-ctl move-workspace [workspace] <output>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>\n  notion-ctl save-monitors\n  notion-ctl forget-monitors"
+        "usage:\n  notion-ctl list-windows\n  notion-ctl list-workspaces\n  notion-ctl subscribe-workspaces\n  notion-ctl subscribe-workspace <name>\n  notion-ctl subscribe-output <output-name>\n  notion-ctl focus-window <id>\n  notion-ctl focus-window-by-identifier <identifier>\n  notion-ctl switch-workspace <name>\n  notion-ctl move-workspace [workspace] <output>\n  notion-ctl bind <app_id> <workspace> <frame_index> [WxH]\n  notion-ctl unbind <app_id>\n  notion-ctl set-fixed-dimensions <app_id> <WxH|clear>\n  notion-ctl save-monitors\n  notion-ctl forget-monitors\n  notion-ctl toggle-floating-split"
     );
 }
 
@@ -104,6 +104,13 @@ fn main() {
                 std::process::exit(2);
             }
             "forget-monitors".to_string()
+        }
+        "toggle-floating-split" => {
+            if args.len() != 1 {
+                usage();
+                std::process::exit(2);
+            }
+            "toggle-floating-split".to_string()
         }
         "unbind" => {
             if args.len() != 2 {
