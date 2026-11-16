@@ -37,7 +37,10 @@ if [ "$#" -gt 0 ]; then
             ;;
         app:*)
             id=${action#app:}
-            [ -n "$id" ] && setsid gtk-launch "$id" >/dev/null 2>&1 &
+            # Pass the full file name: gtk-launch only appends ".desktop" when
+            # the ID lacks that suffix, so IDs like "org.telegram.desktop"
+            # would otherwise resolve to a nonexistent file.
+            [ -n "$id" ] && setsid gtk-launch "$id.desktop" >/dev/null 2>&1 &
             ;;
     esac
     exit 0
