@@ -275,6 +275,18 @@ river -c ~/.config/river/init
 
 ## Keybindings
 
+Add or override single bindings without redefining a whole profile:
+
+```toml
+[[extra_bindings]]
+modifiers = "ctrl"
+key = "F11"
+action = "spawn"
+args = ["dictate", "toggle"]
+```
+
+An entry with the same modifiers and key replaces the profile's binding.
+
 ### `notion` profile (Vim-style)
 
 | Binding | Action |
