@@ -35,7 +35,7 @@ persistent wireframe of frames that exist independently of windows.
 Windows are placed into frames as tabs. Opening/closing windows never
 changes the layout — only explicit user actions (split/unsplit) do.
 
-Requires the River compositor (0.4.x+) to be installed separately.
+Bundles the River compositor version pinned in vendor/river.
 
 %prep
 %autosetup
@@ -83,7 +83,7 @@ install -Dm644 completions/notion-ctl.fish %{buildroot}%{_datadir}/fish/vendor_c
 %{_bindir}/notion-rofi-launch
 %{_bindir}/notion-volume
 %{_bindir}/notion-cycle-workspace
-%ghost %{_bindir}/river
+%{_bindir}/river
 %{_datadir}/wayland-sessions/notion-river.desktop
 %{_datadir}/notion-river/
 %{_datadir}/fish/vendor_completions.d/notion-ctl.fish
