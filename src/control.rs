@@ -79,16 +79,18 @@ pub struct ControlState {
 }
 
 impl ControlState {
-    pub fn new(subscribers: Arc<Mutex<Vec<Subscriber>>>) -> Self {
+    pub fn new(subscribers: Arc<Mutex<Vec<Subscriber>>>) -> std::io::Result<Self> {
         let path = socket_path();
-        let _ = std::fs::remove_file(&path);
+        let listener = bind_listener(&path)?;
 
         let pending = Arc::new(Mutex::new(Vec::new()));
         let snapshot = Arc::new(Mutex::new(Snapshot::default()));
 
         // Self-pipe for signaling the main event loop
         let mut fds = [0i32; 2];
-        unsafe { libc::pipe(fds.as_mut_ptr()) };
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
         let read_fd = fds[0];
         let write_fd = fds[1];
         // Make read end non-blocking
@@ -97,22 +99,8 @@ impl ControlState {
         let pending_thread = Arc::clone(&pending);
         let snapshot_thread = Arc::clone(&snapshot);
         let subscribers_thread = Arc::clone(&subscribers);
-        let path_thread = path.clone();
 
         std::thread::spawn(move || {
-            // Remove stale socket from a previous run
-            let _ = std::fs::remove_file(&path_thread);
-            let listener = match UnixListener::bind(&path_thread) {
-                Ok(l) => l,
-                Err(e) => {
-                    log::error!(
-                        "Failed to bind control socket {}: {e}",
-                        path_thread.display()
-                    );
-                    return;
-                }
-            };
-
             for stream in listener.incoming() {
                 let stream = match stream {
                     Ok(s) => s,
@@ -133,12 +121,12 @@ impl ControlState {
             }
         });
 
-        Self {
+        Ok(Self {
             path,
             pending,
             snapshot,
             notify_fd: read_fd,
-        }
+        })
     }
 
     /// Drain the notification pipe (call after checking for pending requests).
@@ -156,6 +144,30 @@ impl ControlState {
         let mut guard = self.snapshot.lock().expect("control snapshot poisoned");
         *guard = snapshot;
     }
+}
+
+fn bind_listener(path: &std::path::Path) -> std::io::Result<UnixListener> {
+    match UnixStream::connect(path) {
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                format!("a live control socket already exists at {}", path.display()),
+            ));
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) => {}
+        Err(error) => return Err(error),
+    }
+
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    UnixListener::bind(path)
 }
 
 impl Drop for ControlState {
@@ -661,6 +673,7 @@ pub fn build_snapshot(wm: &crate::wm::WindowManager) -> Snapshot {
 mod tests {
     use super::*;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::fs::MetadataExt;
 
     fn move_request(command: &str, expected_name: Option<&str>, result: Result<(), String>) -> String {
         let (mut client, server) = UnixStream::pair().unwrap();
@@ -702,5 +715,24 @@ mod tests {
         assert_eq!(move_request("move-workspace terminal tools laptop", Some("terminal tools"),
             Err("no connected output matches: laptop".into())),
             "ERR no connected output matches: laptop\n");
+    }
+
+    #[test]
+    fn refuses_to_replace_live_socket() {
+        let path = std::env::temp_dir().join(format!(
+            "notion-river-control-test-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let inode = std::fs::metadata(&path).unwrap().ino();
+
+        let error = super::bind_listener(&path).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+        drop(listener);
+        std::fs::remove_file(path).unwrap();
     }
 }

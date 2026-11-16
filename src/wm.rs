@@ -137,7 +137,7 @@ pub struct WindowManager {
     /// Whether a layer-shell surface (e.g. rofi overlay) has keyboard focus.
     pub layer_shell_has_focus: bool,
     /// IPC state for waybar workspace display.
-    pub ipc: crate::ipc::IpcState,
+    pub ipc: Option<crate::ipc::IpcState>,
     /// App-to-frame bindings for window placement.
     pub app_bindings: crate::app_bindings::AppBindings,
     /// Drag preview overlay.
@@ -147,7 +147,7 @@ pub struct WindowManager {
     /// Per-output-config workspace assignment memory.
 
     /// Control socket state for window/workspace switching.
-    pub control: crate::control::ControlState,
+    pub control: Option<crate::control::ControlState>,
     /// Currently focused floating window, if any. Takes priority over tiled focus.
     pub focused_floating: Option<u64>,
     /// Pointer hover state on decoration surfaces (for tab hover highlight).
@@ -321,8 +321,6 @@ impl WindowManager {
         };
 
         let colors = config.appearance.colors();
-        let ipc = crate::ipc::IpcState::new();
-        let control = crate::control::ControlState::new(std::sync::Arc::clone(&ipc.subscribers));
         Self {
             config,
             colors,
@@ -339,18 +337,26 @@ impl WindowManager {
             saved_active_tabs,
             suppress_interaction: false,
             layer_shell_has_focus: false,
-            ipc,
+            ipc: None,
             app_bindings: crate::app_bindings::AppBindings::load(),
             drag_preview: crate::decorations::DragPreview::default(),
             resize_highlight_h: crate::decorations::ResizeHighlight::default(),
             resize_highlight_v: crate::decorations::ResizeHighlight::default(),
-            control,
+            control: None,
             focused_floating: None,
             hover_surface_id: None,
             hover_surface_x: 0.0,
             save_monitors_pending: false,
             forget_monitors_pending: false,
         }
+    }
+
+    pub fn start_services(&mut self) -> std::io::Result<()> {
+        let ipc = crate::ipc::IpcState::new();
+        let control = crate::control::ControlState::new(std::sync::Arc::clone(&ipc.subscribers))?;
+        self.ipc = Some(ipc);
+        self.control = Some(control);
+        Ok(())
     }
 
     // ── Manage/Render cycle ──────────────────────────────────────────────
@@ -412,10 +418,13 @@ impl WindowManager {
         let t_hook = manage_t0.elapsed();
 
         // Update waybar workspace display via FIFO
-        self.ipc.update(&self.workspaces, &self.config.appearance);
+        if let Some(ipc) = self.ipc.as_mut() {
+            ipc.update(&self.workspaces, &self.config.appearance);
+        }
         let t_ipc = manage_t0.elapsed();
-        self.control
-            .update_snapshot(crate::control::build_snapshot(self));
+        if let Some(control) = self.control.as_ref() {
+            control.update_snapshot(crate::control::build_snapshot(self));
+        }
 
         let manage_elapsed = manage_t0.elapsed();
         if manage_elapsed.as_millis() > 100 {
@@ -518,7 +527,11 @@ impl WindowManager {
             crate::protocol::river_output_v1::RiverOutputV1,
         >,
     ) {
-        let requests = self.control.take_pending();
+        let requests = self
+            .control
+            .as_ref()
+            .map(crate::control::ControlState::take_pending)
+            .unwrap_or_default();
         for req in requests {
             match req {
                 crate::control::ControlRequest::FocusWindow(id) => {

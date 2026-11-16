@@ -20,12 +20,15 @@ mod monitors;
 mod pointer_ops;
 mod protocol;
 mod rendering;
+mod single_instance;
 mod state;
 mod window_actions;
 mod wm;
 mod workspace;
 
+use std::io::Write;
 use std::os::unix::io::AsRawFd;
+use std::sync::{Arc, Mutex};
 use wayland_client::Connection;
 
 use crate::wm::AppData;
@@ -41,6 +44,44 @@ impl std::io::Write for LineFlush {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         self.0.flush()
+    }
+}
+
+#[derive(Clone)]
+struct LogTarget(Arc<Mutex<Option<LineFlush>>>);
+
+impl LogTarget {
+    fn stderr() -> Self {
+        Self(Arc::new(Mutex::new(None)))
+    }
+
+    fn activate_file(&self) -> std::io::Result<()> {
+        let log_path = "/tmp/notion-river.log";
+        let prev_path = "/tmp/notion-river.log.prev";
+        let _ = std::fs::rename(log_path, prev_path);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_path)?;
+        *self.0.lock().expect("log target poisoned") = Some(LineFlush(file));
+        Ok(())
+    }
+}
+
+impl Write for LogTarget {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Some(file) = self.0.lock().expect("log target poisoned").as_mut() {
+            return file.write(buf);
+        }
+        std::io::stderr().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Some(file) = self.0.lock().expect("log target poisoned").as_mut() {
+            return file.flush();
+        }
+        std::io::stderr().flush()
     }
 }
 
@@ -60,16 +101,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // Log rotation: current run → notion-river.log, previous run → notion-river.log.prev
-    // On startup, rotate so the previous run's log is always preserved for crash investigation.
-    let log_path = "/tmp/notion-river.log";
-    let prev_path = "/tmp/notion-river.log.prev";
-    let _ = std::fs::rename(log_path, prev_path);
-    let log_target = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(log_path);
+    let _instance_guard = match crate::single_instance::acquire()? {
+        crate::single_instance::AcquireResult::Acquired(guard) => guard,
+        crate::single_instance::AcquireResult::AlreadyRunning => {
+            eprintln!("Another notion-river instance is already running");
+            std::process::exit(3);
+        }
+    };
+
+    // Keep startup diagnostics on stderr until River grants the WM role.
+    let log_target = LogTarget::stderr();
 
     // Parse the desired log level from RUST_LOG, defaulting to "info".
     // We initialize env_logger with "trace" so it never filters anything itself,
@@ -82,13 +123,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut builder = env_logger::Builder::new();
     builder.filter_level(log::LevelFilter::Trace);
-    if let Ok(file) = log_target {
-        builder.target(env_logger::Target::Pipe(Box::new(LineFlush(file))));
-    }
+    builder.target(env_logger::Target::Pipe(Box::new(log_target.clone())));
     builder.init();
     log::set_max_level(initial_level);
-
-    log::info!("notion-river starting");
 
     // Connect to the Wayland compositor (River).
     let conn = Connection::connect_to_env()?;
@@ -105,6 +142,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         log::error!("river_window_manager_v1 global not found. Is River (0.4.x) running?");
         std::process::exit(1);
     }
+
+    // Process the WM role response before touching shared runtime files.
+    event_queue.roundtrip(&mut app_data)?;
+    if app_data.wm_unavailable {
+        eprintln!("Another Wayland window manager is already running");
+        std::process::exit(3);
+    }
+
+    log_target.activate_file()?;
+    app_data.wm.start_services()?;
+    if let Some(wm_proxy) = app_data.river_wm.as_ref() {
+        wm_proxy.manage_dirty();
+    }
+    log::info!("notion-river starting");
     if app_data.river_xkb.is_none() {
         log::error!("river_xkb_bindings_v1 global not found.");
         std::process::exit(1);
@@ -143,7 +194,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Main event loop — poll both Wayland fd and control socket notify fd.
     let wayland_fd = event_queue.prepare_read().map(|g| { let fd = g.connection_fd().as_raw_fd(); drop(g); fd }).unwrap_or(-1);
-    let control_fd = app_data.wm.control.notify_fd;
+    let control_fd = app_data
+        .wm
+        .control
+        .as_ref()
+        .expect("control service not started")
+        .notify_fd;
 
     loop {
         if SHUTDOWN.load(Ordering::Relaxed) {
@@ -184,7 +240,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
         // If control socket has data, drain it and trigger manage_dirty
         if fds[1].revents & libc::POLLIN != 0 {
-            app_data.wm.control.drain_notify();
+            app_data
+                .wm
+                .control
+                .as_ref()
+                .expect("control service not started")
+                .drain_notify();
             if let Some(ref wm_proxy) = app_data.river_wm {
                 wm_proxy.manage_dirty();
             }

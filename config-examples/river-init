@@ -4,13 +4,14 @@
 
 # ── Environment ──
 export XDG_CURRENT_DESKTOP=river
+export XDG_SESSION_TYPE=wayland
 export MOZ_ENABLE_WAYLAND=1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export ELECTRON_ENABLE_WAYLAND=1
 export RUST_LOG=info
 
 # ── Import env into systemd so portals (file dialogs etc.) work ──
-systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE
 
 # ── Install example configs on first run ──
 EXAMPLES="/usr/share/notion-river/examples"
@@ -40,9 +41,15 @@ if [ -f "$AUTOSTART" ]; then
 fi
 
 # ── Start the window manager ──
-# Always restart unless killed with SIGKILL (-9).
+# Restart after crashes while this River compositor remains alive.
+river_pid=$PPID
+trap 'exit 0' HUP INT TERM
 while true; do
     notion-river
-    echo "notion-river exited ($?), restarting..."
+    status=$?
+    if [ "$status" -eq 3 ] || ! kill -0 "$river_pid" 2>/dev/null; then
+        break
+    fi
+    echo "notion-river exited ($status), restarting..."
     sleep 0.5
 done
