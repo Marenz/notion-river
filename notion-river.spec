@@ -7,6 +7,7 @@ URL:            https://github.com/Marenz/notion-river
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  (cargo >= 1.75 or rustup)
+BuildRequires:  patch
 BuildRequires:  pkg-config
 BuildRequires:  pkgconfig(wayland-client)
 BuildRequires:  pkgconfig(cairo)
@@ -35,10 +36,15 @@ persistent wireframe of frames that exist independently of windows.
 Windows are placed into frames as tabs. Opening/closing windows never
 changes the layout — only explicit user actions (split/unsplit) do.
 
-Bundles the River compositor version pinned in vendor/river.
+Bundles the River compositor version pinned in vendor/river, with the
+fixes from patches/river/ applied.
 
 %prep
 %autosetup
+# Local fixes on top of the pinned River release (see patches/river/).
+for p in patches/river/*.patch; do
+    patch -d vendor/river -p1 -i "$PWD/$p"
+done
 
 %build
 cargo build --release

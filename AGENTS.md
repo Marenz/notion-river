@@ -39,7 +39,25 @@ the running session. The package-installed `/usr/bin/river` may also be stale;
 River/notion-river pair wins after the next session start. Verify the running
 binary with `readlink /proc/$(pgrep -x river)/exe` and `river -version`.
 
-lightdm is configured with a "Notion River" session (`/usr/share/wayland-sessions/river-custom.desktop`) pointing to `~/.local/bin/start-river`.
+**Login path:** lightdm uses `/usr/share/wayland-sessions/notion-river.desktop`
+(from the package) → `/usr/bin/notion-river-session`, which sources
+`~/.config/river/autostart` and then execs plain `river` from PATH.
+`river-custom.desktop` / `start-river` are NOT used. On this machine
+`autostart` prepends `~/.local/bin` to PATH, so the user-local River wins over
+`/usr/bin/river`.
+
+**Patched River:** `patches/river/*.patch` are applied on top of the pinned
+submodule by the RPM spec and the package workflow; the submodule pin itself
+stays on the upstream release. For local builds apply them first:
+`git -C vendor/river am ../../patches/river/*.patch` (or check out the local
+branch `fix/retry-failed-output-commit` in `vendor/river`), but do not commit
+the moved submodule pointer — CI clones the pin from upstream. Current patch:
+upstream `handleFrame` drops a frame on a failed commit (EBUSY on DRM hotplug)
+without scheduling another, so an output with static content (empty
+workspace) stays stale/blank indefinitely; the patch retries via a per-output
+timer (50ms → 1s backoff). Symptom without it: `output commit failed for DP-x`
+in `~/.xsession-errors` and a blank monitor; workaround `wlr-randr --output
+DP-x --off` then `--on` with its mode/pos/transform/scale.
 
 The `start-river` script sets XKB layout (de/neo), Wayland env vars, and execs River.
 
@@ -176,7 +194,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - `env_logger` output goes to `/tmp/notion-river.log` via LineFlush wrapper.
 - Stale wayland socket locks after crashes: `rm -f /run/user/$(id -u)/wayland-*`
 - The init restart loop exits when notion-river returns 3 (another instance owns the lock) or its River parent dies. Existing `~/.config/river/init` copies must be updated manually from `config-examples/river-init`.
-- Contour terminal grid/size bugs (≤ 0.7.0-master-38e543a7) are fixed in `~/repos/contour` on the `fix-implicit-size-binding` branch; rebuild with `cmake --build out/gcc-release --target contour -j` and atomic-replace `~/.local/bin/contour` (the running binary is busy — `cp` to `contour.new` then `mv -f`). Only newly-spawned terminals pick up the new binary. **Do not work around either bug in notion-river** — notion-river proposes the correct tile size (verified: contour commits exactly `last_proposed_*`); the faults are contour-side grid handling:
+- Contour terminal grid/size bugs (≤ 0.7.0-master-38e543a7) are fixed in `~/repos/contour` — current branch is `fix-tiling-initial-grid-sync` (superseded `fix-implicit-size-binding`; latest refinement compares against pre-DPR implicit size instead of `_lastVirtual*`, may be uncommitted in the worktree). Rebuild with `cmake --build out/gcc-release --target contour -j` and atomic-replace `~/.local/bin/contour` (the running binary is busy — `cp` to `contour.new` then `mv -f`). Only newly-spawned terminals pick up the new binary. **PATH shadow gotcha (2026-07-14)**: `/usr/local/bin/contour` precedes `~/.local/bin` in PATH — a stale root-installed copy there silently resurrects the startup-size bug even though `~/.local/bin/contour` is fresh. After every install, `sudo cp ~/.local/bin/contour /usr/local/bin/contour` too (or remove the /usr/local copy). Verify with `readlink /proc/$(pgrep -x contour | head -1)/exe` and `contour version`. **Do not work around either bug in notion-river** — notion-river proposes the correct tile size (verified: contour commits exactly `last_proposed_*`); the faults are contour-side grid handling:
   - *Snap-back to `terminal_size` after a screen/DPR change*: commit `753f7b7a`, one-shot `Component.onCompleted` initialiser in `src/contour/ui/main.qml` instead of a permanent `width: vtui.implicitWidth` binding. Upstream as [contour#1950](https://github.com/contour-terminal/contour/pull/1950) (closes #1941).
   - *Newly-spawned terminal's prompt is off-screen until a manual resize*: the cell-grid snap in `sizeChanged()` (added by our own commit `938c5792`) is suppressed for the first 500 ms (`_initialResizeDeadline`) to avoid fighting the stale-geometry/DPR configure reversion. But a tiling WM assigns the tile size *inside* that window and nothing re-triggers `sizeChanged()` afterward, so the renderer keeps the raw, non-cell-aligned tile size (e.g. surface 1524×1378 while the grid wants 1508×1367) and the bottom row renders off-screen. Diagnosis from `/tmp/notion-river.log`: on spawn contour commits the tile size *once* (== `last_proposed`); during a manual resize it repeatedly snaps proposed sizes down to its cell-aligned size — that round-trip is what fixes it. **Fix**: a one-shot `QTimer::singleShot(550, ...)` right after `_initialResizeDeadline` is set (`TerminalDisplay.cpp`) re-runs `sizeChanged()` past the deadline so the grid snaps to whatever size the WM left us at. Not yet upstreamed.
 - Fractional scale 1.5x is the best fractional scale — it's a clean fraction wlroots handles well. 1.75x causes blur due to wlroots rounding bug (#953). Stick to 1.5x or integer scales (1x, 2x).

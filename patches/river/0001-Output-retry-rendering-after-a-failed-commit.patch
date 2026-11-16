@@ -1,0 +1,120 @@
+From 4955a7e2204261b59e502d29c57e06c8b342b188 Mon Sep 17 00:00:00 2001
+From: "Mathias L. Baumann" <mathias.baumann@frequenz.com>
+Date: Mon, 16 Nov 2026 10:36:03 +0100
+Subject: [PATCH] Output: retry rendering after a failed commit
+
+A failed output commit (e.g. EBUSY from the DRM backend during
+hotplug) dropped the frame without scheduling another one. If nothing
+damaged the scene afterwards, the output kept showing stale content
+indefinitely.
+
+Arm a per-output timer on failure that schedules a new frame, backing
+off exponentially from 50ms to 1s.
+
+Signed-off-by: Mathias L. Baumann <mathias.baumann@frequenz.com>
+---
+ river/Output.zig        | 42 +++++++++++++++++++++++++++++++++++++----
+ river/OutputManager.zig |  1 +
+ 2 files changed, 39 insertions(+), 4 deletions(-)
+
+diff --git a/river/Output.zig b/river/Output.zig
+index b851915..81104e2 100644
+--- a/river/Output.zig
++++ b/river/Output.zig
+@@ -181,6 +181,13 @@ request_state: wl.Listener(*wlr.Output.event.RequestState) = .init(handleRequest
+ frame: wl.Listener(*wlr.Output) = .init(handleFrame),
+ present: wl.Listener(*wlr.Output.event.Present) = .init(handlePresent),
+ 
++/// Schedules a new frame after a failed commit. Without this, a failed commit
++/// (e.g. EBUSY from the DRM backend during hotplug) leaves the output showing
++/// stale content until the scene is damaged again, which may be never.
++commit_retry_timer: *wl.EventSource,
++/// Current retry delay in milliseconds, 0 if the last commit succeeded.
++commit_retry_delay_ms: u31 = 0,
++
+ pub fn create(wlr_output: *wlr.Output) !void {
+     const output = try util.gpa.create(Output);
+     errdefer util.gpa.destroy(output);
+@@ -198,6 +205,10 @@ pub fn create(wlr_output: *wlr.Output) !void {
+ 
+     if (!wlr_output.initRender(server.allocator, server.renderer)) return error.InitRenderFailed;
+ 
++    const event_loop = server.wl_server.getEventLoop();
++    const commit_retry_timer = try event_loop.addTimer(*Output, handleCommitRetry, output);
++    errdefer commit_retry_timer.remove();
++
+     const initial: State = .{
+         .state = .disabled_hard,
+         .x = 0,
+@@ -212,6 +223,7 @@ pub fn create(wlr_output: *wlr.Output) !void {
+     output.* = .{
+         .wlr_output = wlr_output,
+         .scene_output = null,
++        .commit_retry_timer = commit_retry_timer,
+         .scheduled = initial,
+         .sent = initial,
+         .current = initial,
+@@ -295,6 +307,8 @@ fn handleDestroy(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) v
+     output.frame.link.remove();
+     output.present.link.remove();
+ 
++    output.commit_retry_timer.remove();
++
+     wlr_output.data = null;
+ 
+     output.wlr_output = null;
+@@ -473,15 +487,35 @@ fn handleRequestState(listener: *wl.Listener(*wlr.Output.event.RequestState), ev
+ fn handleFrame(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
+     const output: *Output = @fieldParentPtr("frame", listener);
+ 
+-    // TODO this should probably be retried on failure
+-    output.renderAndCommit() catch |err| switch (err) {
+-        error.CommitFailed => log.err("output commit failed for {s}", .{wlr_output.name}),
+-    };
++    if (output.renderAndCommit()) {
++        output.commit_retry_delay_ms = 0;
++    } else |err| switch (err) {
++        error.CommitFailed => {
++            // Back off exponentially (50ms up to 1s) so a persistently
++            // failing output does not spin.
++            const delay = if (output.commit_retry_delay_ms == 0)
++                50
++            else
++                @min(output.commit_retry_delay_ms * 2, 1000);
++            output.commit_retry_delay_ms = delay;
++            log.err("output commit failed for {s}, retrying in {d}ms", .{ wlr_output.name, delay });
++            output.commit_retry_timer.timerUpdate(delay) catch {
++                log.err("failed to arm commit retry timer for {s}", .{wlr_output.name});
++            };
++        },
++    }
+ 
+     var now = util.timestamp();
+     output.scene_output.?.sendFrameDone(&now);
+ }
+ 
++fn handleCommitRetry(output: *Output) c_int {
++    if (output.wlr_output) |wlr_output| {
++        if (wlr_output.enabled) wlr_output.scheduleFrame();
++    }
++    return 0;
++}
++
+ fn renderAndCommit(output: *Output) !void {
+     if (!output.scene_output.?.needsFrame()) return;
+ 
+diff --git a/river/OutputManager.zig b/river/OutputManager.zig
+index 630600c..e7f420a 100644
+--- a/river/OutputManager.zig
++++ b/river/OutputManager.zig
+@@ -87,6 +87,7 @@ fn handleNewOutput(_: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
+         switch (err) {
+             error.OutOfMemory => log.err("out of memory", .{}),
+             error.InitRenderFailed => log.err("failed to initialize renderer for output {s}", .{wlr_output.name}),
++            error.AddTimerFailed => log.err("failed to create commit retry timer for output {s}", .{wlr_output.name}),
+         }
+         wlr_output.destroy();
+         return;
+-- 
+2.56.0
+

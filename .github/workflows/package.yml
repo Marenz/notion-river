@@ -66,6 +66,9 @@ jobs:
       - name: Build River
         continue-on-error: true
         run: |
+          for p in patches/river/*.patch; do
+            patch -d vendor/river -p1 -i "$PWD/$p"
+          done
           cd vendor/river
           zig build -Doptimize=ReleaseSafe -Dxwayland || zig build -Doptimize=ReleaseSafe
 
@@ -164,6 +167,7 @@ jobs:
         run: |
           zypper --non-interactive install \
             git \
+            patch \
             tar \
             gzip \
             curl \
