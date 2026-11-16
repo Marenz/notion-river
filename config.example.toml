@@ -18,14 +18,12 @@ border_width = 2
 
 [commands]
 terminal = "contour"
-# Unified switch-or-launch (Super+o). notion-rofi-launch opens the
-# notion-rofi-window-mode script-modi on the focused output: one list of open
-# windows + launchable apps. Type a name to jump to a running window (focused
-# via notion-ctl, switching workspaces if needed) or launch the app. Works
-# with stock rofi; needs no foreign-toplevel protocol.
+# Unified switch-or-launch (Super+o), the one menu for both. notion-rofi-launch
+# opens the notion-rofi-window-mode script-modi on the focused output: one
+# list of open windows + launchable apps. Type a name to jump to a running
+# window (focused via notion-ctl, switching workspaces if needed) or launch
+# the app. Works with stock rofi; needs no foreign-toplevel protocol.
 launcher = ["notion-rofi-launch"]
-# Super+Shift+o — same menu, bound separately for muscle memory.
-window_switcher = ["notion-rofi-window-switch"]
 
 # Choose keybinding profile: "i3_neo" or "notion"
 active_profile = "i3_neo"

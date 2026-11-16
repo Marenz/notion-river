@@ -13,12 +13,10 @@ border_width = 2
 
 [commands]
 terminal = "foot"
-# Unified switch-or-launch (Super+o): one rofi list of open windows +
-# launchable apps on the focused output. Focus goes through notion-ctl
-# (switching workspaces if needed). Works with stock rofi.
+# One menu on Super+o: a rofi list of open windows + launchable apps on the
+# focused output. Focus goes through notion-ctl (switching workspaces if
+# needed). Works with stock rofi.
 launcher = ["notion-rofi-launch"]
-# Super+Shift+o — same menu, bound separately for muscle memory.
-window_switcher = ["notion-rofi-window-switch"]
 
 [appearance]
 active_border = "#9b8ec4"

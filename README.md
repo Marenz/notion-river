@@ -99,7 +99,7 @@ The result: a predictable, stable workspace that doesn't rearrange itself.
 - Rust 1.75+
 - `waybar` for status bar
 - `foot` or another Wayland terminal
-- `rofi` for app launcher / window switcher
+- `rofi` for the unified window/app launcher
 - `wdisplays` (optional) for one-shot interactive monitor layout edits — notion-river itself owns and remembers the layout via `wlr-output-management-unstable-v1`. Do **not** run kanshi or another wlr-output-management client alongside notion-river.
 
 ### Install
@@ -150,17 +150,15 @@ Existing `~/.config/river/init` files are not updated by package upgrades. If
 your setup predates this guarded loop, replace its unconditional restart loop
 with the version above so it cannot outlive River and spawn duplicate WMs.
 
-### Rofi launcher & window switcher
+### Rofi launcher (one menu, Super+o)
 
-The primary entry point is one unified box (`Super+o`) that switches to an
-open window or launches an app:
+There is one menu, bound once, for both switching to an open window and
+launching an app:
 
 ```toml
 [commands]
-# Super+o — unified switch-or-launch
+# Super+o — the one menu: open windows + launchable apps
 launcher = ["notion-rofi-launch"]
-# Super+Shift+o — same menu, bound separately for muscle memory
-window_switcher = ["notion-rofi-window-switch"]
 ```
 
 - **`notion-rofi-launch`** shows the `notion-rofi-window-mode` script-modi,
@@ -168,8 +166,6 @@ window_switcher = ["notion-rofi-window-switch"]
   name to jump to a running window, or launch the app if it is not open.
   Picks are focused via `notion-ctl focus-window` (switching workspaces if the
   window is hidden) and apps are started via `gtk-launch`.
-- **`notion-rofi-window-switch`** opens the same menu; a windows-only switcher
-  would be a strict subset of it.
 
 This works with **stock rofi** and needs no foreign-toplevel protocol, which
 is deliberate. River keeps focus decisions in the window manager, so rofi's
@@ -187,13 +183,13 @@ rofi's `combi` modi is avoided for a separate reason: it swallows the
 script-modi selection callback, so a single custom modi that owns the whole
 list is the clean solution.
 
-Both wrappers target the focused output by name (`-m <output>`): notion-river
+The wrapper targets the focused output by name (`-m <output>`): notion-river
 reports every output at position `0,0` to layer-shell clients, so coordinate
 placement does not work and rofi would otherwise always open on the same
 monitor.
 
-The window switcher and its `notion-rofi-window-mode` script-modi, the launcher,
-and `notion-ctl` are all installed to `PATH` by the packages. The optional
+The launcher, its `notion-rofi-window-mode` script-modi, and `notion-ctl` are
+all installed to `PATH` by the packages. The optional
 Catppuccin Mocha rofi theme is shipped under the examples directory:
 
 ```sh
@@ -279,8 +275,7 @@ river -c ~/.config/river/init
 | Binding | Action |
 |---|---|
 | `Super+Return` | Terminal |
-| `Super+p` | Launcher |
-| `Super+Shift+p` | Window switcher |
+| `Super+p` | Launcher (open windows + apps) |
 | `Super+c` | Close focused window |
 | `Super+f` | Fullscreen toggle |
 | `Super+h/j/k/l` | Focus left/down/up/right |
@@ -304,14 +299,13 @@ river -c ~/.config/river/init
 |---|---|
 | `Super+Space` | Terminal |
 | `Super+Return` | Fullscreen toggle |
-| `Super+o` | Launcher |
-| `Super+Shift+o` | Window switcher |
+| `Super+o` | Launcher (open windows + apps) |
 | `Super+c` | Close focused window |
 | `Super+i/a/l/e` | Focus (Neo directions) |
 | `Super+Arrow keys` | Focus in the arrow direction |
 | `Super+Shift+i/a/l/e` | Move window |
 | `Super+Shift+Arrow keys` | Move window in the arrow direction |
-| `Super+b` | Split horizontal |
+| `Super+w` | Split horizontal |
 | `Super+v` | Split vertical |
 | `Super+t` | Toggle split orientation |
 | `Super+n/p` | Next / previous tab |

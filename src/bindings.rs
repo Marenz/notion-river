@@ -115,7 +115,6 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super", "space", "spawn_terminal", &[]);
     bind(&mut b, "super", "c", "close", &[]);
     bind(&mut b, "super", "o", "spawn_launcher", &[]);
-    bind(&mut b, "super+shift", "o", "spawn_window_switcher", &[]);
     bind(&mut b, "super", "Return", "toggle_fullscreen", &[]);
 
     // ── Focus (Neo: i/a/l/e) ──
@@ -140,13 +139,11 @@ pub fn builtin_i3_neo_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super+shift", "Right", "move", &["right"]);
 
     // ── Layout manipulation ──
-    bind(&mut b, "super", "b", "split_horizontal", &[]);
+    bind(&mut b, "super", "w", "split_horizontal", &[]);
     bind(&mut b, "super", "v", "split_vertical", &[]);
     bind(&mut b, "super", "t", "toggle_split", &[]);
 
     // ── Tabbing ──
-    bind(&mut b, "super", "w", "next_tab", &[]);
-    bind(&mut b, "super", "q", "prev_tab", &[]);
     bind(&mut b, "super", "n", "next_tab", &[]);
     bind(&mut b, "super", "p", "prev_tab", &[]);
 
@@ -304,7 +301,6 @@ pub fn builtin_notion_bindings() -> Vec<BindingConfig> {
     bind(&mut b, "super", "Return", "spawn_terminal", &[]);
     bind(&mut b, "super", "c", "close", &[]);
     bind(&mut b, "super", "p", "spawn_launcher", &[]);
-    bind(&mut b, "super+shift", "p", "spawn_window_switcher", &[]);
     bind(&mut b, "super", "f", "toggle_fullscreen", &[]);
 
     // ── Focus (Vim: h/j/k/l) ──

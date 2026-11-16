@@ -63,6 +63,12 @@ pub struct GeneralConfig {
 pub struct CommandsConfig {
     pub terminal: String,
     pub launcher: Vec<String>,
+
+    /// Deprecated: the separate window switcher was removed, since `launcher`
+    /// (Super+o) already shows one combined window+app menu. Kept only so
+    /// old configs with a `window_switcher = [...]` line still parse.
+    #[serde(default)]
+    #[allow(dead_code)]
     pub window_switcher: Vec<String>,
 }
 
@@ -367,7 +373,7 @@ impl Default for CommandsConfig {
         Self {
             terminal: "contour".to_string(),
             launcher: vec!["rofi".to_string(), "-show".to_string(), "drun".to_string()],
-            window_switcher: vec!["notion-rofi-window-switch".to_string()],
+            window_switcher: Vec::new(),
         }
     }
 }
@@ -567,6 +573,23 @@ mod tests {
             vec!["laptop"]
         );
         assert!(config.workspaces[3].output.is_none());
+    }
+
+    #[test]
+    fn old_window_switcher_key_still_parses() {
+        // The separate window switcher was removed; configs that still have
+        // this key (from before the change) must keep loading.
+        let toml_str = r#"
+            active_profile = "i3_neo"
+
+            [commands]
+            terminal = "foot"
+            launcher = ["notion-rofi-launch"]
+            window_switcher = ["notion-rofi-window-switch"]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.commands.terminal, "foot");
+        assert_eq!(config.commands.launcher, vec!["notion-rofi-launch"]);
     }
 }
 
