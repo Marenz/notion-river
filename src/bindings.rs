@@ -406,18 +406,63 @@ fn bind(out: &mut Vec<BindingConfig>, mods: &str, key: &str, action: &str, args:
     });
 }
 
-/// Get bindings for a profile, falling back to built-in defaults.
+/// Get bindings for a profile, falling back to built-in defaults, with the
+/// config's `extra_bindings` applied on top.
 pub fn get_profile_bindings(config: &Config) -> (Vec<BindingConfig>, Vec<BindingConfig>) {
-    // Check if the active profile has custom bindings in config
-    if let Some(profile) = config.profiles.get(&config.active_profile)
+    let (mut normal, resize) = if let Some(profile) = config.profiles.get(&config.active_profile)
         && !profile.bindings.is_empty()
     {
-        return (profile.bindings.clone(), profile.resize_bindings.clone());
-    }
+        // The active profile has custom bindings in config.
+        (profile.bindings.clone(), profile.resize_bindings.clone())
+    } else {
+        match config.active_profile.as_str() {
+            "notion" => (builtin_notion_bindings(), builtin_notion_resize_bindings()),
+            _ => (builtin_i3_neo_bindings(), builtin_i3_neo_resize_bindings()),
+        }
+    };
 
-    // Fall back to built-in profiles
-    match config.active_profile.as_str() {
-        "notion" => (builtin_notion_bindings(), builtin_notion_resize_bindings()),
-        _ => (builtin_i3_neo_bindings(), builtin_i3_neo_resize_bindings()),
+    for extra in &config.extra_bindings {
+        let mods = parse_modifiers(&extra.modifiers);
+        normal.retain(|b| !(b.key == extra.key && parse_modifiers(&b.modifiers) == mods));
+        normal.push(extra.clone());
+    }
+    (normal, resize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extra_bindings_extend_and_override_the_profile() {
+        let config: Config = toml::from_str(
+            r#"
+            active_profile = "i3_neo"
+
+            [[extra_bindings]]
+            modifiers = "ctrl"
+            key = "F11"
+            action = "spawn"
+            args = ["dictate", "toggle"]
+
+            [[extra_bindings]]
+            modifiers = "shift+super"
+            key = "r"
+            action = "reload_config"
+            "#,
+        )
+        .unwrap();
+        let (normal, _) = get_profile_bindings(&config);
+
+        let added: Vec<_> = normal.iter().filter(|b| b.key == "F11").collect();
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].args, ["dictate", "toggle"]);
+
+        let restart_keys: Vec<_> = normal
+            .iter()
+            .filter(|b| b.key == "r" && parse_modifiers(&b.modifiers) == parse_modifiers("super+shift"))
+            .collect();
+        assert_eq!(restart_keys.len(), 1, "override must replace, not duplicate");
+        assert_eq!(restart_keys[0].action, "reload_config");
     }
 }

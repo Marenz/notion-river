@@ -113,6 +113,16 @@ workspace = "utility"
 app_id = "steam_app_.*"
 floating = true
 
+# ── Extra Keybindings ────────────────────────────────────────────────────
+# Added on top of the active profile (built-in or custom). An entry with the
+# same modifiers and key replaces the profile's binding.
+#
+# [[extra_bindings]]
+# modifiers = "ctrl"
+# key = "F11"
+# action = "spawn"
+# args = ["dictate", "toggle"]
+
 # ── Custom Keybinding Profile ────────────────────────────────────────────
 # Uncomment and modify to define your own keybinding profile.
 # Set active_profile = "custom" above to use it.

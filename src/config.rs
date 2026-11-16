@@ -27,6 +27,11 @@ pub struct Config {
     /// Which keybinding profile to use.
     pub active_profile: String,
 
+    /// Bindings added on top of the active profile (built-in or custom).
+    /// An entry with the same modifiers and key replaces the profile's binding.
+    #[serde(default)]
+    pub extra_bindings: Vec<BindingConfig>,
+
     /// Appearance settings.
     pub appearance: AppearanceConfig,
 }
@@ -349,6 +354,7 @@ impl Default for Config {
             winprops: Vec::new(),
             profiles: HashMap::new(),
             active_profile: "i3_neo".to_string(),
+            extra_bindings: Vec::new(),
             appearance: AppearanceConfig::default(),
         }
     }
