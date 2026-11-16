@@ -132,13 +132,23 @@ export XDG_CURRENT_DESKTOP=river
 export MOZ_ENABLE_WAYLAND=1
 export RUST_LOG=info
 
-(sleep 3; waybar &; nm-applet --indicator &) &
+(sleep 3; waybar & nm-applet --indicator &) &
 
+river_pid=$PPID
+trap 'exit 0' HUP INT TERM
 while true; do
     notion-river
+    status=$?
+    if [ "$status" -eq 3 ] || ! kill -0 "$river_pid" 2>/dev/null; then
+        break
+    fi
     sleep 0.5
 done
 ```
+
+Existing `~/.config/river/init` files are not updated by package upgrades. If
+your setup predates this guarded loop, replace its unconditional restart loop
+with the version above so it cannot outlive River and spawn duplicate WMs.
 
 ### Rofi launcher & window switcher
 

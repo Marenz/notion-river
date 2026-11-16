@@ -123,6 +123,12 @@ fn main() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("failed to connect to {}: {e}", path.display());
+            if e.kind() == std::io::ErrorKind::ConnectionRefused && path.exists() {
+                eprintln!(
+                    "the socket file exists but has no listener; a second notion-river instance may have replaced it"
+                );
+                eprintln!("check for orphaned init loops with: pgrep -af 'river|notion-river'");
+            }
             std::process::exit(1);
         }
     };

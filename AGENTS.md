@@ -43,7 +43,7 @@ lightdm is configured with a "Notion River" session (`/usr/share/wayland-session
 
 The `start-river` script sets XKB layout (de/neo), Wayland env vars, and execs River.
 
-The init script (`~/.config/river/init`) starts waybar, nm-applet, keepassxc, and runs notion-river in a restart loop (always restarts, not just on exit 0). notion-river itself owns monitor configuration (mode/scale/position/transform) via `wlr-output-management-unstable-v1`; no kanshi or external tool is involved. wp_viewporter protocol handles fractional scaling.
+The init script (`~/.config/river/init`) starts waybar, nm-applet, keepassxc, and runs notion-river in a restart loop that restarts after crashes but stops when notion-river exits 3 (another instance is running) or River is gone. notion-river itself owns monitor configuration (mode/scale/position/transform) via `wlr-output-management-unstable-v1`; no kanshi or external tool is involved. wp_viewporter protocol handles fractional scaling.
 
 ### Nested testing (inside X11)
 
@@ -57,6 +57,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 ## Architecture
 
 - `src/main.rs` — entry point, Wayland connection, event loop, signal handler, log file setup
+- `src/single_instance.rs` — `flock` on `$XDG_RUNTIME_DIR/notion-river.lock`; a second instance exits 3. The log file, waybar IPC and control socket are only set up after River grants the WM role, so a losing instance cannot clobber them.
 - `src/protocol.rs` — wayland-scanner generated bindings (river-window-management-v1, river-xkb-bindings-v1, river-layer-shell-v1)
 - `src/dispatch.rs` — Wayland `Dispatch` impls for all protocol interfaces (WM, output, seat, window, pointer, layer-shell, decorations)
 - `src/wm.rs` — core WM state, manage/render cycle, focus logic integration
@@ -174,7 +175,7 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - Electron apps need `ELECTRON_OZONE_PLATFORM_HINT=wayland` env var (set in init script).
 - `env_logger` output goes to `/tmp/notion-river.log` via LineFlush wrapper.
 - Stale wayland socket locks after crashes: `rm -f /run/user/$(id -u)/wayland-*`
-- The init restart loop always restarts notion-river (not conditional on exit code). This means crashes also trigger a restart.
+- The init restart loop exits when notion-river returns 3 (another instance owns the lock) or its River parent dies. Existing `~/.config/river/init` copies must be updated manually from `config-examples/river-init`.
 - Contour terminal grid/size bugs (≤ 0.7.0-master-38e543a7) are fixed in `~/repos/contour` on the `fix-implicit-size-binding` branch; rebuild with `cmake --build out/gcc-release --target contour -j` and atomic-replace `~/.local/bin/contour` (the running binary is busy — `cp` to `contour.new` then `mv -f`). Only newly-spawned terminals pick up the new binary. **Do not work around either bug in notion-river** — notion-river proposes the correct tile size (verified: contour commits exactly `last_proposed_*`); the faults are contour-side grid handling:
   - *Snap-back to `terminal_size` after a screen/DPR change*: commit `753f7b7a`, one-shot `Component.onCompleted` initialiser in `src/contour/ui/main.qml` instead of a permanent `width: vtui.implicitWidth` binding. Upstream as [contour#1950](https://github.com/contour-terminal/contour/pull/1950) (closes #1941).
   - *Newly-spawned terminal's prompt is off-screen until a manual resize*: the cell-grid snap in `sizeChanged()` (added by our own commit `938c5792`) is suppressed for the first 500 ms (`_initialResizeDeadline`) to avoid fighting the stale-geometry/DPR configure reversion. But a tiling WM assigns the tile size *inside* that window and nothing re-triggers `sizeChanged()` afterward, so the renderer keeps the raw, non-cell-aligned tile size (e.g. surface 1524×1378 while the grid wants 1508×1367) and the bottom row renders off-screen. Diagnosis from `/tmp/notion-river.log`: on spawn contour commits the tile size *once* (== `last_proposed`); during a manual resize it repeatedly snaps proposed sizes down to its cell-aligned size — that round-trip is what fixes it. **Fix**: a one-shot `QTimer::singleShot(550, ...)` right after `_initialResizeDeadline` is set (`TerminalDisplay.cpp`) re-runs `sizeChanged()` past the deadline so the grid snaps to whatever size the WM left us at. Not yet upstreamed.
