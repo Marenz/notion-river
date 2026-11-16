@@ -39,7 +39,25 @@ the running session. The package-installed `/usr/bin/river` may also be stale;
 River/notion-river pair wins after the next session start. Verify the running
 binary with `readlink /proc/$(pgrep -x river)/exe` and `river -version`.
 
-lightdm is configured with a "Notion River" session (`/usr/share/wayland-sessions/river-custom.desktop`) pointing to `~/.local/bin/start-river`.
+**Login path:** lightdm uses `/usr/share/wayland-sessions/notion-river.desktop`
+(from the package) → `/usr/bin/notion-river-session`, which sources
+`~/.config/river/autostart` and then execs plain `river` from PATH.
+`river-custom.desktop` / `start-river` are NOT used. On this machine
+`autostart` prepends `~/.local/bin` to PATH, so the user-local River wins over
+`/usr/bin/river`.
+
+**Patched River:** `patches/river/*.patch` are applied on top of the pinned
+submodule by the RPM spec and the package workflow; the submodule pin itself
+stays on the upstream release. For local builds apply them first:
+`git -C vendor/river am ../../patches/river/*.patch` (or check out the local
+branch `fix/retry-failed-output-commit` in `vendor/river`), but do not commit
+the moved submodule pointer — CI clones the pin from upstream. Current patch:
+upstream `handleFrame` drops a frame on a failed commit (EBUSY on DRM hotplug)
+without scheduling another, so an output with static content (empty
+workspace) stays stale/blank indefinitely; the patch retries via a per-output
+timer (50ms → 1s backoff). Symptom without it: `output commit failed for DP-x`
+in `~/.xsession-errors` and a blank monitor; workaround `wlr-randr --output
+DP-x --off` then `--on` with its mode/pos/transform/scale.
 
 The `start-river` script sets XKB layout (de/neo), Wayland env vars, and execs River.
 
