@@ -58,19 +58,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: "0.14.0"
-
-      - name: Build River
-        continue-on-error: true
-        run: |
-          for p in patches/river/*.patch; do
-            patch -d vendor/river -p1 -i "$PWD/$p"
-          done
-          cd vendor/river
-          zig build -Doptimize=ReleaseSafe -Dxwayland || zig build -Doptimize=ReleaseSafe
+      # River is not bundled: the pinned release needs Zig 0.16 and wlroots
+      # 0.20, which Ubuntu 24.04 does not provide.
 
       - name: Build notion-river
         run: cargo build --release
@@ -97,12 +86,14 @@ jobs:
           # rofi launcher on PATH (referenced by config.toml)
           cp config-examples/notion-rofi-launch "${PKGDIR}/usr/bin/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/bin/"
-          # Include River binary if built
-          test -f vendor/river/zig-out/bin/river && cp vendor/river/zig-out/bin/river "${PKGDIR}/usr/bin/" || true
+          cp notion-river-session "${PKGDIR}/usr/bin/"
+          cp config-examples/notion-volume "${PKGDIR}/usr/bin/"
+          cp config-examples/notion-cycle-workspace "${PKGDIR}/usr/bin/"
           cp notion-river.desktop "${PKGDIR}/usr/share/wayland-sessions/"
           cp config-examples/start-river "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/river-init "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/autostart "${PKGDIR}/usr/share/notion-river/examples/"
+          cp config.example.toml "${PKGDIR}/usr/share/notion-river/examples/config.toml"
           cp config-examples/notion-rofi-launch "${PKGDIR}/usr/share/notion-river/examples/"
           cp config-examples/notion-rofi-window-mode "${PKGDIR}/usr/share/notion-river/examples/"
           mkdir -p "${PKGDIR}/usr/share/notion-river/examples/waybar"
@@ -139,7 +130,7 @@ jobs:
            implements static tiling from the Notion WM. The screen layout is a
            persistent wireframe of frames that exist independently of windows.
            .
-           Requires the River compositor (0.4.x+) to be installed separately.
+           Requires the River compositor 0.4.7 to be installed separately.
           EOF
 
           # Remove leading whitespace from heredoc
