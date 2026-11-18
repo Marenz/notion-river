@@ -215,6 +215,12 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - Tab bars attach to client windows, so late auto-float must also retire their
   old tiled decoration. The render pass cleans decorations against live tiled
   windows; removal also destroys the viewport and drops the surface input lookup.
+- Restart restoration keeps each frame's saved tab identities/order separately
+  from consumed matching slots. Never apply a saved numeric active-tab index to
+  compositor announcement order. State also carries one-time `output_workspaces`
+  selections keyed by stable monitor identity; replay only for the same complete
+  monitor set, without changing preferences or long-term monitor memory.
+  Regression checks: `cargo test restart_`.
 
 ## HiDPI / Scaling Deep Dive
 
