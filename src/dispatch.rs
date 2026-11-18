@@ -545,6 +545,109 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
 
 // ── Window ───────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod dialog_tests {
+    use super::*;
+    use crate::layout::WindowRef;
+    use crate::protocol::river_window_v1::{Edges, Event};
+    use crate::wm::FloatingKind;
+    use crate::workspace::WorkspaceManager;
+
+    #[test]
+    fn late_dialog_metadata_keeps_workspace_and_focuses_dialog() {
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let conn = Connection::from_socket(socket).unwrap();
+        let queue = conn.new_event_queue::<AppData>();
+        let qh = queue.handle();
+        let backend = conn.backend().downgrade();
+        let proxy = RiverWindowV1::inert(backend.clone());
+        let events = [
+            Event::Parent {
+                parent: Some(proxy.clone()),
+            },
+            Event::DimensionsHint {
+                min_width: 400,
+                min_height: 300,
+                max_width: 400,
+                max_height: 300,
+            },
+            Event::AppId {
+                app_id: Some("gcr-prompter".into()),
+            },
+        ];
+
+        for event in events {
+            let mut state = AppData::default();
+            state.wm.workspaces = WorkspaceManager::new(&state.wm.config.workspaces, 0.5);
+            let ws = &mut state.wm.workspaces.workspaces[0];
+            ws.active_output = Some(OutputId(1));
+            let frame_id = ws.focused_frame;
+            let frame = ws.root.find_frame_mut(frame_id).unwrap();
+            for id in [1, 2] {
+                frame.add_window(WindowRef {
+                    window_id: id,
+                    app_id: "test".into(),
+                    title: "test".into(),
+                });
+            }
+            let mut output = Output::new(OutputId(1));
+            output.width = 1920;
+            output.height = 1080;
+            state.wm.workspaces.outputs.push(output);
+            state.wm.windows.push(ManagedWindow {
+                proxy: proxy.clone(),
+                node: RiverNodeV1::inert(backend.clone()),
+                id: 2,
+                app_id: "xdg-desktop-portal-gtk".into(),
+                title: "Choose extension directory".into(),
+                identifier: None,
+                width: 800,
+                height: 600,
+                last_proposed_width: 800,
+                last_proposed_height: 600,
+                new: false,
+                closed: false,
+                frame_id: Some(frame_id),
+                floating: false,
+                fullscreen: false,
+                capture_sessions: 0,
+                prefers_ssd: false,
+                floating_kind: FloatingKind::Dialog,
+                float_x: 0,
+                float_y: 0,
+                float_positioned: false,
+                pointer_move_requested: None,
+                pointer_resize_requested: None,
+                pointer_resize_requested_edges: Edges::None,
+            });
+
+            <AppData as Dispatch<RiverWindowV1, ()>>::event(
+                &mut state,
+                &proxy,
+                event,
+                &(),
+                &conn,
+                &qh,
+            );
+
+            let window = &state.wm.windows[0];
+            assert!(window.floating);
+            assert_eq!(window.frame_id, Some(frame_id));
+            let frame = state.wm.workspaces.workspaces[0]
+                .root
+                .find_frame(frame_id)
+                .unwrap();
+            assert_eq!(frame.windows.len(), 1);
+            assert_eq!(frame.active_window().unwrap().window_id, 1);
+
+            state.wm.apply_window_management(&RiverWindowManagerV1::inert(backend.clone()));
+            assert_eq!(state.wm.focused_floating, Some(2));
+            let window = &state.wm.windows[0];
+            assert_eq!((window.float_x, window.float_y), (560, 240));
+        }
+    }
+}
+
 impl Dispatch<RiverWindowV1, ()> for AppData {
     fn event(
         state: &mut Self,
@@ -586,14 +689,14 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 {
                     window.floating = true;
                     window.floating_kind = crate::wm::FloatingKind::Dialog;
-                    // If already placed in a frame, remove it (late DimensionsHint)
+                    // Remove the tiled tab, but retain frame_id as the floating
+                    // window's workspace owner (late DimensionsHint).
                     if let Some(frame_id) = window.frame_id {
                         for ws in &mut state.wm.workspaces.workspaces {
                             if let Some(frame) = ws.root.find_frame_mut(frame_id) {
                                 frame.remove_window(window.id);
                             }
                         }
-                        window.frame_id = None;
                     }
                     log::info!(
                         "Auto-floating window {} ({}x{}-{}x{})",
@@ -619,13 +722,13 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 if window.app_id == "gcr-prompter" && !window.floating {
                     window.floating = true;
                     window.floating_kind = crate::wm::FloatingKind::Dialog;
+                    // A late app_id must not discard floating workspace ownership.
                     if let Some(frame_id) = window.frame_id {
                         for ws in &mut state.wm.workspaces.workspaces {
                             if let Some(frame) = ws.root.find_frame_mut(frame_id) {
                                 frame.remove_window(window.id);
                             }
                         }
-                        window.frame_id = None;
                     }
                     log::info!("Window {} is gcr-prompter, forcing floating dialog", window.id);
                 }
@@ -638,14 +741,14 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     // Child windows (dialogs, popups) should float
                     window.floating = true;
                     window.floating_kind = crate::wm::FloatingKind::Dialog;
-                    // If already placed in a frame, remove it (late Parent event)
+                    // Remove the tiled tab, but retain frame_id as the floating
+                    // window's workspace owner (late Parent event).
                     if let Some(frame_id) = window.frame_id {
                         for ws in &mut state.wm.workspaces.workspaces {
                             if let Some(frame) = ws.root.find_frame_mut(frame_id) {
                                 frame.remove_window(window.id);
                             }
                         }
-                        window.frame_id = None;
                     }
                     log::info!("Window {} has parent, setting floating", window.id);
                 }
