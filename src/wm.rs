@@ -179,7 +179,7 @@ pub struct ManagedWindow {
     pub last_proposed_height: i32,
     pub new: bool,
     pub closed: bool,
-    /// Which frame this window is placed in.
+    /// Tiled frame, or workspace-owning frame for a floating window.
     pub frame_id: Option<FrameId>,
     /// Whether this window is floating.
     pub floating: bool,

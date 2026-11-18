@@ -208,6 +208,10 @@ WAYLAND_DISPLAY=wayland-2 foot &
 - **`commands.launcher` is read once at startup** (`window_actions.rs` clones `self.config.commands.launcher`), not hot-reloaded. After editing the launcher line, restart notion-river (`Super+Shift+R`) for it to take effect.
 - **Isolate tests from the live control socket**: run `XDG_RUNTIME_DIR=/tmp/notion-river-test-runtime cargo test`. Without the override, control-server tests use and unlink the live `$XDG_RUNTIME_DIR/notion-river.sock`, breaking `notion-ctl` and waybar subscriptions.
 - `wl_seat.get_pointer` is only valid while the seat advertises pointer capability. Headless backends and hotplug can present a seat without one; pointer creation is therefore capability-driven in `dispatch.rs`, not done at registry bind time.
+- Floating windows retain `ManagedWindow.frame_id` as their workspace owner even
+  though they have no `Frame.windows` tab. Late Parent, DimensionsHint, or AppId
+  auto-float events must remove only the tab, never clear `frame_id`; visibility
+  otherwise hides the dialog permanently. Regression: `cargo test late_dialog_metadata`.
 
 ## HiDPI / Scaling Deep Dive
 
