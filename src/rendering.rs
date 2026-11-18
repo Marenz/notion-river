@@ -203,6 +203,15 @@ impl WindowManager {
         viewporter: Option<&crate::protocol::wp_viewporter::WpViewporter>,
         qh: &QueueHandle<AppData>,
     ) {
+        // A window may have acquired a tab bar before late dialog metadata
+        // converted it to floating. Decorations are attached to the client,
+        // so leaving one alive makes the old full-width bar follow the dialog.
+        let tiled_ids: Vec<u64> = self.windows.iter()
+            .filter(|win| !win.floating && !win.closed)
+            .map(|win| win.id)
+            .collect();
+        self.decorations.cleanup(&tiled_ids);
+
         let gap = self.config.general.gap as i32;
         let border = self.config.general.border_width as i32;
         let tab_bar_h = TAB_BAR_HEIGHT;

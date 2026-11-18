@@ -130,8 +130,10 @@ pub struct WindowManager {
     pub saved_state: Option<crate::state::SavedState>,
     /// Manage cycles since last new window (for state restore timeout).
     pub restore_cycles_without_new: u32,
-    /// Saved active tab indices to apply after window restore.
-    pub saved_active_tabs: std::collections::HashMap<FrameId, usize>,
+    /// Saved tab order and active window identities to apply during restore.
+    pub saved_tabs: std::collections::HashMap<FrameId, crate::state::SavedFrameTabs>,
+    /// One-time runtime output selection snapshot; separate from monitor memory.
+    pub saved_output_workspaces: Vec<(String, String)>,
     /// Suppress WindowInteraction for one manage cycle (after tab click).
     pub suppress_interaction: bool,
     /// Whether a layer-shell surface (e.g. rofi overlay) has keyboard focus.
@@ -330,11 +332,15 @@ impl WindowManager {
 
         // Try to restore saved state (from previous restart)
         let saved_state = crate::state::load_state();
-        let saved_active_tabs = if let Some(ref state) = saved_state {
+        let saved_tabs = if let Some(ref state) = saved_state {
             crate::state::restore_layout(&mut workspaces, state)
         } else {
             std::collections::HashMap::new()
         };
+        let saved_output_workspaces = saved_state
+            .as_ref()
+            .map(|state| state.output_workspaces.clone())
+            .unwrap_or_default();
 
         let colors = config.appearance.colors();
         Self {
@@ -350,7 +356,8 @@ impl WindowManager {
             empty_frames: EmptyFrameManager::new(),
             saved_state,
             restore_cycles_without_new: 0,
-            saved_active_tabs,
+            saved_tabs,
+            saved_output_workspaces,
             suppress_interaction: false,
             layer_shell_has_focus: false,
             ipc: None,
@@ -393,6 +400,9 @@ impl WindowManager {
         self.remove_closed_outputs();
         self.remove_closed_windows();
         self.remove_closed_seats();
+        if crate::state::restore_output_workspaces(&mut self.workspaces, &self.saved_output_workspaces) {
+            self.saved_output_workspaces.clear();
+        }
         self.sync_window_titles();
         self.init_new_windows();
         self.init_new_seats(river_xkb, qh);
@@ -921,6 +931,7 @@ impl WindowManager {
     }
 
     fn init_new_windows(&mut self) {
+        let had_new_windows = self.windows.iter().any(|window| window.new);
         let existing_app_ids: Vec<String> = self.windows.iter()
             .filter(|w| !w.new)
             .map(|w| w.app_id.clone())
@@ -1091,15 +1102,16 @@ impl WindowManager {
             window.new = false;
         }
 
-        // Clear saved state once all saved slots have been consumed
-        // Always apply saved active tabs (they were set during restore_layout)
-        if !self.saved_active_tabs.is_empty() {
-            for (frame_id, active_tab) in &self.saved_active_tabs {
+        // Restore by identity, not by the compositor's reconnect announcement
+        // order. Keep new/unmatched windows after the restored tabs.
+        if !self.saved_tabs.is_empty() {
+            let identifiers = self.windows.iter()
+                .filter_map(|window| Some((window.id, window.identifier.as_deref()?)))
+                .collect();
+            for (frame_id, tabs) in &self.saved_tabs {
                 for ws in &mut self.workspaces.workspaces {
-                    if let Some(frame) = ws.root.find_frame_mut(*frame_id)
-                        && *active_tab < frame.windows.len()
-                    {
-                        frame.set_active_tab(*active_tab);
+                    if let Some(frame) = ws.root.find_frame_mut(*frame_id) {
+                        tabs.restore(frame, &identifiers);
                     }
                 }
             }
@@ -1107,7 +1119,6 @@ impl WindowManager {
 
         if let Some(ref state) = self.saved_state {
             // Clear saved state after 2 cycles with no new windows
-            let had_new_windows = self.windows.iter().any(|w| w.new);
             if had_new_windows {
                 self.restore_cycles_without_new = 0;
             } else {
@@ -1116,7 +1127,8 @@ impl WindowManager {
             if !crate::state::has_remaining_matches(state) || self.restore_cycles_without_new > 2 {
                 log::info!("All saved windows restored, clearing saved state");
                 self.saved_state = None;
-                self.saved_active_tabs.clear();
+                self.saved_tabs.clear();
+                self.saved_output_workspaces.clear();
             }
         }
     }

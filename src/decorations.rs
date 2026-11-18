@@ -236,10 +236,10 @@ impl DecorationManager {
         Some((*window_id, tab_index))
     }
 
-    /// Remove decoration for a window that's gone.
-    #[allow(dead_code)]
+    /// Remove a window's tiled decoration and its input lookup.
     pub fn remove(&mut self, window_id: u64) {
         if let Some(dec) = self.decorations.remove(&window_id) {
+            self.surface_to_window.remove(&dec.surface.id().protocol_id());
             if let Some(buf) = dec.buffer {
                 buf.destroy();
             }
@@ -247,12 +247,14 @@ impl DecorationManager {
                 pool.destroy();
             }
             dec.decoration.destroy();
+            if let Some(viewport) = dec.viewport {
+                viewport.destroy();
+            }
             dec.surface.destroy();
         }
     }
 
     /// Remove decorations for windows not in the provided set.
-    #[allow(dead_code)]
     pub fn cleanup(&mut self, active_window_ids: &[u64]) {
         let to_remove: Vec<u64> = self
             .decorations

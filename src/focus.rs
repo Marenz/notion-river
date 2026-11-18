@@ -432,7 +432,8 @@ mod tests {
                 };
                 ws.focused_frame = ws.root.first_frame_id();
             }
-            wm.saved_active_tabs.clear();
+            wm.saved_tabs.clear();
+            wm.saved_output_workspaces.clear();
             wm.saved_state = None;
 
             // Add outputs

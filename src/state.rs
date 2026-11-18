@@ -31,6 +31,10 @@ fn backup_path() -> PathBuf {
 pub struct SavedState {
     pub workspaces: Vec<SavedWorkspace>,
     pub focused_workspace: String,
+    /// Runtime workspace selection, keyed by stable physical monitor identity.
+    /// Restored only on a WM restart with the same connected monitor set.
+    #[serde(default)]
+    pub output_workspaces: Vec<(String, String)>,
     /// Legacy field, kept only to tolerate old state files. Per-monitor workspace
     /// memory now lives in `monitor-memory.json`.
     #[serde(default, skip_serializing)]
@@ -100,6 +104,37 @@ pub struct SavedWindow {
     pub identifier: Option<String>,
 }
 
+/// Tab identity and order must survive the compositor announcing windows in
+/// a different order on reconnect. A saved numeric active_tab alone cannot.
+#[derive(Debug)]
+pub struct SavedFrameTabs {
+    windows: Vec<SavedWindow>,
+    active_tab: usize,
+}
+
+impl SavedFrameTabs {
+    pub fn restore(&self, frame: &mut Frame, identifiers: &std::collections::HashMap<u64, &str>) {
+        let matches = |saved: &SavedWindow, window: &crate::layout::WindowRef| {
+            if let Some(id) = identifiers.get(&window.window_id) {
+                saved.identifier.as_deref() == Some(*id)
+            } else {
+                saved.app_id == window.app_id && saved.title == window.title
+            }
+        };
+        frame.windows.sort_by_key(|window| {
+            self.windows
+                .iter()
+                .position(|saved| matches(saved, window))
+                .unwrap_or(usize::MAX)
+        });
+        if let Some(active) = self.windows.get(self.active_tab)
+            && let Some(index) = frame.windows.iter().position(|window| matches(active, window))
+        {
+            frame.set_active_tab(index);
+        }
+    }
+}
+
 // ── Save ─────────────────────────────────────────────────────────────────
 
 pub fn save_state(workspaces: &WorkspaceManager, windows: &[crate::wm::ManagedWindow]) {
@@ -125,6 +160,14 @@ pub fn save_state(workspaces: &WorkspaceManager, windows: &[crate::wm::ManagedWi
             .get(workspaces.focused_workspace.0)
             .map(|ws| ws.name.clone())
             .unwrap_or_default(),
+        output_workspaces: workspaces
+            .visible_workspaces()
+            .iter()
+            .filter_map(|ws| {
+                let output = workspaces.output(ws.active_output?)?;
+                Some((crate::monitor_memory::monitor_key(output)?, ws.name.clone()))
+            })
+            .collect(),
         visible_workspaces: Vec::new(),
     };
 
@@ -258,11 +301,11 @@ fn validate_state(state: &SavedState) -> bool {
 }
 
 /// Restore layout trees from saved state into the workspace manager.
-/// Returns a map of FrameId → saved active_tab index for later application.
+/// Returns tab order and active window identities for later application.
 pub fn restore_layout(
     workspaces: &mut WorkspaceManager,
     state: &SavedState,
-) -> std::collections::HashMap<crate::layout::FrameId, usize> {
+) -> std::collections::HashMap<crate::layout::FrameId, SavedFrameTabs> {
     let mut active_tabs = std::collections::HashMap::new();
 
     for saved_ws in &state.workspaces {
@@ -272,7 +315,7 @@ pub fn restore_layout(
             .find(|w| w.name == saved_ws.name)
         {
             ws.root = restore_node(&saved_ws.root);
-            // Collect active_tab for each frame
+            // Keep the original tabs intact while saved matching slots are consumed.
             let all_ids = ws.root.all_frame_ids();
             collect_active_tabs(&saved_ws.root, &all_ids, 0, &mut active_tabs);
             // Restore focused frame
@@ -294,14 +337,52 @@ pub fn restore_layout(
     active_tabs
 }
 
-#[allow(dead_code)]
-/// Restore which workspaces were visible on each output.
-/// Called after output names are known (from reassign_outputs).
+/// Restore runtime workspace selections without changing long-term monitor
+/// memory or config preferences. A changed monitor set uses normal assignment.
+pub fn restore_output_workspaces(
+    workspaces: &mut WorkspaceManager,
+    saved: &[(String, String)],
+) -> bool {
+    if saved.is_empty() || !workspaces.all_outputs_have_geometry() {
+        return false;
+    }
+    let outputs: Vec<_> = workspaces.outputs.iter().filter(|output| !output.removed).collect();
+    if saved.len() != outputs.len() {
+        return false;
+    }
+    let assignments: Option<Vec<_>> = saved
+        .iter()
+        .map(|(key, name)| {
+            let output = outputs.iter().find(|output| {
+                crate::monitor_memory::monitor_key(output).as_ref() == Some(key)
+            })?;
+            let workspace = workspaces.workspaces.iter().find(|ws| ws.name == *name)?;
+            Some((workspace.id, output.id))
+        })
+        .collect();
+    let Some(assignments) = assignments else { return false };
+    let unique_workspaces: std::collections::HashSet<_> =
+        assignments.iter().map(|(ws, _)| ws).collect();
+    let unique_outputs: std::collections::HashSet<_> =
+        assignments.iter().map(|(_, output)| output).collect();
+    if unique_workspaces.len() != saved.len() || unique_outputs.len() != saved.len() {
+        return false;
+    }
+    for ws in &mut workspaces.workspaces {
+        ws.active_output = None;
+    }
+    workspaces.output_workspace.clear();
+    for (workspace, output) in assignments {
+        workspaces.assign_workspace_to_output(workspace, output);
+    }
+    true
+}
+
 fn collect_active_tabs(
     node: &SavedNode,
     frame_ids: &[crate::layout::FrameId],
     base_index: usize,
-    out: &mut std::collections::HashMap<crate::layout::FrameId, usize>,
+    out: &mut std::collections::HashMap<crate::layout::FrameId, SavedFrameTabs>,
 ) {
     match node {
         SavedNode::Leaf {
@@ -310,7 +391,13 @@ fn collect_active_tabs(
             ..
         } => {
             if base_index < frame_ids.len() && !windows.is_empty() {
-                out.insert(frame_ids[base_index], *active_tab);
+                out.insert(
+                    frame_ids[base_index],
+                    SavedFrameTabs {
+                        windows: windows.clone(),
+                        active_tab: *active_tab,
+                    },
+                );
             }
         }
         SavedNode::Split { first, second, .. } => {
@@ -454,6 +541,101 @@ fn count_leaves(node: &SavedNode) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WorkspaceConfig;
+    use crate::layout::WindowRef;
+    use crate::workspace::{Output, OutputId};
+
+    fn workspace_config(name: &str) -> WorkspaceConfig {
+        WorkspaceConfig { name: name.into(), output: None, initial_layout: None }
+    }
+
+    #[test]
+    fn restart_restores_cells_tab_order_and_active_identity_from_shuffled_announcements() {
+        let saved_window = |id: u64| SavedWindow {
+            app_id: "contour".into(),
+            title: "identical terminal title".into(),
+            identifier: Some(format!("terminal-{id}")),
+        };
+        let mut state = SavedState {
+            workspaces: vec![SavedWorkspace {
+                name: "term".into(),
+                focused_frame_index: 0,
+                root: SavedNode::Split {
+                    orientation: "v".into(), ratio: 0.49, floating: false,
+                    float_first: saved_float_first_default(),
+                    float_second: saved_float_second_default(),
+                    first: Box::new(SavedNode::Leaf {
+                        windows: (1..=3).map(saved_window).collect(), active_tab: 2,
+                    }),
+                    second: Box::new(SavedNode::Leaf {
+                        windows: vec![saved_window(4)], active_tab: 0,
+                    }),
+                },
+            }],
+            focused_workspace: "term".into(),
+            output_workspaces: vec![],
+            visible_workspaces: vec![],
+        };
+        let mut workspaces = WorkspaceManager::new(&[workspace_config("term")], 0.5);
+        let tabs = restore_layout(&mut workspaces, &state);
+        let frames = workspaces.workspaces[0].root.all_frame_ids();
+        let ids: std::collections::HashMap<_, _> = [
+            (1, "terminal-1"), (2, "terminal-2"), (3, "terminal-3"), (4, "terminal-4"),
+        ].into_iter().collect();
+        // Arrival order differs both across cells and within the top cell.
+        for id in [4, 3, 1, 2] {
+            let saved = saved_window(id);
+            let (ws, frame_id) = match_window_to_saved_frame(
+                &workspaces, &mut state, &saved.app_id, &saved.title, saved.identifier.as_deref(),
+            ).unwrap();
+            let frame = workspaces.workspaces[ws.0].root.find_frame_mut(frame_id).unwrap();
+            frame.add_window_quiet(WindowRef {
+                window_id: id, app_id: saved.app_id, title: saved.title,
+            });
+            tabs[&frame_id].restore(frame, &ids);
+            if id != 4 {
+                assert_eq!(frame.active_window().unwrap().window_id, 3);
+            }
+        }
+        let root = &workspaces.workspaces[0].root;
+        let top = root.find_frame(frames[0]).unwrap();
+        assert_eq!(top.windows.iter().map(|w| w.window_id).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(top.active_window().unwrap().window_id, 3);
+        let bottom = root.find_frame(frames[1]).unwrap();
+        assert_eq!(bottom.windows.len(), 1);
+        assert_eq!(bottom.active_window().unwrap().window_id, 4);
+        assert!(!has_remaining_matches(&state));
+    }
+
+    #[test]
+    fn restart_restores_visible_workspaces_only_for_the_same_monitor_set() {
+        let mut workspaces = WorkspaceManager::new(&[
+            workspace_config("main"), workspace_config("social"), workspace_config("term"),
+        ], 0.5);
+        workspaces.monitor_memory = crate::monitor_memory::MonitorMemory::default();
+        for (id, description) in [(1, "center"), (2, "portrait")] {
+            let mut output = Output::new(OutputId(id));
+            output.description = Some(description.into());
+            output.width = 1440;
+            output.height = 2560;
+            workspaces.add_output(output);
+        }
+        workspaces.assign_workspace_to_output(WorkspaceId(0), OutputId(1));
+        workspaces.assign_workspace_to_output(WorkspaceId(1), OutputId(2));
+        let saved = vec![("edid:center".into(), "main".into()), ("edid:portrait".into(), "term".into())];
+        workspaces.outputs[1].width = 0;
+        assert!(!restore_output_workspaces(&mut workspaces, &saved));
+        workspaces.outputs[1].width = 1440;
+        workspaces.outputs[1].description = Some("different monitor".into());
+        assert!(!restore_output_workspaces(&mut workspaces, &saved));
+        assert_eq!(workspaces.output_workspace[&OutputId(2)], WorkspaceId(1));
+        workspaces.outputs[1].description = Some("portrait".into());
+        assert!(restore_output_workspaces(&mut workspaces, &saved));
+        assert_eq!(workspaces.output_workspace[&OutputId(1)], WorkspaceId(0));
+        assert_eq!(workspaces.output_workspace[&OutputId(2)], WorkspaceId(2));
+        assert!(workspaces.workspaces[1].active_output.is_none());
+        assert!(workspaces.monitor_memory.entries.is_empty());
+    }
 
     fn floating_split() -> SavedNode {
         SavedNode::Split {

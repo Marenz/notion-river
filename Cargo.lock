@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "notion-river"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "bitflags 2.13.1",
  "cairo-rs",
