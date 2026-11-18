@@ -620,6 +620,23 @@ mod dialog_tests {
                 pointer_resize_requested: None,
                 pointer_resize_requested_edges: Edges::None,
             });
+            // The window was rendered as a tiled tab before its dialog
+            // metadata arrived. That decoration must not follow it floating.
+            let surface = WlSurface::inert(backend.clone());
+            state.wm.decorations.surface_to_window.insert(surface.id().protocol_id(), 2);
+            state.wm.decorations.decorations.insert(
+                2,
+                crate::decorations::WindowDecoration {
+                    surface,
+                    decoration: RiverDecorationV1::inert(backend.clone()),
+                    viewport: None,
+                    buffer: None,
+                    pool: None,
+                    last_width: 1920,
+                    last_hash: 0,
+                    last_scale: 1,
+                },
+            );
 
             <AppData as Dispatch<RiverWindowV1, ()>>::event(
                 &mut state,
@@ -644,6 +661,15 @@ mod dialog_tests {
             assert_eq!(state.wm.focused_floating, Some(2));
             let window = &state.wm.windows[0];
             assert_eq!((window.float_x, window.float_y), (560, 240));
+            state.wm.apply_layout_positions(
+                &RiverWindowManagerV1::inert(backend.clone()),
+                None,
+                None,
+                None,
+                &qh,
+            );
+            assert!(state.wm.decorations.decorations.is_empty());
+            assert!(state.wm.decorations.surface_to_window.is_empty());
         }
     }
 }

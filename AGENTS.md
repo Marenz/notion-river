@@ -212,6 +212,9 @@ WAYLAND_DISPLAY=wayland-2 foot &
   though they have no `Frame.windows` tab. Late Parent, DimensionsHint, or AppId
   auto-float events must remove only the tab, never clear `frame_id`; visibility
   otherwise hides the dialog permanently. Regression: `cargo test late_dialog_metadata`.
+- Tab bars attach to client windows, so late auto-float must also retire their
+  old tiled decoration. The render pass cleans decorations against live tiled
+  windows; removal also destroys the viewport and drops the surface input lookup.
 
 ## HiDPI / Scaling Deep Dive
 
